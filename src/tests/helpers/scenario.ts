@@ -21,7 +21,9 @@ import type {
   SubEvent,
 } from "shared/types/events";
 import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
+import type { UnitType, UnitWithVisibleStats } from "shared/schemas/unit";
 import { MatchWrapper } from "shared/wrappers/match";
+import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
 import { UnitWrapper } from "shared/wrappers/unit";
 
 /**
@@ -62,6 +64,56 @@ export const property = (
   playerSlot: PlayerSlot,
   position: Position,
 ): ChangeableTile => ({ type, playerSlot, position });
+
+const AMMO_UNITS = new Set<UnitType>([
+  "mech",
+  "artillery",
+  "tank",
+  "antiAir",
+  "missile",
+  "rocket",
+  "mediumTank",
+  "neoTank",
+  "megaTank",
+  "battleCopter",
+  "bomber",
+  "fighter",
+  "battleship",
+  "sub",
+  "stealth",
+  "cruiser",
+  "carrier",
+  "pipeRunner",
+]);
+const HIDDEN_UNITS = new Set<UnitType>(["stealth", "sub"]);
+const ONE_SLOT_TRANSPORTS = new Set<UnitType>(["apc", "transportCopter"]);
+const TWO_SLOT_TRANSPORTS = new Set<UnitType>(["blackBoat", "lander", "cruiser", "carrier"]);
+
+/** Build a minimal valid unit of any type (full HP, some fuel/ammo, empty transport slots). */
+export function makeUnit(
+  type: UnitType,
+  position: Position,
+  overrides: Partial<UnitWithVisibleStats> = {},
+): Omit<UnitWithVisibleStats, "playerSlot"> {
+  const stats = AMMO_UNITS.has(type) ? { fuel: 50, hp: 100, ammo: 5 } : { fuel: 50, hp: 100 };
+  const unit: Record<string, unknown> = { type, position, isReady: true, stats };
+
+  if (HIDDEN_UNITS.has(type)) unit.hidden = false;
+  if (ONE_SLOT_TRANSPORTS.has(type) || TWO_SLOT_TRANSPORTS.has(type)) unit.loadedUnit = null;
+  if (TWO_SLOT_TRANSPORTS.has(type)) unit.loadedUnit2 = null;
+
+  return { ...unit, ...overrides } as Omit<UnitWithVisibleStats, "playerSlot">;
+}
+
+/** Add a unit of the given type to a player and return its wrapper. */
+export function addUnit(
+  player: PlayerInMatchWrapper,
+  type: UnitType,
+  position: Position,
+  overrides?: Partial<UnitWithVisibleStats>,
+): UnitWrapper {
+  return player.addUnwrappedUnit(makeUnit(type, position, overrides));
+}
 
 type PlayerSpec = Partial<PlayerInMatch> & { slot: PlayerSlot };
 
