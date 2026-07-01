@@ -2,12 +2,22 @@ import { describe, expect, it } from "vitest";
 import type { MainAction } from "shared/schemas/action";
 import { createTestMatch, dispatchMainAction, property, tiles } from "../helpers/scenario";
 
+const ATTACK_ADJACENT: MainAction = {
+  type: "move",
+  path: [[0, 0]],
+  subAction: { type: "attack", defenderPosition: [1, 0] },
+};
+const CAPTURE: MainAction = { type: "move", path: [[0, 0]], subAction: { type: "ability" } };
+
 /**
- * Win/loss conditions. NOTE: in the current engine most match-end handling is a TODO — the
- * attack/capture handlers *compute* an `eliminationReason` but only HQ/labs capture actually
- * eliminates a player (see capture.test.ts). These tests lock the parts that ARE implemented
- * (unit removal, reason detection) and characterize the not-yet-applied parts so a future
- * implementer has to update them deliberately.
+ * Win/loss conditions.
+ *
+ * The engine currently only *computes* an `eliminationReason` for attacks and the property goal —
+ * it does not yet APPLY them (no player is routed, no match ends). HQ/labs capture is the one
+ * exception (see capture.test.ts). So:
+ *  - the passing tests lock what IS implemented (unit removal + reason detection);
+ *  - the `it.skip` tests are PENDING SPECS of the intended behavior (player routed, match
+ *    finished). They currently fail — drop `.skip` when you implement match-end handling.
  */
 describe("win/loss conditions", () => {
   it("removes a defender's last unit on a lethal attack and flags the elimination reason", () => {
@@ -15,14 +25,12 @@ describe("win/loss conditions", () => {
       tiles: [[tiles.road(), tiles.road()]],
       players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
     });
-    match
-      .getPlayerBySlot(0)!
-      .addUnwrappedUnit({
-        type: "infantry",
-        isReady: true,
-        position: [0, 0],
-        stats: { fuel: 99, hp: 100 },
-      });
+    match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 100 },
+    });
     const p1 = match.getPlayerBySlot(1)!;
     p1.addUnwrappedUnit({
       type: "infantry",
@@ -31,21 +39,13 @@ describe("win/loss conditions", () => {
       stats: { fuel: 99, hp: 10 },
     });
 
-    const attack: MainAction = {
-      type: "move",
-      path: [[0, 0]],
-      subAction: { type: "attack", defenderPosition: [1, 0] },
-    };
-    const event = dispatchMainAction(match, attack, { luck: 0 });
+    const event = dispatchMainAction(match, ATTACK_ADJACENT, { luck: 0 });
 
     expect(match.getUnit([1, 0])).toBeUndefined();
     expect(p1.getUnits()).toHaveLength(0);
     expect(event).toMatchObject({
       subEvent: { eliminationReason: "all-defender-units-destroyed" },
     });
-    // Characterization: the engine does NOT yet auto-eliminate a player who lost their last
-    // unit to an attack (match-end handling is a TODO). Pinned so it fails loudly once wired.
-    expect(p1.data.status).toBe("alive");
   });
 
   it("removes an attacker's last unit when it dies to the counterattack", () => {
@@ -53,29 +53,20 @@ describe("win/loss conditions", () => {
       tiles: [[tiles.road(), tiles.road()]],
       players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
     });
-    match
-      .getPlayerBySlot(0)!
-      .addUnwrappedUnit({
-        type: "infantry",
-        isReady: true,
-        position: [0, 0],
-        stats: { fuel: 99, hp: 10 },
-      });
-    match
-      .getPlayerBySlot(1)!
-      .addUnwrappedUnit({
-        type: "infantry",
-        isReady: true,
-        position: [1, 0],
-        stats: { fuel: 99, hp: 100 },
-      });
+    match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 10 },
+    });
+    match.getPlayerBySlot(1)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [1, 0],
+      stats: { fuel: 99, hp: 100 },
+    });
 
-    const attack: MainAction = {
-      type: "move",
-      path: [[0, 0]],
-      subAction: { type: "attack", defenderPosition: [1, 0] },
-    };
-    const event = dispatchMainAction(match, attack, { luck: 0 });
+    const event = dispatchMainAction(match, ATTACK_ADJACENT, { luck: 0 });
 
     expect(match.getUnit([0, 0])).toBeUndefined();
     expect(event).toMatchObject({
@@ -90,20 +81,68 @@ describe("win/loss conditions", () => {
       changeableTiles: [property("city", 0, [1, 0]), property("city", 1, [0, 0])],
       rules: { captureLimit: 2 },
     });
-    match
-      .getPlayerBySlot(0)!
-      .addUnwrappedUnit({
-        type: "infantry",
-        isReady: true,
-        position: [0, 0],
-        stats: { fuel: 99, hp: 100 },
-      });
+    match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 100 },
+    });
 
-    const capture: MainAction = { type: "move", path: [[0, 0]], subAction: { type: "ability" } };
-    dispatchMainAction(match, capture); // 20 -> 10
-    const event = dispatchMainAction(match, capture); // completes: owned 1 + 1 >= captureLimit 2
+    dispatchMainAction(match, CAPTURE); // 20 -> 10
+    const event = dispatchMainAction(match, CAPTURE); // completes: owned 1 + 1 >= captureLimit 2
 
     expect(event).toMatchObject({ subEvent: { eliminationReason: "property-goal-reached" } });
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 0 });
+  });
+
+  // ── PENDING SPECS: match-end handling is not implemented yet. These assert the intended
+  //    behavior and currently FAIL. Remove `.skip` as each is implemented. ──────────────────
+
+  it.skip("routes a player who loses their last unit and ends the 1v1 match", () => {
+    const match = createTestMatch({
+      tiles: [[tiles.road(), tiles.road()]],
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 100 },
+    });
+    const p1 = match.getPlayerBySlot(1)!;
+    p1.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [1, 0],
+      stats: { fuel: 99, hp: 10 },
+    });
+
+    dispatchMainAction(match, ATTACK_ADJACENT, { luck: 0 });
+
+    // Desired: losing your last unit routs you...
+    expect(p1.data.status).toBe("routed");
+    // ...and with one team left, the match is over.
+    expect(match.status).toBe("finished");
+  });
+
+  it.skip("ends the match when a player reaches the capture limit", () => {
+    const match = createTestMatch({
+      tiles: [[tiles.road(), tiles.road()]],
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      changeableTiles: [property("city", 0, [1, 0]), property("city", 1, [0, 0])],
+      rules: { captureLimit: 2 },
+    });
+    match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 100 },
+    });
+
+    dispatchMainAction(match, CAPTURE);
+    dispatchMainAction(match, CAPTURE);
+
+    // Desired: reaching the capture limit wins the game.
+    expect(match.status).toBe("finished");
   });
 });
