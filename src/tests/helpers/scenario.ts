@@ -34,7 +34,7 @@ const DEFAULT_RULES: MatchRules = {
   fundsPerProperty: 1000,
   labUnitTypes: [],
   bannedUnitTypes: [],
-  captureLimit: 0,
+  captureLimit: 1000, // high so captures don't trip the property-goal win by default
   dayLimit: 0,
   weatherSetting: "clear",
   teamMapping: [],
