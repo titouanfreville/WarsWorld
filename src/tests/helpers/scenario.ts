@@ -12,10 +12,11 @@ import { updateMoveVision } from "shared/match-logic/events/handlers/move";
 import type { MainAction } from "shared/schemas/action";
 import type { MatchRules } from "shared/schemas/match-rules";
 import { getFinalPositionSafe } from "shared/schemas/position";
+import type { Position } from "shared/schemas/position";
 import type { PlayerSlot } from "shared/schemas/player-slot";
-import type { Tile } from "shared/schemas/tile";
+import type { PropertyTileType, Tile } from "shared/schemas/tile";
 import type { SubEvent } from "shared/types/events";
-import type { PlayerInMatch } from "shared/types/server-match-state";
+import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
 import { MatchWrapper } from "shared/wrappers/match";
 import { UnitWrapper } from "shared/wrappers/unit";
 
@@ -47,11 +48,23 @@ export const tiles = {
   hq: (playerSlot: PlayerSlot): Tile => ({ type: "hq", playerSlot }),
 };
 
+/**
+ * An owned, positioned property (a `ChangeableTile`). Income (`getFundsPerTurn`) and capture
+ * only consider changeable tiles, so use this — not the static `tiles.*` fixtures — when a test
+ * needs a property to produce funds or be captured/repaired on.
+ */
+export const property = (
+  type: PropertyTileType,
+  playerSlot: PlayerSlot,
+  position: Position,
+): ChangeableTile => ({ type, playerSlot, position });
+
 type PlayerSpec = Partial<PlayerInMatch> & { slot: PlayerSlot };
 
 interface ScenarioOptions {
   tiles: Tile[][];
   players: PlayerSpec[];
+  changeableTiles?: ChangeableTile[];
   rules?: Partial<MatchRules>;
   turn?: number;
 }
@@ -91,7 +104,7 @@ export function createTestMatch(options: ScenarioOptions): MatchWrapper {
   return new MatchWrapper(
     "test-match",
     "standard",
-    [],
+    options.changeableTiles ?? [],
     rules,
     "playing",
     map,
