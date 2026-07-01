@@ -132,15 +132,19 @@ export function dispatchMainAction(
   const luck = opts.luck ?? 0;
 
   const mainEvent = validateMainActionAndToEvent(match, action);
+
+  // Join/load must be detected from the PRE-move state (as the router does), i.e. a unit already
+  // sits at the destination — otherwise the just-moved unit is mistaken for a join/load target.
+  const isJoinOrLoad =
+    mainEvent.type === "move" &&
+    match.getUnit(getFinalPositionSafe(mainEvent.path)) !== undefined &&
+    getFinalPositionSafe(mainEvent.path) !== mainEvent.path[0];
+
   applyMainEventToMatch(match, mainEvent);
 
   if (action.type !== "move" || mainEvent.type !== "move") {
     return mainEvent;
   }
-
-  const finalPosition = getFinalPositionSafe(mainEvent.path);
-  const isJoinOrLoad =
-    match.getUnit(finalPosition) !== undefined && finalPosition !== mainEvent.path[0];
 
   const withSubEvent = { ...mainEvent, subEvent: { type: "wait" } as SubEvent };
 
