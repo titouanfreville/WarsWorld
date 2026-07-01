@@ -29,6 +29,37 @@ describe("capture feature", () => {
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 0 });
   });
 
+  it("captures more slowly at lower HP, removing points equal to the unit's visual HP", () => {
+    const match = createTestMatch({
+      tiles: [[tiles.road()]],
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      changeableTiles: [property("city", 1, [0, 0])],
+    });
+    // 50 HP -> visual HP 5, so each tick removes only 5 capture points (4 ticks to flip).
+    const infantry = match.getPlayerBySlot(0)!.addUnwrappedUnit({
+      type: "infantry",
+      isReady: true,
+      position: [0, 0],
+      stats: { fuel: 99, hp: 50 },
+    });
+
+    dispatchMainAction(match, CAPTURE);
+    expect(infantry.data).toMatchObject({ currentCapturePoints: 15 }); // 20 - 5
+    expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+
+    dispatchMainAction(match, CAPTURE);
+    expect(infantry.data).toMatchObject({ currentCapturePoints: 10 }); // 15 - 5
+    expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+
+    dispatchMainAction(match, CAPTURE);
+    expect(infantry.data).toMatchObject({ currentCapturePoints: 5 }); // 10 - 5
+    expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+
+    // Fourth tick: 5 - 5 = 0, capture finally completes.
+    dispatchMainAction(match, CAPTURE);
+    expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 0 });
+  });
+
   it("eliminates the owner and transfers their properties when their HQ is captured", () => {
     const match = createTestMatch({
       tiles: [[tiles.road(), tiles.road(), tiles.road()]],
