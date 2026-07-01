@@ -15,7 +15,11 @@ import { getFinalPositionSafe } from "shared/schemas/position";
 import type { Position } from "shared/schemas/position";
 import type { PlayerSlot } from "shared/schemas/player-slot";
 import type { PropertyTileType, Tile } from "shared/schemas/tile";
-import type { SubEvent } from "shared/types/events";
+import type {
+  MainEventsWithoutSubEvents,
+  MainEventWithSubEvents,
+  SubEvent,
+} from "shared/types/events";
 import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
 import { MatchWrapper } from "shared/wrappers/match";
 import { UnitWrapper } from "shared/wrappers/unit";
@@ -124,14 +128,14 @@ export function dispatchMainAction(
   match: MatchWrapper,
   action: MainAction,
   opts: { luck?: number } = {},
-): void {
+): MainEventsWithoutSubEvents | MainEventWithSubEvents {
   const luck = opts.luck ?? 0;
 
   const mainEvent = validateMainActionAndToEvent(match, action);
   applyMainEventToMatch(match, mainEvent);
 
   if (action.type !== "move" || mainEvent.type !== "move") {
-    return;
+    return mainEvent;
   }
 
   const finalPosition = getFinalPositionSafe(mainEvent.path);
@@ -152,4 +156,6 @@ export function dispatchMainAction(
 
   updateMoveVision(match, withSubEvent);
   applySubEventToMatch(match, withSubEvent);
+
+  return withSubEvent as MainEventWithSubEvents;
 }
