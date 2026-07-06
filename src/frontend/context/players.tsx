@@ -31,7 +31,10 @@ export const ProvidePlayers = ({ children }: { children: ReactNode }) => {
       // const ownedPlayer =
       const player = data.ownedPlayers.at(0);
 
-      if (player !== undefined && currentPlayerId === "") {
+      // Auto-select the first owned player when none is chosen. `useLocalStorage` defaults to
+      // `null`, so guard on falsy (not just ""), otherwise the joining player keeps an empty
+      // playerId and every setup/action call fails the middleware ("No playerId specified").
+      if (player !== undefined && (currentPlayerId === null || currentPlayerId === "")) {
         setCurrentPlayerId(player.id);
       }
     }
