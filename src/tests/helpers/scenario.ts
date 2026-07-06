@@ -115,6 +115,16 @@ export function addUnit(
   return player.addUnwrappedUnit(makeUnit(type, position, overrides));
 }
 
+/**
+ * Recompute fog-of-war vision for every team. Needed after manually placing units, because a
+ * team's Vision is built at match construction (before test units exist).
+ */
+export function recomputeVision(match: MatchWrapper): void {
+  for (const team of match.teams) {
+    team.vision?.recalculateVision(team.getUnits());
+  }
+}
+
 type PlayerSpec = Partial<PlayerInMatch> & { slot: PlayerSlot };
 
 interface ScenarioOptions {
