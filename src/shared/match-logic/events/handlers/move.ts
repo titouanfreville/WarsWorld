@@ -258,7 +258,13 @@ const getOneTileFuelCost = (match: MatchWrapper, unit: UnitWrapper): number => {
 };
 
 export const applyMoveEvent = (match: MatchWrapper, event: MoveEventWithoutSubEvent) => {
-  const unit = match.getUnitOrThrow(event.path[0]);
+  // Non-throwing lookup: replaying a stale/superseded event during rebuild can reference a tile
+  // whose unit is gone. Skip it instead of throwing, which would crash the whole server on boot.
+  const unit = match.getUnit(event.path[0]);
+
+  if (unit === undefined) {
+    return;
+  }
 
   // The unit has acted this turn and is done — this MUST run even when standing still
   // (in-place indirect attack, capture, or plain wait). Otherwise the unit keeps
