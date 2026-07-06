@@ -1,0 +1,232 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1783341750668,
+  "projectRoot": "/Users/titouan/perso/WarsWorld",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": "^21.0.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "esbuild",
+        "version": "0.25.2",
+        "category": "build"
+      },
+      {
+        "name": "next",
+        "version": "14.1.0",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "18.3.1",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "18.3.1",
+        "category": "frontend"
+      },
+      {
+        "name": "vitest",
+        "version": "4.1.9",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": "Node.js 21.0.0"
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "cd /Users/titouan/perso/WarsWorld\nnpx prettier --write src/tests/features/fog-leak-guard.test.ts >/dev/null 2>&1\necho \"=== prettier ===\"; rtk prettier --check src/tests/ 2>&1 | tail -1\necho \"=== tally ===\"; rtk proxy npx vitest run 2>&1 | grep -iE \"Test Files|Tests \" | tail -2\ngit add src/tests/features/fog-leak-guard.test.ts\ngit commit -q \\\n  -m \"test: cover fog leak guard (event -> per-team emittable filtering)\" \\\n  -m \"Test mainEventToEmittables, the server-authoritative fog filter: a move outside the enemy's vision is emitted to them with an empty path and no appearingUnit (no position leak), while a move into their vision reveals the arriving unit. Guards the load-bearing 'don't leak hidden state' invariant of the refactor.\" \\\n  -m \"Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>\"\necho \"--- committed ---\"; rtk git log --oneline -1",
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "db:up": "docker compose up -d",
+      "db:destroy": "docker compose down --volumes --remove-orphans",
+      "prisma:push": "prisma db push",
+      "prisma:seed": "prisma db seed",
+      "prisma:reset": "prisma migrate reset",
+      "prisma:generate-once": "prisma generate",
+      "prisma:generate-watch": "prisma generate --watch",
+      "prisma:studio": "prisma studio",
+      "dev:wss": "cross-env PORT=3001 tsx watch src/server/main-wss-development.ts --tsconfig tsconfig.server.json",
+      "dev:next": "next dev",
+      "dev": "npm run prisma:push && concurrently \"npm:dev:*\"",
+      "lint:eslint": "eslint .",
+      "lint:eslint:fix": "eslint . --fix",
+      "lint:prettier": "prettier --check .",
+      "lint:prettier:fix": "prettier --write .",
+      "lint": "npm run lint:prettier && npm run lint:eslint",
+      "lint:fix": "npm run lint:prettier:fix && npm run lint:eslint:fix",
+      "test": "vitest run",
+      "test:watch": "vitest",
+      "build:next": "cross-env NODE_ENV=production next build",
+      "build:server": "node bundleServer.mjs",
+      "build": "concurrently \"npm:build:*\"",
+      "start:next": "next start",
+      "start:server": "cross-env NODE_ENV=production \"npm run prisma:push &&  node dist/server/main-production.mjs\"",
+      "start": "concurrently \\\"npm:start:*\\\"\"",
+      "redundant-code": "npx jscpd --ignore node_modules,dist,public,.next --reporters consoleFull .",
+      "update-depencencies": "npx npm-check-updates -i",
+      "fix-paths": "fix-esm-import-path  dist ",
+      "install-utils": "npm install $(jq -r '.utilsDependencies | to_entries | .[] | \"\\(.key)@\\(.value)\"' package.json)"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "public",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "deployment": {
+      "path": "deployment",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1783341750641,
+      "keyFiles": [
+        "README.md",
+        "main.tf",
+        "variables.tf"
+      ]
+    },
+    "prisma": {
+      "path": "prisma",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1783341750653,
+      "keyFiles": [
+        "schema.prisma",
+        "seed.ts"
+      ]
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 3,
+      "lastAccessed": 1783341750654,
+      "keyFiles": [
+        "aw2Font.fnt",
+        "aw2Font.ttf_0.png",
+        "favicon.ico"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1783341750655,
+      "keyFiles": []
+    },
+    "utils": {
+      "path": "utils",
+      "purpose": "Utility functions",
+      "fileCount": 1,
+      "lastAccessed": 1783341750656,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "prisma/migrations": {
+      "path": "prisma/migrations",
+      "purpose": "Database migrations",
+      "fileCount": 1,
+      "lastAccessed": 1783341750658,
+      "keyFiles": [
+        "migration_lock.toml"
+      ]
+    },
+    "src/components": {
+      "path": "src/components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1783341750659,
+      "keyFiles": []
+    },
+    "src/pages": {
+      "path": "src/pages",
+      "purpose": "Page components",
+      "fileCount": 9,
+      "lastAccessed": 1783341750660,
+      "keyFiles": [
+        "404.tsx",
+        "_app.tsx",
+        "donations.tsx"
+      ]
+    },
+    "src/tests": {
+      "path": "src/tests",
+      "purpose": "Test files",
+      "fileCount": 1,
+      "lastAccessed": 1783341750660,
+      "keyFiles": [
+        "calculate-damage.test.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/shared/wrappers/team.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342331693,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/wrappers/vision.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342331876,
+      "type": "file"
+    },
+    {
+      "path": "src/tests/helpers/scenario.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342437620,
+      "type": "file"
+    },
+    {
+      "path": "src/tests/features/vision-fog.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342457163,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/match-logic/events/event-to-emittable.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342496675,
+      "type": "file"
+    },
+    {
+      "path": "src/tests/features/fog-leak-guard.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1783342596539,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
