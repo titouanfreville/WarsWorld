@@ -14,11 +14,29 @@ export type MatchView = NonNullable<inferTRPCOutput<"match", "full">>;
 export type MatchUnit = MatchView["units"][number];
 export type MatchPlayer = MatchView["players"][number];
 
+export type MatchTile = MatchView["map"]["tiles"][number][number];
+export type MatchChangeableTile = MatchView["changeableTiles"][number];
+
 /** A board coordinate `[x, y]`, matching the wire `Position` tuple. */
 export type BoardPosition = readonly [number, number];
 
 export const samePosition = (a: BoardPosition, b: BoardPosition): boolean =>
   a[0] === b[0] && a[1] === b[1];
+
+/**
+ * The tile shown at a position — a changeable tile (owned property, silo, pipe seam) wins over the
+ * static map tile, mirroring the engine's `getTile`.
+ */
+export const getTileAt = (
+  match: MatchView,
+  position: BoardPosition,
+): MatchTile | MatchChangeableTile =>
+  match.changeableTiles.find((tile) => samePosition(tile.position, position)) ??
+  match.map.tiles[position[1]][position[0]];
+
+/** The army of the player in `slot` (for sprite selection); `undefined` for an unknown slot. */
+export const getArmyForSlot = (match: MatchView, slot: number): MatchPlayer["army"] | undefined =>
+  getPlayerBySlot(match, slot)?.army;
 
 export const isOutOfBounds = (match: MatchView, [x, y]: BoardPosition): boolean =>
   x < 0 || y < 0 || y >= match.map.tiles.length || x >= match.map.tiles[0].length;
