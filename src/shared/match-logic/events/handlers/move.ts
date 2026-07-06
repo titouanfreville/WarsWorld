@@ -258,14 +258,17 @@ const getOneTileFuelCost = (match: MatchWrapper, unit: UnitWrapper): number => {
 };
 
 export const applyMoveEvent = (match: MatchWrapper, event: MoveEventWithoutSubEvent) => {
+  const unit = match.getUnitOrThrow(event.path[0]);
+
+  // The unit has acted this turn and is done — this MUST run even when standing still
+  // (in-place indirect attack, capture, or plain wait). Otherwise the unit keeps
+  // `isReady: true` and can act again, e.g. indirect units attacking multiple times.
+  unit.data.isReady = false;
+
   //check if unit is moving or just standing still
   if (event.path.length <= 1) {
     return;
   }
-
-  const unit = match.getUnitOrThrow(event.path[0]);
-
-  unit.data.isReady = false;
 
   //if unit was capturing, interrupt capture
   if ("currentCapturePoints" in unit.data) {
