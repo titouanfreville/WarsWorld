@@ -18,16 +18,44 @@ it decides nothing.
   types come from **tRPC type inference** (and subscription outputs) — never `import … from
   "shared/…"` or from `src/server`. `src/shared` is being removed; don't add new references to it.
 
-## Action queue (connection resilience)
+## Action buffer & reconciliation (locked design)
 
-Because every action is validated on the BE, the FE must tolerate round-trips and dropped
-connections:
+The FE never stores authoritative game state (that's what makes it drift and desync). It stores
+exactly two things and rebases on the BE:
 
-- **Queue actions locally**, submit to the BE, and reconcile against the **authoritative result**.
-  Show the move optimistically as a *preview*, but the BE's response is the truth — if it differs,
-  reconcile to the BE state (the BE owns conflict resolution).
-- On reconnect, **resync** from the authoritative event stream before accepting new local input.
-  It's a turn-based game, so prefer correctness over hiding latency.
+1. **Turn snapshot** — handed over by the BE at the *start of the player's turn*. It carries
+   everything needed to buffer simple actions with **zero rules knowledge** on the client:
+   - per owned unit: its **reachable move tiles**. Computed over the player's **visible** state —
+     a fog-hidden enemy must **not** shrink the reachable set (that would leak its position). The
+     real block is discovered only at execution (see fog-failure below).
+   - **capture**: which units can capture (infantry/mech only), their current capture points + rate.
+   - **production**: current **funds** and the **unit price table** (which base builds what).
+   - vision / fog state.
+2. **Action buffer** — the ordered stack of the player's intent, applied optimistically on top of
+   the snapshot as **pure presentation deltas** (no engine, no rules):
+   - **move** → slide the sprite to a tile in that unit's snapshot reachable set.
+   - **capture** → mark capturing, tick points at the unit's known rate.
+   - **production** → place the unit, subtract the price-table cost from local funds.
+
+**Attack is never resolved on the client** — combat (damage, luck, counterattack) is BE-only. Buffer
+the attack, submit it, and **serialize on attacks**: an unresolved attack blocks the *next attack*
+until the BE returns its resolution, but moves / captures / production keep buffering optimistically
+alongside it.
+
+**Reconciliation** (the FE stack is the source of truth for *intent*; the BE for *rules*):
+- Replay the buffered stack against authoritative BE state; the BE rules each action.
+- **Fog move failure**: when a buffered move fails (a hidden enemy was in the way), apply moves up
+  to **and including** the first one that fails, then **cancel every buffered action after it**.
+- **Reachability staleness**: validate buffered moves against the **turn-start snapshot only**; let
+  the BE reconcile within-turn conflicts (occupied tile, blocked path) via the fog-failure rule —
+  don't re-run pathfinding on the client.
+- **BE-wins cutover**: when the player can't submit their turn (hard disconnect, or — later — the
+  turn timer elapses), **discard the buffer and show BE state**. The opponent already moved against
+  state only the BE knew, so replaying local intent is meaningless. Structure the reconciliation so
+  a **per-turn timer** can drive this cutover; do not implement the timer yet.
+
+This makes desync impossible by construction: the client is always `BE snapshot + pending intent`,
+never a second authoritative copy. See `src/frontend/utils/action-queue.ts` for the buffer reducer.
 
 ## Layout
 
