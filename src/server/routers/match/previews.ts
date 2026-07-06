@@ -6,6 +6,7 @@ import { getUnloadablePositions } from "shared/match-logic/events/handlers/unloa
 import { getAccessibleNodes, getAttackTargetTiles } from "shared/match-logic/pathfinding";
 import type { UnitType } from "shared/schemas/unit";
 import { unitTypeSchema } from "shared/schemas/unit";
+import { buildTurnSnapshot } from "./turn-snapshot";
 import type { MatchWrapper } from "shared/wrappers/match";
 import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
 import { positionSchema } from "shared/schemas/position";
@@ -38,6 +39,16 @@ const getOwnedUnitOrThrow = (
 };
 
 export const matchPreviewRouter = router({
+  /**
+   * Everything the client needs to buffer simple actions this turn without any rules knowledge
+   * (see `src/frontend/CLAUDE.md`): per-unit reachable tiles, capture state, and production data.
+   * Fetched once at the start of the player's turn; the client applies its buffered moves/captures/
+   * production against this and lets the backend reconcile.
+   */
+  turnSnapshot: playerInMatchBaseProcedure.query(({ ctx: { match, player } }) =>
+    buildTurnSnapshot(match, player),
+  ),
+
   /** Tiles the unit can move to, with the shortest-path distance and parent for path drawing. */
   reachableTiles: playerInMatchBaseProcedure
     .input(z.object({ unitPosition: positionSchema }))

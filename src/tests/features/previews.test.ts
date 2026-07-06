@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
 import { getBattleForecast } from "shared/match-logic/combat-forecast";
 import { getAccessibleNodes, getAttackTargetTiles } from "shared/match-logic/pathfinding";
 import type { Position } from "shared/schemas/position";
 import { isSamePosition } from "shared/schemas/position";
-import { addUnit, createTestMatch, tiles } from "../helpers/scenario";
+import { addUnit, createTestMatch, property, tiles } from "../helpers/scenario";
 
 const has = (positions: Position[], target: Position) =>
   positions.some((p) => isSamePosition(p, target));
@@ -72,5 +73,35 @@ describe("previews", () => {
     expect(forecast.attackerDamage.max).toBeGreaterThan(0);
     expect(forecast.attackerDamage.min).toBeLessThanOrEqual(forecast.attackerDamage.max);
     expect(forecast.defenderDamage.min).toBeLessThanOrEqual(forecast.defenderDamage.max);
+  });
+
+  it("builds a turn snapshot: funds, capture eligibility, price table, buildable base", () => {
+    const match = createTestMatch({
+      tiles: roadRow(2),
+      players: [{ slot: 0, hasCurrentTurn: true, funds: 5000 }, { slot: 1 }],
+      // Enemy city under our infantry (capturable); our own empty base to build on.
+      changeableTiles: [property("city", 1, [0, 0]), property("base", 0, [1, 0])],
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    addUnit(p0, "infantry", [0, 0]);
+
+    const snapshot = buildTurnSnapshot(match, p0);
+
+    expect(snapshot.funds).toBe(5000);
+
+    const infantry = snapshot.units.find((unit) => unit.type === "infantry");
+    expect(infantry?.canCapture).toBe(true); // inf on an enemy property
+    expect(infantry?.reachableTiles.length).toBeGreaterThan(0);
+
+    expect(snapshot.production.priceTable).toContainEqual({
+      type: "infantry",
+      cost: 1000,
+      facility: "base",
+    });
+    // The owned, empty base is buildable; the enemy city is not a production facility.
+    expect(snapshot.production.buildableTiles).toContainEqual({
+      position: [1, 0],
+      facility: "base",
+    });
   });
 });
