@@ -2,18 +2,24 @@ import { describe, expect, it } from "vitest";
 import type { MainAction } from "shared/schemas/action";
 import {
   actionQueueReducer,
+  canBufferAttack,
+  hasUnresolvedAttack,
   initialActionQueueState,
   nextPendingAction,
   optimisticActions,
+  type ActionKind,
   type ActionQueueEvent,
   type ActionQueueState,
 } from "frontend/utils/action-queue";
 
-const PASS: MainAction = { type: "passTurn" };
-const WAIT = (x: number): MainAction => ({
-  type: "move",
-  path: [[x, 0]],
-  subAction: { type: "wait" },
+// The reducer treats the action payload as opaque — only `kind` drives its behavior — so a plain
+// move payload is fine for every case; the `kind` label is what matters.
+const MOVE: MainAction = { type: "move", path: [[0, 0]], subAction: { type: "wait" } };
+const enq = (clientId: string, kind: ActionKind): ActionQueueEvent => ({
+  type: "enqueue",
+  clientId,
+  kind,
+  action: MOVE,
 });
 
 const run = (events: ActionQueueEvent[], start = initialActionQueueState): ActionQueueState =>
@@ -21,10 +27,7 @@ const run = (events: ActionQueueEvent[], start = initialActionQueueState): Actio
 
 describe("action queue reducer", () => {
   it("buffers actions in submit order with a monotonic seq", () => {
-    const state = run([
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-      { type: "enqueue", clientId: "b", action: PASS },
-    ]);
+    const state = run([enq("a", "move"), enq("b", "production")]);
 
     expect(state.actions.map((a) => [a.clientId, a.seq, a.status])).toEqual([
       ["a", 0, "pending"],
@@ -34,21 +37,14 @@ describe("action queue reducer", () => {
   });
 
   it("ignores a duplicate clientId so a retry can't double-buffer", () => {
-    const state = run([
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-    ]);
+    const state = run([enq("a", "move"), enq("a", "move")]);
 
     expect(state.actions).toHaveLength(1);
   });
 
   it("drains strictly in order, one in flight at a time", () => {
-    let state = run([
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-      { type: "enqueue", clientId: "b", action: PASS },
-    ]);
+    let state = run([enq("a", "move"), enq("b", "production")]);
 
-    // Earliest pending is 'a'.
     expect(nextPendingAction(state)?.clientId).toBe("a");
 
     // Once 'a' is sent, nothing else is drained until it resolves.
@@ -62,25 +58,45 @@ describe("action queue reducer", () => {
   });
 
   it("keeps a rejected action out of the optimistic preview and out of the drain", () => {
-    let state = run([
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-      { type: "enqueue", clientId: "b", action: PASS },
-      { type: "sent", clientId: "a" },
-    ]);
+    let state = run([enq("a", "move"), enq("b", "production"), { type: "sent", clientId: "a" }]);
 
     state = actionQueueReducer(state, { type: "rejected", clientId: "a" });
 
-    // 'a' is no longer previewed; 'b' remains and can now drain.
     expect(optimisticActions(state).map((a) => a.clientId)).toEqual(["b"]);
     expect(nextPendingAction(state)?.clientId).toBe("b");
   });
 
+  it("blocks a new attack while one is unresolved, but not simple actions", () => {
+    let state = run([enq("atk", "attack")]);
+    expect(hasUnresolvedAttack(state)).toBe(true);
+    expect(canBufferAttack(state)).toBe(false);
+
+    // A move can still be buffered alongside the pending attack.
+    state = actionQueueReducer(state, enq("mv", "move"));
+    expect(state.actions).toHaveLength(2);
+    expect(canBufferAttack(state)).toBe(false); // still gated on the attack
+
+    // Sending the attack doesn't unblock (outcome still unknown); confirming it does.
+    state = actionQueueReducer(state, { type: "sent", clientId: "atk" });
+    expect(canBufferAttack(state)).toBe(false);
+    state = actionQueueReducer(state, { type: "confirmed", clientId: "atk" });
+    expect(canBufferAttack(state)).toBe(true);
+  });
+
+  it("cancels every action buffered after a failure (fog move failure)", () => {
+    let state = run([enq("a", "move"), enq("b", "move"), enq("c", "production")]);
+
+    // 'a' failed against authoritative state; the rest of the buffer rolls back, 'a' stays.
+    state = actionQueueReducer(state, { type: "cancelFollowing", clientId: "a" });
+
+    expect(state.actions.find((x) => x.clientId === "a")?.status).toBe("pending");
+    expect(state.actions.find((x) => x.clientId === "b")?.status).toBe("rejected");
+    expect(state.actions.find((x) => x.clientId === "c")?.status).toBe("rejected");
+    expect(optimisticActions(state).map((x) => x.clientId)).toEqual(["a"]);
+  });
+
   it("resets the buffer on a turn change / full resync", () => {
-    const state = run([
-      { type: "enqueue", clientId: "a", action: WAIT(1) },
-      { type: "sent", clientId: "a" },
-      { type: "reset" },
-    ]);
+    const state = run([enq("a", "move"), { type: "sent", clientId: "a" }, { type: "reset" }]);
 
     expect(state).toEqual(initialActionQueueState);
   });
