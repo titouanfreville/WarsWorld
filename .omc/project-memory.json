@@ -52,8 +52,8 @@
     "runtime": "Node.js 21.0.0"
   },
   "build": {
-    "buildCommand": "rtk tsc --noEmit 2>&1 | grep -E \"MatchBoardV2|board-menu|render-from-view\"; echo \"=== total ===\"; rtk tsc --noEmit 2>&1 | grep -c 'error TS'",
-    "testCommand": "cd /Users/titouan/perso/WarsWorld\necho \"=== suite ===\"; rtk proxy npx vitest run 2>&1 | grep -E \"Test Files|Tests |FAIL\" | tail -3\necho \"=== tsc ===\"; echo \"total: $(npx tsc --noEmit 2>&1 | grep -c 'error TS')\"\necho \"=== battle copter movement points ===\"; rtk grep -n -A2 \"battleCopter\\b\" src/shared/match-logic/game-constants/unit-properties.ts | grep -iE \"battleCopter|movementPoints|movementType\" | head",
+    "buildCommand": "cd /Users/titouan/perso/WarsWorld\necho \"=== tsc total ===\"; rtk proxy npx tsc --noEmit 2>&1 | grep -c 'error TS'\necho \"=== tsc mine ===\"; rtk proxy npx tsc --noEmit 2>&1 | grep -E \"MatchBoardV2\" | grep -v \"match-logic\"\necho \"=== lint ===\"; rtk lint --fix src/components/client-only/MatchBoardV2.tsx 2>&1 | tail -2",
+    "testCommand": "cd /Users/titouan/perso/WarsWorld\ngit rm -q src/pixi/v2/render-buffered-intent.ts 2>/dev/null || rm -f src/pixi/v2/render-buffered-intent.ts\necho \"removed orphaned renderer\"\necho \"=== lint ===\"; rtk lint --fix src/components/client-only/MatchBoardV2.tsx src/pixi/v2/render-path-arrow.ts 2>&1 | tail -2\necho \"=== tests ===\"; rtk proxy npx vitest run 2>&1 | grep -E \"Test Files|Tests |FAIL\" | tail -3",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -192,15 +192,27 @@
   },
   "hotPaths": [
     {
+      "path": "src/server/routers/match.ts",
+      "accessCount": 17,
+      "lastAccessed": 1783438638296,
+      "type": "file"
+    },
+    {
       "path": ".eslintrc.cjs",
       "accessCount": 6,
       "lastAccessed": 1783344399432,
       "type": "file"
     },
     {
-      "path": "src/server/routers/match.ts",
+      "path": "src/shared/wrappers/vision.ts",
       "accessCount": 6,
-      "lastAccessed": 1783350416456,
+      "lastAccessed": 1783437267505,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/match-logic/events/handlers/move.ts",
+      "accessCount": 6,
+      "lastAccessed": 1783438915738,
       "type": "file"
     },
     {
@@ -213,6 +225,18 @@
       "path": "src/pixi/renderAttackTiles.ts",
       "accessCount": 5,
       "lastAccessed": 1783360651095,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/wrappers/team.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783428919842,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/wrappers/match.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783437229996,
       "type": "file"
     },
     {
@@ -234,9 +258,27 @@
       "type": "file"
     },
     {
-      "path": "src/shared/wrappers/match.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783343768520,
+      "path": "src/tests/helpers/scenario.ts",
+      "accessCount": 4,
+      "lastAccessed": 1783428128452,
+      "type": "file"
+    },
+    {
+      "path": "src/server/routers/action.ts",
+      "accessCount": 4,
+      "lastAccessed": 1783430904523,
+      "type": "file"
+    },
+    {
+      "path": "src/server/routers/match/create.ts",
+      "accessCount": 4,
+      "lastAccessed": 1783435466337,
+      "type": "file"
+    },
+    {
+      "path": "src/server/match-store.ts",
+      "accessCount": 4,
+      "lastAccessed": 1783439802735,
       "type": "file"
     },
     {
@@ -258,27 +300,9 @@
       "type": "file"
     },
     {
-      "path": "src/server/routers/match/create.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783350424971,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/move.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783368762404,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/action.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783413454058,
-      "type": "file"
-    },
-    {
       "path": "src/shared/types/server-match-state.ts",
-      "accessCount": 2,
-      "lastAccessed": 1783343771046,
+      "accessCount": 3,
+      "lastAccessed": 1783428152555,
       "type": "file"
     },
     {
@@ -294,39 +318,33 @@
       "type": "file"
     },
     {
-      "path": "src/tests/helpers/scenario.ts",
+      "path": "src/shared/wrappers/player-in-match.ts",
       "accessCount": 2,
-      "lastAccessed": 1783350006043,
+      "lastAccessed": 1783429206741,
       "type": "file"
     },
     {
-      "path": "src/server/match-store.ts",
+      "path": "src/shared/match-logic/events/event-to-emittable.ts",
       "accessCount": 2,
-      "lastAccessed": 1783368919276,
+      "lastAccessed": 1783431929261,
       "type": "file"
     },
     {
-      "path": "src/shared/wrappers/team.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783342331693,
+      "path": "src/shared/match-logic/events/handlers/passTurn.ts",
+      "accessCount": 2,
+      "lastAccessed": 1783432397617,
       "type": "file"
     },
     {
-      "path": "src/shared/wrappers/vision.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783342331876,
+      "path": "prisma/seed.ts",
+      "accessCount": 2,
+      "lastAccessed": 1783435484079,
       "type": "file"
     },
     {
       "path": "src/tests/features/vision-fog.test.ts",
       "accessCount": 1,
       "lastAccessed": 1783342457163,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/event-to-emittable.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783342496675,
       "type": "file"
     },
     {
@@ -438,12 +456,6 @@
       "type": "file"
     },
     {
-      "path": "prisma/seed.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783345290500,
-      "type": "file"
-    },
-    {
       "path": "src/server/trpc/middleware/player.ts",
       "accessCount": 1,
       "lastAccessed": 1783346689215,
@@ -459,18 +471,6 @@
       "path": "src/tests/features/pass-turn.test.ts",
       "accessCount": 1,
       "lastAccessed": 1783350019781,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/passTurn.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350029546,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/wrappers/player-in-match.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350242836,
       "type": "file"
     },
     {
