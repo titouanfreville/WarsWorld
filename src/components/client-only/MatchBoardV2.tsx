@@ -8,18 +8,39 @@ import {
   getPlayerById,
   getTileAt,
   getUnitAt,
+  isOutOfBounds,
   samePosition,
 } from "frontend/components/match/match-view";
-import type {
-  BuildableTile,
-  SnapshotUnit,
-  TurnSnapshot,
+import { applyBufferedActions } from "frontend/components/match/optimistic-view";
+import { PingIndicator } from "frontend/components/match/PingIndicator";
+import { PowerBar } from "frontend/components/match/PowerBar";
+import type { SnapshotUnit, TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
+import {
+  attackTargetsFrom,
+  canLaunchFrom,
+  isLoadableTile,
+  reconstructPath,
+  repairTargetsAt,
+  snapshotUnitAt,
+  unloadDropsAt,
+  type RepairTarget,
+  type UnloadDrop,
 } from "frontend/components/match/turn-snapshot-view";
-import { reconstructPath, snapshotUnitAt } from "frontend/components/match/turn-snapshot-view";
+import {
+  actionQueueReducer,
+  canBufferAttack,
+  hasUnresolvedActions,
+  initialActionQueueState,
+  nextPendingAction,
+  optimisticActions,
+  type ActionKind,
+} from "frontend/utils/action-queue";
+import { BufferIndicator } from "frontend/components/match/BufferIndicator";
 import { trpc } from "frontend/utils/trpc-client";
 import { loadSpritesFromSpriteMap } from "pixi/load-spritesheet";
 import { Application, Assets, Container } from "pixi.js";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
+import type { MainAction } from "shared/schemas/action";
 import { baseTileSize, mapBorder, renderMultiplier, renderedTileSize } from "./MatchRenderer";
 import {
   createActionMenuElement,
@@ -32,6 +53,8 @@ import {
   renderMapFromView,
   renderUnitsFromView,
 } from "../../pixi/v2/render-from-view";
+import { renderBufferedIntent } from "../../pixi/v2/render-buffered-intent";
+import { intentArrows, phantomPositions } from "frontend/components/match/buffered-intent";
 
 type Props = {
   matchId: string;
@@ -41,6 +64,14 @@ type Props = {
 
 const REACHABLE_COLOR = "#43d9e4";
 const ATTACK_COLOR = "#be1919";
+const UNLOAD_COLOR = "#3fb950";
+
+const DROP_DIRECTIONS: { direction: UnloadDrop["direction"]; dx: number; dy: number }[] = [
+  { direction: "up", dx: 0, dy: -1 },
+  { direction: "down", dx: 0, dy: 1 },
+  { direction: "left", dx: -1, dy: 0 },
+  { direction: "right", dx: 1, dy: 0 },
+];
 
 const toMutable = (path: readonly BoardPosition[]): [number, number][] =>
   path.map((p) => [p[0], p[1]]);
@@ -58,24 +89,48 @@ const inList = (list: readonly BoardPosition[], pos: BoardPosition): boolean =>
  * Interaction: select a unit (blue reachable tiles), click a reachable tile to stage a move there,
  * then pick from an in-board contextual menu (ATTACK / CAPTURE / WAIT). ATTACK reveals red enemies
  * to click; a facility opens a build menu of its affordable units. Only turn management lives in the
- * top bar — every other action is a pixi menu anchored at the tile (matching the v1 look). Attacks
- * are BE-resolved. Optimistic buffering isn't wired yet — everything is BE-authoritative.
+ * top bar — every other action is a pixi menu anchored at the tile (matching the v1 look).
+ *
+ * Actions are buffered optimistically (see `applyBufferedActions` + `action-queue`): move/capture/
+ * production show instantly as presentation deltas while the queue drains one action at a time and
+ * reconciles against the BE's authoritative refetch. Attacks are BE-resolved and serialize on each
+ * other (an unresolved attack blocks the next). Combat is never previewed on the client.
  */
 export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const reachableHighlightRef = useRef<Container | null>(null);
   const attackHighlightRef = useRef<Container | null>(null);
+  const unloadHighlightRef = useRef<Container | null>(null);
   // Selection: the unit's origin tile. Staged destination: where a move is being composed (null =
-  // acting from the origin). Attack targets: the currently clickable red tiles. All read by the
-  // imperative pixi click handler, so they live in refs.
+  // acting from the origin). Attack targets: the currently clickable red tiles. Unload drops: the
+  // clickable green drop tiles once UNLOAD is chosen. All read by the imperative pixi click handler.
   const selectionRef = useRef<BoardPosition | null>(null);
   const stagedDestRef = useRef<BoardPosition | null>(null);
   const attackTargetsRef = useRef<BoardPosition[]>([]);
+  const unloadDropsRef = useRef<UnloadDrop[]>([]);
+  // While arming a missile: the move path onto the silo. The next board click is the strike target.
+  const missileArmRef = useRef<{ path: readonly BoardPosition[] } | null>(null);
   const resetInteractionRef = useRef<() => void>(() => undefined);
 
   const matchRef = useRef<MatchView | null>(null);
   const snapshotRef = useRef<TurnSnapshot | null>(null);
+  // The unit price table is static within a turn (production doesn't change prices), so latch the
+  // last one the BE sent and keep building from it — no round-trip on each producer, and it survives
+  // the per-action snapshot refetch. Only the very first turn of the match waits for it once.
+  const priceTableRef = useRef<TurnSnapshot["production"]["priceTable"]>([]);
+
+  // Optimistic action buffer (locked design in src/frontend/CLAUDE.md). The board renders
+  // `authoritative match + pending intent`; the queue drains one action at a time and reconciles
+  // against the BE's authoritative refetch, so it can't desync.
+  const [queue, dispatchQueue] = useReducer(actionQueueReducer, initialActionQueueState);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+  // clientIds whose submit the BE accepted — dropped from the buffer once the authoritative state
+  // that includes them lands (avoids a flicker/double-apply between success and refetch).
+  const acknowledgedRef = useRef<Set<string>>(new Set());
+  // clientIds currently in flight, so a re-run of the drain effect can't submit the same one twice.
+  const inFlightRef = useRef<Set<string>>(new Set());
 
   const spriteSheetQuery = useQuery({
     queryKey: ["spritesheets"],
@@ -100,8 +155,25 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const utils = trpc.useUtils();
   const actionMutation = trpc.action.send.useMutation();
 
-  matchRef.current = match ?? null;
-  snapshotRef.current = isMyTurn ? (snapshotQuery.data ?? null) : null;
+  const snapshot = isMyTurn ? (snapshotQuery.data ?? null) : null;
+
+  if (snapshot !== null && snapshot.production.priceTable.length > 0) {
+    priceTableRef.current = snapshot.production.priceTable;
+  }
+
+  // The board's rendered truth: authoritative state with the buffered intent applied on top.
+  const optimisticView = useMemo(
+    () =>
+      match === undefined
+        ? undefined
+        : applyBufferedActions(match, playerId, snapshot, optimisticActions(queue)),
+    [match, snapshot, queue, playerId],
+  );
+
+  // Interaction handlers read the OPTIMISTIC view (what's on screen), not the raw authoritative one,
+  // so a just-moved unit is looked up at its new tile and can't be re-selected.
+  matchRef.current = optimisticView ?? null;
+  snapshotRef.current = snapshot;
 
   trpc.action.onEvent.useSubscription(
     { playerId, matchId },
@@ -116,22 +188,62 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const onActionError = (label: string) => (error: { message: string }) =>
     console.error(`[v2] ${label} rejected by BE:`, error.message);
 
-  // Enemies attackable from `fromPosition` this turn (empty on error / no snapshot).
-  const fetchAttackTargets = async (
-    unitPosition: BoardPosition,
-    fromPosition: BoardPosition,
-  ): Promise<BoardPosition[]> => {
-    try {
-      return await utils.matchPreview.attackTargets.fetch({
-        matchId,
-        playerId,
-        unitPosition: [unitPosition[0], unitPosition[1]],
-        fromPosition: [fromPosition[0], fromPosition[1]],
-      });
-    } catch {
-      return [];
+  // Drain the buffer: submit the earliest pending action, one in flight at a time.
+  useEffect(() => {
+    const pending = nextPendingAction(queue);
+
+    if (pending === undefined || inFlightRef.current.has(pending.clientId)) {
+      return;
     }
-  };
+
+    inFlightRef.current.add(pending.clientId);
+    dispatchQueue({ type: "sent", clientId: pending.clientId });
+
+    // The buffer stores the pure action; the transport adds the match/player envelope on submit.
+    actionMutation.mutate(
+      { ...pending.action, playerId, matchId },
+      {
+        onSuccess() {
+          // Keep the optimistic delta until the authoritative refetch lands, then drop it (below).
+          acknowledgedRef.current.add(pending.clientId);
+        },
+        onError(error) {
+          onActionError(pending.kind)(error);
+          // Reject only THIS action. Each unit acts once per turn, so buffered actions are
+          // independent; the rest keep draining and are re-validated by the BE, so a genuinely
+          // dependent one (e.g. moving onto a tile a failed move was meant to vacate) fails there
+          // on its own. We don't pre-cancel unrelated moves.
+          dispatchQueue({ type: "rejected", clientId: pending.clientId });
+        },
+        onSettled() {
+          inFlightRef.current.delete(pending.clientId);
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue]);
+
+  // Reconcile: when fresh authoritative state arrives it already includes every accepted action, so
+  // drop those from the buffer (seamless hand-off from optimistic delta to BE truth).
+  useEffect(() => {
+    if (match === undefined || acknowledgedRef.current.size === 0) {
+      return;
+    }
+
+    for (const clientId of acknowledgedRef.current) {
+      dispatchQueue({ type: "confirmed", clientId });
+    }
+
+    acknowledgedRef.current.clear();
+  }, [match]);
+
+  // Turn boundary (ours ends / opponent's begins) -> discard the buffer, the BE wins. Structured so
+  // a per-turn timer could later drive this same cutover (not implemented yet).
+  useEffect(() => {
+    dispatchQueue({ type: "reset" });
+    acknowledgedRef.current.clear();
+    inFlightRef.current.clear();
+  }, [match?.turn]);
 
   // Create the pixi app once, with its own canvas. Destroy only on unmount.
   useEffect(() => {
@@ -157,17 +269,18 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     };
   }, []);
 
-  // (Re)render the stage content whenever the data changes. The app itself persists.
+  // (Re)render the stage content whenever the rendered (optimistic) view changes. The app persists.
   useEffect(() => {
     const app = appRef.current;
+    const view = optimisticView;
 
-    if (app === null || match === undefined || spriteSheets === undefined) {
+    if (app === null || view === undefined || spriteSheets === undefined) {
       return;
     }
 
     app.renderer.resize(
-      match.map.tiles[0].length * renderedTileSize + renderedTileSize,
-      match.map.tiles.length * renderedTileSize + renderedTileSize,
+      view.map.tiles[0].length * renderedTileSize + renderedTileSize,
+      view.map.tiles.length * renderedTileSize + renderedTileSize,
     );
 
     for (const child of app.stage.removeChildren()) {
@@ -175,11 +288,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     }
 
     const mapSize = {
-      width: match.map.tiles[0].length,
-      height: match.map.tiles.length,
+      width: view.map.tiles[0].length,
+      height: view.map.tiles.length,
     };
 
-    const mapContainer = renderMapFromView(match, spriteSheets);
+    const mapContainer = renderMapFromView(view, spriteSheets);
     // Menus live on their own layer above the units, sharing the map's offset so tile coordinates
     // line up. Only turn management stays in the top bar; every other action is a board menu.
     const menuLayer = new Container();
@@ -203,39 +316,97 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     const drawHighlights = (
       reachable: readonly BoardPosition[],
       attack: readonly BoardPosition[],
+      unload: readonly BoardPosition[] = [],
     ) => {
       reachableHighlightRef.current?.destroy();
       attackHighlightRef.current?.destroy();
+      unloadHighlightRef.current?.destroy();
       const blue = renderHighlightTiles(reachable, REACHABLE_COLOR);
       const red = renderHighlightTiles(attack, ATTACK_COLOR);
-      mapContainer.addChild(blue, red);
+      const green = renderHighlightTiles(unload, UNLOAD_COLOR);
+      mapContainer.addChild(blue, red, green);
       reachableHighlightRef.current = blue;
       attackHighlightRef.current = red;
+      unloadHighlightRef.current = green;
     };
 
     const resetInteraction = () => {
       selectionRef.current = null;
       stagedDestRef.current = null;
       attackTargetsRef.current = [];
+      unloadDropsRef.current = [];
+      missileArmRef.current = null;
       closeMenu();
       drawHighlights([], []);
     };
 
     resetInteractionRef.current = resetInteraction;
 
-    const submit = (
-      label: string,
+    // Buffer an action optimistically and close the interaction; the drain effect submits it and
+    // reconciles against the BE. This is the ONLY submit path for board actions now.
+    const enqueue = (kind: ActionKind, action: MainAction) => {
+      resetInteraction();
+      dispatchQueue({ type: "enqueue", clientId: crypto.randomUUID(), kind, action });
+    };
+
+    const enqueueMove = (
+      kind: ActionKind,
       path: readonly BoardPosition[],
       subAction:
         | { type: "wait" }
         | { type: "ability" }
         | { type: "attack"; defenderPosition: [number, number] },
-    ) => {
-      resetInteraction();
-      actionMutation.mutate(
-        { playerId, matchId, type: "move", path: toMutable(path), subAction },
-        { onError: onActionError(label) },
-      );
+    ) => enqueue(kind, { type: "move", path: toMutable(path), subAction });
+
+    // A unit's reachable tiles minus those a BUFFERED move now occupies (a tile another unit has
+    // been moved onto isn't a valid plain-move destination — we'd stack two units). Its own tile and
+    // valid load targets stay. Vacated tiles are already free in the optimistic view. We don't
+    // re-path around new blockers — the BE reconciles that (per the locked design).
+    const movableTiles = (unit: SnapshotUnit): BoardPosition[] =>
+      unit.reachableTiles
+        .map((tile) => tile.position)
+        .filter(
+          (pos) =>
+            samePosition(pos, unit.position) ||
+            getUnitAt(view, pos) === undefined ||
+            isLoadableTile(unit, pos),
+        );
+
+    // Fallback unload drops for cargo the turn-start snapshot doesn't know about (a load buffered
+    // THIS turn): the adjacent in-bounds, empty tiles around `dest`, one set per loaded slot. Terrain
+    // isn't checked here — the BE validates it and rejects a bad drop, so it can't desync.
+    const optimisticUnloadDrops = (unit: SnapshotUnit, dest: BoardPosition): UnloadDrop[] => {
+      const transport = getUnitAt(view, unit.position) as
+        | { loadedUnit?: unknown; loadedUnit2?: unknown }
+        | undefined;
+
+      if (transport === undefined) {
+        return [];
+      }
+
+      const slots: boolean[] = [];
+
+      if ("loadedUnit" in transport && transport.loadedUnit != null) {
+        slots.push(false);
+      }
+
+      if ("loadedUnit2" in transport && transport.loadedUnit2 != null) {
+        slots.push(true);
+      }
+
+      const drops: UnloadDrop[] = [];
+
+      for (const isSecondUnit of slots) {
+        for (const { direction, dx, dy } of DROP_DIRECTIONS) {
+          const position: [number, number] = [dest[0] + dx, dest[1] + dy];
+
+          if (!isOutOfBounds(view, position) && getUnitAt(view, position) === undefined) {
+            drops.push({ isSecondUnit, direction, position });
+          }
+        }
+      }
+
+      return drops;
     };
 
     // Open a contextual action menu (WAIT / CAPTURE / ATTACK) anchored at `dest`.
@@ -255,82 +426,272 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       openMenu = menu;
     };
 
-    // Stage a move at `dest` and offer the actions available from there (attack / capture / wait).
-    const stageMove = (unit: SnapshotUnit, origin: BoardPosition, dest: BoardPosition) => {
-      const reachable = unit.reachableTiles.map((tile) => tile.position);
-      const myPlayer = getPlayerById(match, playerId);
-      const destTile = getTileAt(match, dest);
+    // After UNLOAD is chosen: if the transport carries two units, first pick which one; then light
+    // up that unit's valid drop tiles (green) for the player to click.
+    const showUnloadDrops = (unit: SnapshotUnit, dest: BoardPosition, drops: UnloadDrop[]) => {
+      const transport = getUnitAt(view, unit.position) as
+        | { loadedUnit?: { type: string } | null; loadedUnit2?: { type: string } | null }
+        | undefined;
+
+      const slotLabel = (isSecond: boolean): string => {
+        const cargo = isSecond ? transport?.loadedUnit2 : transport?.loadedUnit;
+        return cargo ? cargo.type.toUpperCase() : "UNIT";
+      };
+
+      const lightUpSlot = (isSecond: boolean) => {
+        const slotDrops = drops.filter((drop) => drop.isSecondUnit === isSecond);
+        unloadDropsRef.current = slotDrops;
+        closeMenu();
+        drawHighlights(
+          [],
+          [],
+          slotDrops.map((drop) => drop.position),
+        );
+      };
+
+      const slots = Array.from(new Set(drops.map((drop) => drop.isSecondUnit)));
+
+      if (slots.length === 1) {
+        lightUpSlot(slots[0]);
+
+        return;
+      }
+
+      openActionMenu(
+        dest,
+        slots.map((isSecond) => ({
+          label: slotLabel(isSecond),
+          onSelect: () => lightUpSlot(isSecond),
+        })),
+      );
+    };
+
+    // After REPAIR is chosen: pick which adjacent friendly to repair (its direction), then buffer the
+    // move+repair. A single target repairs immediately; multiple offer a small submenu.
+    const chooseRepair = (unit: SnapshotUnit, dest: BoardPosition, targets: RepairTarget[]) => {
+      const bufferRepair = (target: RepairTarget) => {
+        const path = reconstructPath(unit, dest);
+
+        if (path !== null) {
+          enqueue("repair", {
+            type: "move",
+            path: toMutable(path),
+            subAction: { type: "repair", direction: target.direction },
+          });
+        }
+      };
+
+      if (targets.length === 1) {
+        bufferRepair(targets[0]);
+
+        return;
+      }
+
+      openActionMenu(
+        dest,
+        targets.map((target) => ({
+          label: `REPAIR ${(getUnitAt(view, target.position)?.type ?? "unit").toUpperCase()}`,
+          onSelect: () => bufferRepair(target),
+        })),
+      );
+    };
+
+    // After LAUNCH is chosen: arm the missile (light the whole board red) and let the next click pick
+    // the strike tile. The path onto the silo is captured now; the target is chosen on the board.
+    const armMissile = (unit: SnapshotUnit, dest: BoardPosition) => {
+      const path = reconstructPath(unit, dest);
+
+      if (path === null) {
+        return;
+      }
+
+      closeMenu();
+      missileArmRef.current = { path };
+      attackTargetsRef.current = [];
+      unloadDropsRef.current = [];
+
+      const everyTile: BoardPosition[] = [];
+
+      for (let y = 0; y < view.map.tiles.length; y++) {
+        for (let x = 0; x < view.map.tiles[y].length; x++) {
+          everyTile.push([x, y]);
+        }
+      }
+
+      drawHighlights(movableTiles(unit), everyTile); // red = pick any tile as the missile target
+    };
+
+    // Stage a move at `dest` and offer the actions available from there. Fully synchronous (load
+    // validity, attack targets and unload drops all come from the snapshot, not the network) so
+    // staging works instantly even offline / throttled — the whole point of buffering.
+    const stageMove = (unit: SnapshotUnit, dest: BoardPosition) => {
+      const reachable = movableTiles(unit);
+      const myPlayer = getPlayerById(view, playerId);
+      const destTile = getTileAt(view, dest);
+      const occupant = getUnitAt(view, dest);
+
+      // --- Onto a friendly unit: a LOAD or JOIN, but only when the engine says it's valid. ---
+      if (occupant !== undefined && !samePosition(dest, unit.position)) {
+        if (!isLoadableTile(unit, dest)) {
+          return; // occupied by a friendly the BE won't let us load/join into — no action here
+        }
+
+        stagedDestRef.current = dest;
+        attackTargetsRef.current = [];
+        unloadDropsRef.current = [];
+        drawHighlights(reachable, []);
+
+        openActionMenu(dest, [
+          {
+            label: occupant.type === unit.type ? "JOIN" : "LOAD",
+            onSelect: () => {
+              const path = reconstructPath(unit, dest);
+
+              if (path !== null) {
+                enqueueMove("move", path, { type: "wait" });
+              }
+            },
+          },
+        ]);
+
+        return;
+      }
+
+      // --- Onto an empty tile: wait / capture / attack / unload. ---
       const canCapture =
         (unit.type === "infantry" || unit.type === "mech") &&
         myPlayer !== undefined &&
         "playerSlot" in destTile &&
         destTile.playerSlot !== myPlayer.slot;
 
-      void (async () => {
-        const targets = await fetchAttackTargets(origin, dest);
+      const targets = attackTargetsFrom(unit, dest);
+      // An attack can only be offered if no earlier attack is still unresolved (they serialize).
+      const canAttack = targets.length > 0 && canBufferAttack(queueRef.current);
 
-        stagedDestRef.current = dest;
-        attackTargetsRef.current = targets;
-        drawHighlights(reachable, []); // red targets appear only once ATTACK is chosen
+      // Unload drops from the snapshot; if the snapshot has no unload data for this transport at all
+      // (a load buffered this turn it doesn't know about) but the optimistic view shows cargo, fall
+      // back to adjacent empty tiles so the player can unload right away without waiting for confirm.
+      let drops = unloadDropsAt(unit, dest);
 
-        const options: { label: string; onSelect: () => void }[] = [];
+      if (drops.length === 0 && unit.unloadsByTile.length === 0) {
+        drops = optimisticUnloadDrops(unit, dest);
+      }
 
-        if (targets.length > 0) {
-          options.push({
-            label: "ATTACK",
-            onSelect: () => {
-              closeMenu();
-              drawHighlights(reachable, targets); // now pick a red enemy on the board
-            },
-          });
-        }
+      stagedDestRef.current = dest;
+      attackTargetsRef.current = canAttack ? targets : [];
+      unloadDropsRef.current = [];
+      drawHighlights(reachable, []); // red targets appear only once ATTACK is chosen
 
-        if (canCapture) {
-          options.push({
-            label: "CAPTURE",
-            onSelect: () => {
-              const path = reconstructPath(unit, dest);
+      const options: { label: string; onSelect: () => void }[] = [];
 
-              if (path !== null) {
-                submit("capture", path, { type: "ability" });
-              }
-            },
-          });
-        }
-
+      if (canAttack) {
         options.push({
-          label: "WAIT",
+          label: "ATTACK",
+          onSelect: () => {
+            closeMenu();
+            drawHighlights(reachable, targets); // now pick a red enemy on the board
+          },
+        });
+      }
+
+      if (canCapture) {
+        options.push({
+          label: "CAPTURE",
           onSelect: () => {
             const path = reconstructPath(unit, dest);
 
             if (path !== null) {
-              submit("move", path, { type: "wait" });
+              enqueueMove("capture", path, { type: "ability" });
             }
           },
         });
+      }
 
-        openActionMenu(dest, options);
-      })();
+      if (drops.length > 0) {
+        options.push({
+          label: "UNLOAD",
+          onSelect: () => showUnloadDrops(unit, dest, drops),
+        });
+      }
+
+      // Ability: APC supply, or a sub/stealth toggle. The snapshot gives the neutral direction
+      // (hide/reveal); a sub DIVE/SURFACEs while an aircraft (stealth) HIDE/APPEARs.
+      if (unit.ability !== null) {
+        const conceal = unit.type === "sub" ? "DIVE" : "HIDE";
+        const reveal = unit.type === "sub" ? "SURFACE" : "APPEAR";
+        const abilityLabel = { supply: "SUPPLY", hide: conceal, reveal }[unit.ability.kind];
+
+        options.push({
+          label: abilityLabel,
+          onSelect: () => {
+            const path = reconstructPath(unit, dest);
+
+            if (path !== null) {
+              enqueueMove("ability", path, { type: "ability" });
+            }
+          },
+        });
+      }
+
+      // Launch missile: an infantry/mech ending on an unfired silo can fire (target picked next).
+      if (canLaunchFrom(unit, dest)) {
+        options.push({ label: "LAUNCH", onSelect: () => armMissile(unit, dest) });
+      }
+
+      // Black-boat repair: heal/resupply an adjacent friendly.
+      const repairTargets = repairTargetsAt(unit, dest);
+
+      if (repairTargets.length > 0) {
+        options.push({
+          label: "REPAIR",
+          onSelect: () => chooseRepair(unit, dest, repairTargets),
+        });
+      }
+
+      // Delete (self-destruct) is an in-place main action — only offered on the unit's own tile.
+      if (samePosition(dest, unit.position)) {
+        options.push({
+          label: "DELETE",
+          onSelect: () =>
+            enqueue("delete", { type: "delete", position: [unit.position[0], unit.position[1]] }),
+        });
+      }
+
+      options.push({
+        label: "WAIT",
+        onSelect: () => {
+          const path = reconstructPath(unit, dest);
+
+          if (path !== null) {
+            enqueueMove("move", path, { type: "wait" });
+          }
+        },
+      });
+
+      openActionMenu(dest, options);
     };
 
-    // Open the build menu for an owned, empty production facility.
-    const openBuildMenu = (buildable: BuildableTile) => {
-      const snapshot = snapshotRef.current;
-      const myPlayer = getPlayerById(match, playerId);
-      const army = myPlayer === undefined ? undefined : getArmyForSlot(match, myPlayer.slot);
+    // Open the build menu for an owned, empty production facility. Uses the LATCHED price table (no
+    // round-trip) and OPTIMISTIC funds (already-buffered builds subtracted), so producing never
+    // waits on the BE after the round-start list is known.
+    const openBuildMenu = (position: BoardPosition, facility: string) => {
+      const myPlayer = getPlayerById(view, playerId);
+      const army = myPlayer === undefined ? undefined : getArmyForSlot(view, myPlayer.slot);
+      const priceTable = priceTableRef.current;
 
-      if (snapshot === null || army === undefined) {
+      if (myPlayer === undefined || army === undefined || priceTable.length === 0) {
         return;
       }
 
       const sheet = spriteSheets[army];
-      const buildableUnits = snapshot.production.priceTable
-        .filter((entry) => entry.facility === buildable.facility)
+      const availableFunds = myPlayer.funds;
+      const buildableUnits = priceTable
+        .filter((entry) => entry.facility === facility)
         .sort((a, b) => a.cost - b.cost);
 
       const unitSize = baseTileSize / 2;
       const elements = buildableUnits.map((entry, index) => {
-        const selectable = entry.cost <= snapshot.funds;
+        const selectable = entry.cost <= availableFunds;
         const element = createUnitMenuElement(
           sheet,
           { unitType: entry.type, cost: entry.cost, selectable },
@@ -339,17 +700,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
         if (selectable) {
           element.on("pointerdown", () => {
-            resetInteraction();
-            actionMutation.mutate(
-              {
-                type: "build",
-                unitType: entry.type,
-                position: [buildable.position[0], buildable.position[1]],
-                playerId,
-                matchId,
-              },
-              { onError: onActionError("build") },
-            );
+            enqueue("production", {
+              type: "build",
+              unitType: entry.type,
+              position: [position[0], position[1]],
+            });
           });
         }
 
@@ -359,7 +714,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       closeMenu();
       const menu = createBoardMenu(
         mapSize,
-        buildable.position,
+        position,
         buildableUnits.length * unitSize * 2,
         6,
         elements,
@@ -373,34 +728,66 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       const snapshot = snapshotRef.current;
       const selected = selectionRef.current;
 
-      if (currentMatch === null || snapshot === null) {
+      if (currentMatch === null) {
+        return;
+      }
+
+      // --- Arming a missile: the next in-bounds click is the strike target. ---
+      const arm = missileArmRef.current;
+
+      if (arm !== null) {
+        if (!isOutOfBounds(currentMatch, pos)) {
+          enqueue("launch", {
+            type: "move",
+            path: toMutable(arm.path),
+            subAction: { type: "launchMissile", targetPosition: [pos[0], pos[1]] },
+          });
+        } else {
+          resetInteraction();
+        }
+
         return;
       }
 
       // --- With a unit selected: attack a red enemy, or stage a move at a reachable tile ---
-      if (selected !== null) {
+      if (selected !== null && snapshot !== null) {
         const unit = snapshotUnitAt(snapshot, selected);
 
         if (unit !== undefined) {
+          // Clicked a green unload drop tile -> unload that cargo unit onto it.
+          const drop = unloadDropsRef.current.find((entry) => samePosition(entry.position, pos));
+
+          if (drop !== undefined) {
+            const path = reconstructPath(unit, stagedDestRef.current ?? selected);
+
+            if (path !== null) {
+              enqueue("move", {
+                type: "move",
+                path: toMutable(path),
+                subAction: {
+                  type: "unloadWait",
+                  unloads: [{ isSecondUnit: drop.isSecondUnit, direction: drop.direction }],
+                },
+              });
+            }
+
+            return;
+          }
+
           // Clicked a highlighted enemy -> attack from the staged origin (moving there first).
           if (inList(attackTargetsRef.current, pos)) {
             const path = reconstructPath(unit, stagedDestRef.current ?? selected);
 
-            if (path !== null) {
-              submit("attack", path, { type: "attack", defenderPosition: [pos[0], pos[1]] });
+            if (path !== null && canBufferAttack(queueRef.current)) {
+              enqueueMove("attack", path, { type: "attack", defenderPosition: [pos[0], pos[1]] });
             }
 
             return;
           }
 
           // Clicked a reachable tile (its own tile included) -> stage there and open its menu.
-          if (
-            inList(
-              unit.reachableTiles.map((tile) => tile.position),
-              pos,
-            )
-          ) {
-            stageMove(unit, selected, pos);
+          if (inList(movableTiles(unit), pos)) {
+            stageMove(unit, pos);
 
             return;
           }
@@ -408,18 +795,32 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       }
 
       // --- Click an owned, empty production facility -> open its build menu. ---
-      const buildable = snapshot.production.buildableTiles.find((tile) =>
-        samePosition(tile.position, pos),
-      );
+      // Derived from the (optimistic) view + latched price table, so it needs no snapshot round-trip.
+      const tile = getTileAt(currentMatch, pos);
+      const facility =
+        tile.type === "base" || tile.type === "airport" || tile.type === "port" ? tile.type : null;
+      const buildPlayer = getPlayerById(currentMatch, playerId);
 
-      if (buildable !== undefined && getUnitAt(currentMatch, pos) === undefined) {
+      if (
+        facility !== null &&
+        buildPlayer !== undefined &&
+        "playerSlot" in tile &&
+        tile.playerSlot === buildPlayer.slot &&
+        getUnitAt(currentMatch, pos) === undefined
+      ) {
         resetInteraction();
-        openBuildMenu(buildable);
+        openBuildMenu(pos, facility);
 
         return;
       }
 
-      // --- Otherwise: (re)select an own, ready unit, or clear. ---
+      // --- Otherwise: (re)select an own, ready unit, or clear. Needs the snapshot for reachability.
+      if (snapshot === null) {
+        resetInteraction();
+
+        return;
+      }
+
       const myPlayer = getPlayerById(currentMatch, playerId);
       const unitHere = getUnitAt(currentMatch, pos);
       const snapshotUnit = snapshotUnitAt(snapshot, pos);
@@ -433,23 +834,25 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       ) {
         resetInteraction();
         selectionRef.current = pos;
-        drawHighlights(
-          snapshotUnit.reachableTiles.map((tile) => tile.position),
-          [],
-        );
+        drawHighlights(movableTiles(snapshotUnit), []);
       } else {
         resetInteraction();
       }
     };
 
+    // Buffered (unconfirmed) intent: draw a movement arrow per buffered move and render the units it
+    // targets as translucent phantoms, so pending actions read directly on the board.
+    const buffered = optimisticActions(queue);
+
     app.stage.addChild(
       mapContainer,
-      renderUnitsFromView(match, spriteSheets),
-      renderInteractiveTilesFromView(match, onTileClick, () => undefined),
+      renderUnitsFromView(view, spriteSheets, phantomPositions(buffered)),
+      renderBufferedIntent(intentArrows(buffered)),
+      renderInteractiveTilesFromView(view, onTileClick, () => undefined),
       menuLayer,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match, spriteSheets]);
+  }, [optimisticView, spriteSheets]);
 
   if (matchQuery.isError || spriteSheetQuery.isError) {
     return <p>error {":("}</p>;
@@ -457,18 +860,40 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
   return (
     <div className="@w-full @h-full @flex @flex-col @items-center @justify-center @py-4">
+      <PingIndicator />
       <p>
-        {match === undefined || spriteSheets === undefined
+        {optimisticView === undefined || spriteSheets === undefined
           ? "Loading v2 board…"
-          : `[v2 snapshot board] Funds: ${getPlayerById(match, playerId)?.funds ?? 0} — ${
+          : `[v2 snapshot board] Funds: ${getPlayerById(optimisticView, playerId)?.funds ?? 0} — ${
               isMyTurn ? "your turn — pick a unit or facility on the board" : "waiting for opponent"
             }`}
       </p>
-      {/* Only turn management lives in the bar; every other action is a menu on the board. */}
-      <div className="@flex @gap-2">
+      {/* Turn management + CO power live in the bar (a power isn't tied to a board tile); every
+          other action is a menu on the board. */}
+      <div className="@flex @items-center @gap-3">
+        {isMyTurn && snapshot !== null && (
+          <PowerBar
+            power={snapshot.power}
+            pending={queue.actions.some(
+              (action) => action.kind === "coPower" && action.status !== "rejected",
+            )}
+            onActivate={(isSuper) => {
+              resetInteractionRef.current();
+              dispatchQueue({
+                type: "enqueue",
+                clientId: crypto.randomUUID(),
+                kind: "coPower",
+                action: { type: "coPower", isSuper },
+              });
+            }}
+          />
+        )}
+        <BufferIndicator queue={queue} />
         <button
           className="btn @select-none"
-          disabled={!isMyTurn || actionMutation.isLoading}
+          // Can't end the turn on UNRESOLVED intent — wait for pending/in-flight actions to drain.
+          // Rejected actions linger for visibility but must not block the turn (that was a bug).
+          disabled={!isMyTurn || hasUnresolvedActions(queue)}
           onClick={() => {
             resetInteractionRef.current();
             actionMutation.mutate(

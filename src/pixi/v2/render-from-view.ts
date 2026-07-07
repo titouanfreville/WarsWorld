@@ -101,6 +101,9 @@ export const renderUnitFromView = (
   unit: MatchUnit,
   army: MatchView["players"][number]["army"],
   spriteSheets: LoadedSpriteSheet,
+  // A phantom is buffered intent the BE hasn't confirmed yet — drawn translucent so it reads as
+  // "pending" rather than as a settled unit. It hardens into a normal sprite once the action confirms.
+  phantom = false,
 ): Container => {
   const [x, y] = unit.position;
   const spriteX = x * baseTileSize + 8;
@@ -118,6 +121,15 @@ export const renderUnitFromView = (
     unitSprite.tint = "#bbbbbb";
   }
 
+  if (phantom) {
+    unitContainer.alpha = 0.6;
+  }
+
+  // A dived sub / hidden stealth shows translucent so the owner can tell it's submerged.
+  if ("hidden" in unit && unit.hidden) {
+    unitSprite.alpha = 0.5;
+  }
+
   unitSprite.play();
   unitContainer.addChild(unitSprite);
 
@@ -131,20 +143,59 @@ export const renderUnitFromView = (
     unitContainer.addChild(createIcon(spriteSheets, spriteX + 8, spriteY + 8, `health-${hp}.png`));
   }
 
+  // Cargo indicator: a transport shows a mini sprite of each unit it carries in its top-left corner,
+  // so it's clear it's loaded and WHICH units are inside (they belong to the same owner/army).
+  const cargoTypes: MatchUnit["type"][] = [];
+
+  if ("loadedUnit" in unit && unit.loadedUnit) {
+    cargoTypes.push(unit.loadedUnit.type);
+  }
+
+  if ("loadedUnit2" in unit && unit.loadedUnit2) {
+    cargoTypes.push(unit.loadedUnit2.type);
+  }
+
+  if (cargoTypes.length > 0) {
+    const cargoSize = baseTileSize / 2;
+    const backing = new Sprite(Texture.WHITE);
+    backing.tint = "#000000";
+    backing.alpha = 0.5;
+    backing.x = spriteX;
+    backing.y = spriteY;
+    backing.width = cargoSize * cargoTypes.length;
+    backing.height = cargoSize;
+    unitContainer.addChild(backing);
+
+    cargoTypes.forEach((cargoType, index) => {
+      const mini = new Sprite(spriteSheets[army].animations[cargoType][0]);
+      mini.width = cargoSize;
+      mini.height = cargoSize;
+      mini.x = spriteX + index * cargoSize;
+      mini.y = spriteY;
+      unitContainer.addChild(mini);
+    });
+  }
+
   return unitContainer;
 };
 
 export const renderUnitsFromView = (
   match: MatchView,
   spriteSheets: LoadedSpriteSheet,
+  // Tiles whose unit is buffered (unconfirmed) intent — drawn as phantoms. Empty = nothing pending.
+  phantomPositions: readonly BoardPosition[] = [],
 ): Container => {
   const unitContainer = new Container();
+  const isPhantom = (position: BoardPosition) =>
+    phantomPositions.some((phantom) => phantom[0] === position[0] && phantom[1] === position[1]);
 
   for (const unit of match.units) {
     const army = getArmyForSlot(match, unit.playerSlot);
 
     if (army !== undefined) {
-      unitContainer.addChild(renderUnitFromView(unit, army, spriteSheets));
+      unitContainer.addChild(
+        renderUnitFromView(unit, army, spriteSheets, isPhantom(unit.position)),
+      );
     }
   }
 
