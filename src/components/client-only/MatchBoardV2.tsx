@@ -33,16 +33,19 @@ type Props = {
  * Snapshot-driven board (Phase C). Renders from the plain `match.full` data and drives movement off
  * the BE turn snapshot — NO client engine, NO `MatchWrapper`. Selection is a plain position, reachable
  * tiles come from the snapshot, and a move path is reconstructed by walking the snapshot's parents.
- * The backend stays authoritative: on any event we refetch, so the client can't desync. Behind `?v2`.
+ * The backend stays authoritative: any event triggers a refetch, so the client can't desync. Behind `?v2`.
+ *
+ * The pixi Application is created ONCE (with its own canvas — safe under React StrictMode's double
+ * mount); only the stage content is re-rendered when the data changes.
  *
  * Movement only for now (BE-authoritative, no optimistic buffer yet); capture/production/attack next.
  */
 export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const mapContainerRef = useRef<Container | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const appRef = useRef<Application | null>(null);
   const highlightRef = useRef<Container | null>(null);
   const selectionRef = useRef<BoardPosition | null>(null);
-  // Latest data for the imperative pixi click handler (whose closure is set up once per rebuild).
+  // Latest data for the imperative pixi click handler (its closure is rebuilt per content render).
   const matchRef = useRef<MatchView | null>(null);
   const snapshotRef = useRef<TurnSnapshot | null>(null);
 
@@ -69,7 +72,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   matchRef.current = match ?? null;
   snapshotRef.current = isMyTurn ? (snapshotQuery.data ?? null) : null;
 
-  // Backend is authoritative: any event -> refetch state + snapshot, board rebuilds from the truth.
+  // Backend is authoritative: any event -> refetch state + snapshot, content re-renders from truth.
   trpc.action.onEvent.useSubscription(
     { playerId, matchId },
     {
@@ -80,24 +83,48 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     },
   );
 
+  // Create the pixi app once, with its own canvas. Destroy only on unmount.
   useEffect(() => {
-    if (match === undefined || spriteSheets === undefined || canvasRef.current === null) {
+    if (containerRef.current === null) {
       return;
     }
 
     const app = new Application({
-      view: canvasRef.current,
       autoDensity: true,
       resolution: window.devicePixelRatio,
       backgroundColor: "#000b2c",
-      width: match.map.tiles[0].length * renderedTileSize + renderedTileSize,
-      height: match.map.tiles.length * renderedTileSize + renderedTileSize,
     });
     app.stage.sortableChildren = true;
     app.stage.scale.set(renderMultiplier, renderMultiplier);
+    const canvas = app.view as unknown as HTMLCanvasElement;
+    canvas.style.imageRendering = "pixelated";
+    containerRef.current.appendChild(canvas);
+    appRef.current = app;
+
+    return () => {
+      app.destroy(true, { children: true });
+      appRef.current = null;
+    };
+  }, []);
+
+  // (Re)render the stage content whenever the data changes. The app itself persists.
+  useEffect(() => {
+    const app = appRef.current;
+
+    if (app === null || match === undefined || spriteSheets === undefined) {
+      return;
+    }
+
+    app.renderer.resize(
+      match.map.tiles[0].length * renderedTileSize + renderedTileSize,
+      match.map.tiles.length * renderedTileSize + renderedTileSize,
+    );
+
+    for (const child of app.stage.removeChildren()) {
+      child.destroy({ children: true });
+    }
 
     const mapContainer = renderMapFromView(match, spriteSheets);
-    mapContainerRef.current = mapContainer;
     highlightRef.current = null;
     selectionRef.current = null;
 
@@ -169,12 +196,6 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       renderUnitsFromView(match, spriteSheets),
       renderInteractiveTilesFromView(match, onTileClick, () => undefined),
     );
-
-    return () => {
-      app.destroy(true, { children: true });
-      mapContainerRef.current = null;
-      highlightRef.current = null;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match, spriteSheets]);
 
@@ -182,17 +203,17 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     return <p>error {":("}</p>;
   }
 
-  if (match === undefined || spriteSheets === undefined) {
-    return <p>Loading v2 board…</p>;
-  }
-
   return (
     <div className="@w-full @h-full @flex @flex-col @items-center @justify-center @py-4">
       <p>
-        [v2 snapshot board] Funds: {getPlayerById(match, playerId)?.funds ?? 0} —{" "}
-        {isMyTurn ? "your turn (click a unit to move)" : "waiting for opponent"}
+        {match === undefined || spriteSheets === undefined
+          ? "Loading v2 board…"
+          : `[v2 snapshot board] Funds: ${getPlayerById(match, playerId)?.funds ?? 0} — ${
+              isMyTurn ? "your turn (click a unit to move)" : "waiting for opponent"
+            }`}
       </p>
-      <canvas className="@inline" style={{ imageRendering: "pixelated" }} ref={canvasRef}></canvas>
+      {/* pixi appends its own canvas here (created once, StrictMode-safe) */}
+      <div ref={containerRef} style={{ imageRendering: "pixelated" }} />
     </div>
   );
 }
