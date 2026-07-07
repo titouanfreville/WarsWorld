@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"rtk grep -rn \\\"onEvent\\\" src/server --include=*.ts\",\"description\":\"Find onEvent subscription server definition\"}",
+  "error": "Exit code 1\n(eval):1: no matches found: --include=*.ts",
+  "timestamp": "2026-07-07T08:37:22.739Z",
+  "retry_count": 1
+}

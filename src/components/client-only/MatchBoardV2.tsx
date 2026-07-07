@@ -3,20 +3,29 @@ import { useQuery } from "@tanstack/react-query";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
 import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
 import {
+  getArmyForSlot,
   getCurrentTurnPlayer,
   getPlayerById,
   getTileAt,
   getUnitAt,
   samePosition,
 } from "frontend/components/match/match-view";
-import type { SnapshotUnit, TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
+import type {
+  BuildableTile,
+  SnapshotUnit,
+  TurnSnapshot,
+} from "frontend/components/match/turn-snapshot-view";
 import { reconstructPath, snapshotUnitAt } from "frontend/components/match/turn-snapshot-view";
 import { trpc } from "frontend/utils/trpc-client";
 import { loadSpritesFromSpriteMap } from "pixi/load-spritesheet";
-import type { Container } from "pixi.js";
-import { Application } from "pixi.js";
-import { useEffect, useRef, useState } from "react";
-import { renderMultiplier, renderedTileSize } from "./MatchRenderer";
+import { Application, Assets, Container } from "pixi.js";
+import { useEffect, useRef } from "react";
+import { baseTileSize, mapBorder, renderMultiplier, renderedTileSize } from "./MatchRenderer";
+import {
+  createActionMenuElement,
+  createBoardMenu,
+  createUnitMenuElement,
+} from "../../pixi/v2/board-menu";
 import {
   renderHighlightTiles,
   renderInteractiveTilesFromView,
@@ -46,10 +55,11 @@ const inList = (list: readonly BoardPosition[], pos: BoardPosition): boolean =>
  * targets from the `attackTargets` endpoint. The backend stays authoritative (any event -> refetch),
  * so the client can't desync. Behind `?v2`.
  *
- * Move / move-and-capture / attack / move-and-attack: select a unit, then either attack an in-range
- * enemy (red), or click a reachable tile (blue). If actions are possible from that tile it "stages"
- * there (red targets + Wait/Capture buttons); otherwise it just moves. Attacks are BE-resolved.
- * Optimistic buffering isn't wired yet — everything is BE-authoritative.
+ * Interaction: select a unit (blue reachable tiles), click a reachable tile to stage a move there,
+ * then pick from an in-board contextual menu (ATTACK / CAPTURE / WAIT). ATTACK reveals red enemies
+ * to click; a facility opens a build menu of its affordable units. Only turn management lives in the
+ * top bar — every other action is a pixi menu anchored at the tile (matching the v1 look). Attacks
+ * are BE-resolved. Optimistic buffering isn't wired yet — everything is BE-authoritative.
  */
 export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -64,16 +74,16 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const attackTargetsRef = useRef<BoardPosition[]>([]);
   const resetInteractionRef = useRef<() => void>(() => undefined);
 
-  // Mirrored into React state so the action buttons can react to it.
-  const [selectedUnit, setSelectedUnit] = useState<SnapshotUnit | null>(null);
-  const [staged, setStaged] = useState<{ dest: BoardPosition; canCapture: boolean } | null>(null);
-
   const matchRef = useRef<MatchView | null>(null);
   const snapshotRef = useRef<TurnSnapshot | null>(null);
 
   const spriteSheetQuery = useQuery({
     queryKey: ["spritesheets"],
-    queryFn: () => loadSpritesFromSpriteMap(spritesheetDataByArmy),
+    queryFn: async () => {
+      // The bitmap font the in-board menus render with ("awFont" is declared in this .fnt).
+      await Assets.load("/aw2Font.fnt");
+      return loadSpritesFromSpriteMap(spritesheetDataByArmy);
+    },
   });
 
   const matchQuery = trpc.match.full.useQuery({ matchId, playerId });
@@ -164,12 +174,31 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       child.destroy({ children: true });
     }
 
+    const mapSize = {
+      width: match.map.tiles[0].length,
+      height: match.map.tiles.length,
+    };
+
     const mapContainer = renderMapFromView(match, spriteSheets);
+    // Menus live on their own layer above the units, sharing the map's offset so tile coordinates
+    // line up. Only turn management stays in the top bar; every other action is a board menu.
+    const menuLayer = new Container();
+    menuLayer.x = mapBorder;
+    menuLayer.y = mapBorder;
+    menuLayer.sortableChildren = true;
+
     reachableHighlightRef.current = null;
     attackHighlightRef.current = null;
     selectionRef.current = null;
     stagedDestRef.current = null;
     attackTargetsRef.current = [];
+
+    let openMenu: Container | null = null;
+
+    const closeMenu = () => {
+      openMenu?.destroy({ children: true });
+      openMenu = null;
+    };
 
     const drawHighlights = (
       reachable: readonly BoardPosition[],
@@ -188,9 +217,8 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       selectionRef.current = null;
       stagedDestRef.current = null;
       attackTargetsRef.current = [];
+      closeMenu();
       drawHighlights([], []);
-      setSelectedUnit(null);
-      setStaged(null);
     };
 
     resetInteractionRef.current = resetInteraction;
@@ -210,6 +238,136 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       );
     };
 
+    // Open a contextual action menu (WAIT / CAPTURE / ATTACK) anchored at `dest`.
+    const openActionMenu = (
+      dest: BoardPosition,
+      options: { label: string; onSelect: () => void }[],
+    ) => {
+      closeMenu();
+      const unitSize = baseTileSize / 2;
+      const elements = options.map((option, index) => {
+        const element = createActionMenuElement(option.label, index);
+        element.on("pointerdown", option.onSelect);
+        return element;
+      });
+      const menu = createBoardMenu(mapSize, dest, options.length * unitSize * 2, 3, elements);
+      menuLayer.addChild(menu);
+      openMenu = menu;
+    };
+
+    // Stage a move at `dest` and offer the actions available from there (attack / capture / wait).
+    const stageMove = (unit: SnapshotUnit, origin: BoardPosition, dest: BoardPosition) => {
+      const reachable = unit.reachableTiles.map((tile) => tile.position);
+      const myPlayer = getPlayerById(match, playerId);
+      const destTile = getTileAt(match, dest);
+      const canCapture =
+        (unit.type === "infantry" || unit.type === "mech") &&
+        myPlayer !== undefined &&
+        "playerSlot" in destTile &&
+        destTile.playerSlot !== myPlayer.slot;
+
+      void (async () => {
+        const targets = await fetchAttackTargets(origin, dest);
+
+        stagedDestRef.current = dest;
+        attackTargetsRef.current = targets;
+        drawHighlights(reachable, []); // red targets appear only once ATTACK is chosen
+
+        const options: { label: string; onSelect: () => void }[] = [];
+
+        if (targets.length > 0) {
+          options.push({
+            label: "ATTACK",
+            onSelect: () => {
+              closeMenu();
+              drawHighlights(reachable, targets); // now pick a red enemy on the board
+            },
+          });
+        }
+
+        if (canCapture) {
+          options.push({
+            label: "CAPTURE",
+            onSelect: () => {
+              const path = reconstructPath(unit, dest);
+
+              if (path !== null) {
+                submit("capture", path, { type: "ability" });
+              }
+            },
+          });
+        }
+
+        options.push({
+          label: "WAIT",
+          onSelect: () => {
+            const path = reconstructPath(unit, dest);
+
+            if (path !== null) {
+              submit("move", path, { type: "wait" });
+            }
+          },
+        });
+
+        openActionMenu(dest, options);
+      })();
+    };
+
+    // Open the build menu for an owned, empty production facility.
+    const openBuildMenu = (buildable: BuildableTile) => {
+      const snapshot = snapshotRef.current;
+      const myPlayer = getPlayerById(match, playerId);
+      const army = myPlayer === undefined ? undefined : getArmyForSlot(match, myPlayer.slot);
+
+      if (snapshot === null || army === undefined) {
+        return;
+      }
+
+      const sheet = spriteSheets[army];
+      const buildableUnits = snapshot.production.priceTable
+        .filter((entry) => entry.facility === buildable.facility)
+        .sort((a, b) => a.cost - b.cost);
+
+      const unitSize = baseTileSize / 2;
+      const elements = buildableUnits.map((entry, index) => {
+        const selectable = entry.cost <= snapshot.funds;
+        const element = createUnitMenuElement(
+          sheet,
+          { unitType: entry.type, cost: entry.cost, selectable },
+          index,
+        );
+
+        if (selectable) {
+          element.on("pointerdown", () => {
+            resetInteraction();
+            actionMutation.mutate(
+              {
+                type: "build",
+                unitType: entry.type,
+                position: [buildable.position[0], buildable.position[1]],
+                playerId,
+                matchId,
+              },
+              { onError: onActionError("build") },
+            );
+          });
+        }
+
+        return element;
+      });
+
+      closeMenu();
+      const menu = createBoardMenu(
+        mapSize,
+        buildable.position,
+        buildableUnits.length * unitSize * 2,
+        6,
+        elements,
+      );
+      menuLayer.addChild(menu);
+      openMenu = menu;
+    };
+
     const onTileClick = (pos: BoardPosition) => {
       const currentMatch = matchRef.current;
       const snapshot = snapshotRef.current;
@@ -219,16 +377,14 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         return;
       }
 
-      // --- With a unit selected: attack / move / stage ---
+      // --- With a unit selected: attack a red enemy, or stage a move at a reachable tile ---
       if (selected !== null) {
         const unit = snapshotUnitAt(snapshot, selected);
 
         if (unit !== undefined) {
-          const attackOrigin = stagedDestRef.current ?? selected;
-
-          // Clicked a highlighted enemy -> attack from the current origin (moving there first).
+          // Clicked a highlighted enemy -> attack from the staged origin (moving there first).
           if (inList(attackTargetsRef.current, pos)) {
-            const path = reconstructPath(unit, attackOrigin);
+            const path = reconstructPath(unit, stagedDestRef.current ?? selected);
 
             if (path !== null) {
               submit("attack", path, { type: "attack", defenderPosition: [pos[0], pos[1]] });
@@ -237,45 +393,30 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
             return;
           }
 
-          // Clicked a reachable tile (and not already staged there) -> move, or stage if something
-          // can be done from there (attack an enemy / capture a property).
-          const reachable = unit.reachableTiles.map((tile) => tile.position);
-          const isStagedHere =
-            stagedDestRef.current !== null && samePosition(pos, stagedDestRef.current);
-
-          if (inList(reachable, pos) && !samePosition(pos, selected) && !isStagedHere) {
-            const myPlayer = getPlayerById(currentMatch, playerId);
-            const destTile = getTileAt(currentMatch, pos);
-            const canCapture =
-              (unit.type === "infantry" || unit.type === "mech") &&
-              myPlayer !== undefined &&
-              "playerSlot" in destTile &&
-              destTile.playerSlot !== myPlayer.slot;
-
-            void (async () => {
-              const targets = await fetchAttackTargets(selected, pos);
-
-              // Nothing to choose from -> just move (keeps plain moves one click).
-              if (targets.length === 0 && !canCapture) {
-                const path = reconstructPath(unit, pos);
-
-                if (path !== null) {
-                  submit("move", path, { type: "wait" });
-                }
-
-                return;
-              }
-
-              // Stage the move: offer the targets (red) + Wait/Capture buttons.
-              stagedDestRef.current = pos;
-              attackTargetsRef.current = targets;
-              drawHighlights(reachable, targets);
-              setStaged({ dest: pos, canCapture });
-            })();
+          // Clicked a reachable tile (its own tile included) -> stage there and open its menu.
+          if (
+            inList(
+              unit.reachableTiles.map((tile) => tile.position),
+              pos,
+            )
+          ) {
+            stageMove(unit, selected, pos);
 
             return;
           }
         }
+      }
+
+      // --- Click an owned, empty production facility -> open its build menu. ---
+      const buildable = snapshot.production.buildableTiles.find((tile) =>
+        samePosition(tile.position, pos),
+      );
+
+      if (buildable !== undefined && getUnitAt(currentMatch, pos) === undefined) {
+        resetInteraction();
+        openBuildMenu(buildable);
+
+        return;
       }
 
       // --- Otherwise: (re)select an own, ready unit, or clear. ---
@@ -290,22 +431,12 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         snapshotUnit !== undefined &&
         snapshotUnit.reachableTiles.length > 0
       ) {
-        const reachable = snapshotUnit.reachableTiles.map((tile) => tile.position);
+        resetInteraction();
         selectionRef.current = pos;
-        stagedDestRef.current = null;
-        setSelectedUnit(snapshotUnit);
-        setStaged(null);
-        drawHighlights(reachable, []);
-
-        // Show enemies attackable from where the unit stands (in-place / indirect fire).
-        void (async () => {
-          const targets = await fetchAttackTargets(pos, pos);
-
-          if (selectionRef.current !== null && samePosition(selectionRef.current, pos)) {
-            attackTargetsRef.current = targets;
-            drawHighlights(reachable, targets);
-          }
-        })();
+        drawHighlights(
+          snapshotUnit.reachableTiles.map((tile) => tile.position),
+          [],
+        );
       } else {
         resetInteraction();
       }
@@ -315,6 +446,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       mapContainer,
       renderUnitsFromView(match, spriteSheets),
       renderInteractiveTilesFromView(match, onTileClick, () => undefined),
+      menuLayer,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match, spriteSheets]);
@@ -323,79 +455,17 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     return <p>error {":("}</p>;
   }
 
-  const capturePosition =
-    staged?.dest ?? (selectedUnit?.canCapture === true ? selectedUnit.position : null);
-  const showCapture =
-    staged?.canCapture === true || (staged === null && selectedUnit?.canCapture === true);
-
   return (
     <div className="@w-full @h-full @flex @flex-col @items-center @justify-center @py-4">
       <p>
         {match === undefined || spriteSheets === undefined
           ? "Loading v2 board…"
           : `[v2 snapshot board] Funds: ${getPlayerById(match, playerId)?.funds ?? 0} — ${
-              isMyTurn ? "your turn" : "waiting for opponent"
-            }${staged !== null ? " — click a red enemy to attack, or:" : ""}`}
+              isMyTurn ? "your turn — pick a unit or facility on the board" : "waiting for opponent"
+            }`}
       </p>
+      {/* Only turn management lives in the bar; every other action is a menu on the board. */}
       <div className="@flex @gap-2">
-        {staged !== null && (
-          <button
-            className="btn @select-none"
-            disabled={actionMutation.isLoading}
-            onClick={() => {
-              const unit =
-                selectionRef.current === null || snapshotRef.current === null
-                  ? undefined
-                  : snapshotUnitAt(snapshotRef.current, selectionRef.current);
-              const path = unit === undefined ? null : reconstructPath(unit, staged.dest);
-
-              if (path !== null) {
-                resetInteractionRef.current();
-                actionMutation.mutate(
-                  {
-                    type: "move",
-                    path: toMutable(path),
-                    subAction: { type: "wait" },
-                    playerId,
-                    matchId,
-                  },
-                  { onError: onActionError("move") },
-                );
-              }
-            }}
-          >
-            Move here
-          </button>
-        )}
-        {showCapture && capturePosition !== null && (
-          <button
-            className="btn @select-none"
-            disabled={actionMutation.isLoading}
-            onClick={() => {
-              const unit =
-                selectionRef.current === null || snapshotRef.current === null
-                  ? undefined
-                  : snapshotUnitAt(snapshotRef.current, selectionRef.current);
-              const path = unit === undefined ? null : reconstructPath(unit, capturePosition);
-
-              if (path !== null) {
-                resetInteractionRef.current();
-                actionMutation.mutate(
-                  {
-                    type: "move",
-                    path: toMutable(path),
-                    subAction: { type: "ability" },
-                    playerId,
-                    matchId,
-                  },
-                  { onError: onActionError("capture") },
-                );
-              }
-            }}
-          >
-            Capture
-          </button>
-        )}
         <button
           className="btn @select-none"
           disabled={!isMyTurn || actionMutation.isLoading}

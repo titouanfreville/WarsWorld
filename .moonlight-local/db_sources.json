@@ -1,0 +1,8 @@
+[
+  {
+    "Postgres": {
+      "dsn": "postgresql://postgres:abc@localhost:5932/trpc-starter-websockets",
+      "label": "trpc-starter-websockets@localhost"
+    }
+  }
+]

@@ -8,6 +8,8 @@ import { samePosition } from "./match-view";
  */
 export type TurnSnapshot = NonNullable<inferTRPCOutput<"matchPreview", "turnSnapshot">>;
 export type SnapshotUnit = TurnSnapshot["units"][number];
+/** An owned, empty production facility a unit can be built on this turn. */
+export type BuildableTile = TurnSnapshot["production"]["buildableTiles"][number];
 
 /** The snapshot entry for a unit at `position`, if any. */
 export const snapshotUnitAt = (
