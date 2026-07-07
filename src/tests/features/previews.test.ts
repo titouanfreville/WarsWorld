@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { deriveGameOver } from "server/routers/match/game-over";
 import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
 import { getBattleForecast } from "shared/match-logic/combat-forecast";
 import {
@@ -218,6 +219,25 @@ describe("previews", () => {
     // ...so it can't see p1's far infantry, while p1 sees its own.
     expect(p0.team.canSeeUnitAtPosition([9, 0])).toBe(false);
     expect(p1.team.canSeeUnitAtPosition([9, 0])).toBe(true);
+  });
+
+  it("game over is reached once only one team is still in play (by elimination status)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    const p1 = match.getPlayerBySlot(1)!;
+
+    expect(deriveGameOver(match, p0.team)).toBeNull(); // both alive — game on
+
+    p1.data.status = "routed"; // slot 1 lost their last unit
+
+    const result = deriveGameOver(match, p0.team);
+    expect(result).not.toBeNull();
+    expect(result!.winnerTeamIndex).toBe(p0.team.index);
+    expect(result!.viewerWon).toBe(true); // viewing as the winner
+    expect(deriveGameOver(match, p1.team)!.viewerWon).toBe(false); // viewing as the loser
   });
 
   it("under fog, an owned property grants vision on its own tile even with no unit on it", () => {

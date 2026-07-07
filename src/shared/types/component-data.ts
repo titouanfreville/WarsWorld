@@ -7,6 +7,8 @@ export type FrontendMatch = {
   players: PlayerInMatch[];
   state: MatchStatus;
   turn: number;
+  /** Derived match end (status isn't persisted as "finished" yet) — lets the list mark Completed. */
+  finished?: boolean;
 };
 
 export type MapBasic = Pick<WWMap, "id" | "name" | "numberOfPlayers">;

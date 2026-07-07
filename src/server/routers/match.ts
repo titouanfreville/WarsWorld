@@ -24,6 +24,7 @@ import {
   router,
 } from "../trpc/trpc-setup";
 import { createMatchProcedure } from "./match/create";
+import { deriveGameOver } from "./match/game-over";
 import { allMatchSlotsReady, matchToFrontend, throwIfMatchNotInSetupState } from "./match/util";
 
 /**
@@ -82,6 +83,11 @@ export const matchRouter = router({
       }
     }
 
+    // Match outcome, DERIVED from the engine's elimination status (see deriveGameOver). We don't flip
+    // match.status to "finished" here — that's a separate persistence concern (the passTurn TODO) —
+    // this just lets the client show a game-over screen.
+    const gameOver = deriveGameOver(match, viewerTeam);
+
     return {
       id: match.id,
       leagueType: match.leagueType,
@@ -95,6 +101,7 @@ export const matchRouter = router({
       units: visibleUnits.map((u) => u.data),
       fogOfWar,
       visibleTiles,
+      gameOver,
     };
   }),
   join: matchBaseProcedure
