@@ -66,7 +66,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   );
 
   const utils = trpc.useUtils();
-  const moveMutation = trpc.action.send.useMutation();
+  const actionMutation = trpc.action.send.useMutation();
 
   // Keep the refs the pixi click handler reads pointed at the latest data.
   matchRef.current = match ?? null;
@@ -157,7 +157,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
         if (path !== null) {
           clearSelection();
-          moveMutation.mutate(
+          actionMutation.mutate(
             {
               playerId,
               matchId,
@@ -212,6 +212,20 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               isMyTurn ? "your turn (click a unit to move)" : "waiting for opponent"
             }`}
       </p>
+      <button
+        className="btn @select-none"
+        disabled={!isMyTurn || actionMutation.isLoading}
+        onClick={() => {
+          selectionRef.current = null;
+          highlightRef.current?.destroy();
+          actionMutation.mutate(
+            { type: "passTurn", playerId, matchId },
+            { onError: (error) => console.error("[v2] pass turn rejected by BE:", error.message) },
+          );
+        }}
+      >
+        {isMyTurn ? "Pass Turn" : "Not your turn"}
+      </button>
       {/* pixi appends its own canvas here (created once, StrictMode-safe) */}
       <div ref={containerRef} style={{ imageRendering: "pixelated" }} />
     </div>
