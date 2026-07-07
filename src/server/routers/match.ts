@@ -38,19 +38,32 @@ export const matchRouter = router({
     ({ ctx: { currentPlayer } }) =>
       playerMatchIndex.getPlayerMatches(currentPlayer.id)?.map(matchToFrontend) ?? [],
   ),
-  full: matchBaseProcedure.query(({ ctx: { match } }) => ({
-    id: match.id,
-    leagueType: match.leagueType,
-    changeableTiles: match.changeableTiles,
-    currentWeather: match.getCurrentWeather(),
-    map: match.map.data,
-    players: match.getAllPlayers().map((player) => player.data),
-    rules: match.rules,
-    status: match.status,
-    turn: match.turn,
-    units: match.units.map((u) => u.data),
-    // match.getPlayerById(currentPlayer.id)?.team.getEnemyUnitsInVision() ?? []
-  })),
+  full: matchBaseProcedure.query(({ ctx: { match, currentPlayer } }) => {
+    // A concealed sub/stealth is invisible to the enemy — an owner/teammate always sees it, an enemy
+    // only when they have an adjacent unit (detection), a spectator never. Normal units are
+    // untouched (full fog is still TODO), so this only fixes the hidden-unit leak the client reported.
+    const viewerTeam = match.getPlayerById(currentPlayer.id)?.team;
+    const visibleUnits = match.units.filter((unit) => {
+      if (!("hidden" in unit.data) || !unit.data.hidden) {
+        return true;
+      }
+
+      return viewerTeam?.canSeeUnitAtPosition(unit.data.position) ?? false;
+    });
+
+    return {
+      id: match.id,
+      leagueType: match.leagueType,
+      changeableTiles: match.changeableTiles,
+      currentWeather: match.getCurrentWeather(),
+      map: match.map.data,
+      players: match.getAllPlayers().map((player) => player.data),
+      rules: match.rules,
+      status: match.status,
+      turn: match.turn,
+      units: visibleUnits.map((u) => u.data),
+    };
+  }),
   join: matchBaseProcedure
     .input(
       z.object({
