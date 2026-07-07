@@ -151,6 +151,33 @@ export const renderUnitsFromView = (
   return unitContainer;
 };
 
+/**
+ * A translucent overlay marking a set of tiles (e.g. a unit's reachable tiles). Positioned exactly
+ * like the map tiles so it lines up; caller adds it to the map container so units still render on top.
+ */
+export const renderHighlightTiles = (
+  positions: readonly BoardPosition[],
+  color: string,
+): Container => {
+  const container = new Container();
+  container.zIndex = 1000; // above the map tiles (which use zIndex = y), below the units container
+  container.name = "v2-highlights";
+
+  for (const [x, y] of positions) {
+    const sprite = new Sprite(Texture.WHITE);
+    sprite.tint = color;
+    sprite.alpha = 0.4;
+    sprite.width = baseTileSize;
+    sprite.height = baseTileSize;
+    sprite.anchor.set(0, 1);
+    sprite.x = x * baseTileSize;
+    sprite.y = (y + 1) * baseTileSize;
+    container.addChild(sprite);
+  }
+
+  return container;
+};
+
 export const renderInteractiveTilesFromView = (
   match: MatchView,
   onTileClick: (pos: BoardPosition) => void,

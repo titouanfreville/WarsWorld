@@ -19,11 +19,16 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
       position: unit.data.position,
       type: unit.data.type,
       isReady: unit.data.isReady,
-      // Tiles this unit can move to (for buffering moves). Empty once it has acted this turn.
+      // Tiles this unit can move to, each with its shortest-path parent so the client can
+      // reconstruct a move path (a plain parent-walk, no pathfinding). Empty once the unit has
+      // acted this turn.
       // TODO(fog): computed against all enemies; when fog lands, compute over the player's VISIBLE
       // state so a hidden unit doesn't shrink the set and leak its position.
       reachableTiles: unit.data.isReady
-        ? Array.from(getAccessibleNodes(match, unit).values()).map((node) => node.pos)
+        ? Array.from(getAccessibleNodes(match, unit).values()).map((node) => ({
+            position: node.pos,
+            parent: node.parent,
+          }))
         : [],
       // Capture is inf/mech standing on a property they don't own (neutral counts).
       canCapture:
