@@ -8,13 +8,13 @@ import {
   getUnitAt,
   samePosition,
 } from "frontend/components/match/match-view";
-import type { TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
+import type { SnapshotUnit, TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
 import { reconstructPath, snapshotUnitAt } from "frontend/components/match/turn-snapshot-view";
 import { trpc } from "frontend/utils/trpc-client";
 import { loadSpritesFromSpriteMap } from "pixi/load-spritesheet";
 import type { Container } from "pixi.js";
 import { Application } from "pixi.js";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { renderMultiplier, renderedTileSize } from "./MatchRenderer";
 import {
   renderHighlightTiles,
@@ -45,6 +45,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const appRef = useRef<Application | null>(null);
   const highlightRef = useRef<Container | null>(null);
   const selectionRef = useRef<BoardPosition | null>(null);
+  // Lets the React UI (e.g. the Capture button) clear the pixi selection managed inside the effect.
+  const clearSelectionRef = useRef<() => void>(() => undefined);
+  // The selected unit's snapshot entry, mirrored into React state so the action buttons can react
+  // to it (canCapture etc.). The pixi click handler drives it.
+  const [selectedUnit, setSelectedUnit] = useState<SnapshotUnit | null>(null);
   // Latest data for the imperative pixi click handler (its closure is rebuilt per content render).
   const matchRef = useRef<MatchView | null>(null);
   const snapshotRef = useRef<TurnSnapshot | null>(null);
@@ -138,7 +143,10 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     const clearSelection = () => {
       selectionRef.current = null;
       drawHighlights([]);
+      setSelectedUnit(null);
     };
+
+    clearSelectionRef.current = clearSelection;
 
     const onTileClick = (pos: BoardPosition) => {
       const currentMatch = matchRef.current;
@@ -186,6 +194,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       ) {
         selectionRef.current = pos;
         drawHighlights(snapshotUnit.reachableTiles.map((tile) => tile.position));
+        setSelectedUnit(snapshotUnit);
       } else {
         clearSelection();
       }
@@ -212,20 +221,41 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               isMyTurn ? "your turn (click a unit to move)" : "waiting for opponent"
             }`}
       </p>
-      <button
-        className="btn @select-none"
-        disabled={!isMyTurn || actionMutation.isLoading}
-        onClick={() => {
-          selectionRef.current = null;
-          highlightRef.current?.destroy();
-          actionMutation.mutate(
-            { type: "passTurn", playerId, matchId },
-            { onError: (error) => console.error("[v2] pass turn rejected by BE:", error.message) },
-          );
-        }}
-      >
-        {isMyTurn ? "Pass Turn" : "Not your turn"}
-      </button>
+      <div className="@flex @gap-2">
+        {selectedUnit?.canCapture === true && (
+          <button
+            className="btn @select-none"
+            disabled={actionMutation.isLoading}
+            onClick={() => {
+              const [x, y] = selectedUnit.position;
+              clearSelectionRef.current();
+              actionMutation.mutate(
+                { type: "move", path: [[x, y]], subAction: { type: "ability" }, playerId, matchId },
+                {
+                  onError: (error) => console.error("[v2] capture rejected by BE:", error.message),
+                },
+              );
+            }}
+          >
+            Capture
+          </button>
+        )}
+        <button
+          className="btn @select-none"
+          disabled={!isMyTurn || actionMutation.isLoading}
+          onClick={() => {
+            clearSelectionRef.current();
+            actionMutation.mutate(
+              { type: "passTurn", playerId, matchId },
+              {
+                onError: (error) => console.error("[v2] pass turn rejected by BE:", error.message),
+              },
+            );
+          }}
+        >
+          {isMyTurn ? "Pass Turn" : "Not your turn"}
+        </button>
+      </div>
       {/* pixi appends its own canvas here (created once, StrictMode-safe) */}
       <div ref={containerRef} style={{ imageRendering: "pixelated" }} />
     </div>
