@@ -5,6 +5,7 @@ import type { BoardPosition, MatchView } from "frontend/components/match/match-v
 import {
   getCurrentTurnPlayer,
   getPlayerById,
+  getTileAt,
   getUnitAt,
   samePosition,
 } from "frontend/components/match/match-view";
@@ -160,10 +161,19 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
       // A unit is selected and we clicked one of its reachable tiles -> submit the move.
       if (selected !== null && snapshot !== null && !samePosition(pos, selected)) {
-        const selectedUnit = snapshotUnitAt(snapshot, selected);
-        const path = selectedUnit === undefined ? null : reconstructPath(selectedUnit, pos);
+        const movingUnit = snapshotUnitAt(snapshot, selected);
+        const path = movingUnit === undefined ? null : reconstructPath(movingUnit, pos);
 
-        if (path !== null) {
+        if (path !== null && movingUnit !== undefined) {
+          // Move-and-capture: an inf/mech that lands on a property it doesn't own captures on arrival.
+          const destinationTile = getTileAt(currentMatch, pos);
+          const myPlayer = getPlayerById(currentMatch, playerId);
+          const capturesOnArrival =
+            (movingUnit.type === "infantry" || movingUnit.type === "mech") &&
+            myPlayer !== undefined &&
+            "playerSlot" in destinationTile &&
+            destinationTile.playerSlot !== myPlayer.slot;
+
           clearSelection();
           actionMutation.mutate(
             {
@@ -172,7 +182,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               type: "move",
               // Wire `Position` is a mutable tuple; our BoardPosition is readonly, so copy.
               path: path.map((p) => [p[0], p[1]] as [number, number]),
-              subAction: { type: "wait" },
+              subAction: capturesOnArrival ? { type: "ability" } : { type: "wait" },
             },
             { onError: (error) => console.error("[v2] move rejected by BE:", error.message) },
           );
