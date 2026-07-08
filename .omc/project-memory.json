@@ -52,8 +52,8 @@
     "runtime": "Node.js 21.0.0"
   },
   "build": {
-    "buildCommand": "cd /Users/titouan/perso/WarsWorld; for i in $(seq 1 90); do if ! pgrep -f \"tsc --noEmit -p tsconfig.json\" >/dev/null 2>&1; then break; fi; sleep 2; done; rtk read /private/tmp/claude-503/-Users-titouan-perso-WarsWorld/fa95b3ec-93cc-4100-94e7-c8d9b67d497d/tasks/b0evz6wrh.output",
-    "testCommand": "cd /Users/titouan/perso/WarsWorld; for i in $(seq 1 40); do if ! pgrep -f \"vitest run src/tests/features/finalize\" >/dev/null 2>&1; then break; fi; sleep 1; done; rtk read /private/tmp/claude-503/-Users-titouan-perso-WarsWorld/fa95b3ec-93cc-4100-94e7-c8d9b67d497d/tasks/bh2ocoiug.output --tail-lines 20",
+    "buildCommand": "cd /Users/titouan/perso/WarsWorld; echo \"=== TSC ===\"; rtk tsc --noEmit 2>&1 | tail -4; echo \"tsc exit ${PIPESTATUS[0]}\"; echo \"=== ESLINT (component) ===\"; rtk lint src/components/client-only/MatchBoardV2.tsx 2>&1 | tail -4; echo \"=== TESTS ===\"; rtk vitest 2>&1 | tail -3",
+    "testCommand": "cd /Users/titouan/perso/WarsWorld; echo \"=== TSC ===\"; rtk tsc --noEmit 2>&1 | tail -4; echo \"tsc exit ${PIPESTATUS[0]}\"; echo \"=== ESLINT (component) ===\"; rtk lint src/components/client-only/MatchBoardV2.tsx 2>&1 | tail -4; echo \"=== TESTS ===\"; rtk vitest 2>&1 | tail -3",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -202,8 +202,8 @@
   "hotPaths": [
     {
       "path": "src/components/client-only/MatchBoardV2.tsx",
-      "accessCount": 30,
-      "lastAccessed": 1783516557372,
+      "accessCount": 81,
+      "lastAccessed": 1783538725221,
       "type": "file"
     },
     {
@@ -225,9 +225,21 @@
       "type": "file"
     },
     {
+      "path": "src/frontend/components/match/match-view.ts",
+      "accessCount": 11,
+      "lastAccessed": 1783533350060,
+      "type": "file"
+    },
+    {
       "path": "src/frontend/components/match/optimistic-view.ts",
       "accessCount": 10,
       "lastAccessed": 1783516530900,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/wrappers/player-in-match.ts",
+      "accessCount": 10,
+      "lastAccessed": 1783538663546,
       "type": "file"
     },
     {
@@ -240,12 +252,6 @@
       "path": "src/shared/match-logic/pathfinding.ts",
       "accessCount": 9,
       "lastAccessed": 1783489906042,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/wrappers/player-in-match.ts",
-      "accessCount": 9,
-      "lastAccessed": 1783516003127,
       "type": "file"
     },
     {
@@ -273,33 +279,33 @@
       "type": "file"
     },
     {
-      "path": "src/frontend/components/match/match-view.ts",
-      "accessCount": 8,
-      "lastAccessed": 1783516521039,
-      "type": "file"
-    },
-    {
       "path": "src/pixi/v2/render-from-view.ts",
       "accessCount": 8,
       "lastAccessed": 1783516611982,
       "type": "file"
     },
     {
+      "path": "src/frontend/components/match/turn-snapshot-view.ts",
+      "accessCount": 8,
+      "lastAccessed": 1783533341917,
+      "type": "file"
+    },
+    {
       "path": "src/frontend/components/match/buffered-intent.ts",
+      "accessCount": 8,
+      "lastAccessed": 1783533362909,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/utils/action-queue.ts",
       "accessCount": 7,
-      "lastAccessed": 1783516582484,
+      "lastAccessed": 1783533331749,
       "type": "file"
     },
     {
       "path": "CLAUDE.md",
       "accessCount": 6,
       "lastAccessed": 1783456956153,
-      "type": "file"
-    },
-    {
-      "path": "src/frontend/components/match/turn-snapshot-view.ts",
-      "accessCount": 6,
-      "lastAccessed": 1783516220420,
       "type": "file"
     },
     {
@@ -315,21 +321,15 @@
       "type": "file"
     },
     {
+      "path": "src/server/routers/match/turn-snapshot.ts",
+      "accessCount": 6,
+      "lastAccessed": 1783538664093,
+      "type": "file"
+    },
+    {
       "path": "src/shared/match-logic/events/handlers/move.ts",
       "accessCount": 5,
       "lastAccessed": 1783489341225,
-      "type": "file"
-    },
-    {
-      "path": "src/frontend/utils/action-queue.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783489897211,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/match/turn-snapshot.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783489909659,
       "type": "file"
     },
     {

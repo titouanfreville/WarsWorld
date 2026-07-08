@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/titouan/perso/WarsWorld/src/frontend/components/lobby/MatchStatusBadge.tsx\"}",
-  "error": "File does not exist. Note: your current working directory is /Users/titouan/perso/WarsWorld.",
-  "timestamp": "2026-07-08T13:14:36.598Z",
-  "retry_count": 2
+  "tool_name": "mcp__claude-in-chrome__javascript_tool",
+  "tool_input_preview": "{\"action\":\"javascript_exec\",\"text\":\"\\nconst $=id=>document.getElementById(id);\\n$('lobbyScreen').classList.remove('active');\\n$('pickScreen').classList.add('active');\\n$('readyWrap').style.display='';...",
+  "error": "JavaScript execution error: TypeError: Cannot read properties of null (reading 'classList')\n    at <anonymous>:3:17",
+  "timestamp": "2026-07-08T18:40:53.211Z",
+  "retry_count": 1
 }
