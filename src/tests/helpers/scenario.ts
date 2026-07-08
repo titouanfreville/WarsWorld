@@ -23,7 +23,7 @@ import type {
 import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
 import type { UnitType, UnitWithVisibleStats } from "shared/schemas/unit";
 import { MatchWrapper } from "shared/wrappers/match";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
+import type { DistributiveOmit, PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
 import { UnitWrapper } from "shared/wrappers/unit";
 
 /**
@@ -94,15 +94,23 @@ export function makeUnit(
   type: UnitType,
   position: Position,
   overrides: Partial<UnitWithVisibleStats> = {},
-): Omit<UnitWithVisibleStats, "playerSlot"> {
+): DistributiveOmit<UnitWithVisibleStats, "playerSlot"> {
   const stats = AMMO_UNITS.has(type) ? { fuel: 50, hp: 100, ammo: 5 } : { fuel: 50, hp: 100 };
   const unit: Record<string, unknown> = { type, position, isReady: true, stats };
 
-  if (HIDDEN_UNITS.has(type)) unit.hidden = false;
-  if (ONE_SLOT_TRANSPORTS.has(type) || TWO_SLOT_TRANSPORTS.has(type)) unit.loadedUnit = null;
-  if (TWO_SLOT_TRANSPORTS.has(type)) unit.loadedUnit2 = null;
+  if (HIDDEN_UNITS.has(type)) {
+    unit.hidden = false;
+  }
 
-  return { ...unit, ...overrides } as Omit<UnitWithVisibleStats, "playerSlot">;
+  if (ONE_SLOT_TRANSPORTS.has(type) || TWO_SLOT_TRANSPORTS.has(type)) {
+    unit.loadedUnit = null;
+  }
+
+  if (TWO_SLOT_TRANSPORTS.has(type)) {
+    unit.loadedUnit2 = null;
+  }
+
+  return { ...unit, ...overrides } as DistributiveOmit<UnitWithVisibleStats, "playerSlot">;
 }
 
 /** Add a unit of the given type to a player and return its wrapper. */
@@ -127,13 +135,13 @@ export function recomputeVision(match: MatchWrapper): void {
 
 type PlayerSpec = Partial<PlayerInMatch> & { slot: PlayerSlot };
 
-interface ScenarioOptions {
+type ScenarioOptions = {
   tiles: Tile[][];
   players: PlayerSpec[];
   changeableTiles?: ChangeableTile[];
   rules?: Partial<MatchRules>;
   turn?: number;
-}
+};
 
 function buildPlayer(spec: PlayerSpec): PlayerInMatch {
   const { slot } = spec;
@@ -149,7 +157,7 @@ function buildPlayer(spec: PlayerSpec): PlayerInMatch {
     powerMeter: spec.powerMeter ?? 0,
     timesPowerUsed: spec.timesPowerUsed ?? 0,
     status: spec.status ?? "alive",
-    ...(spec.hasCurrentTurn ? { hasCurrentTurn: true } : {}),
+    ...(spec.hasCurrentTurn === true ? { hasCurrentTurn: true } : {}),
   } as PlayerInMatch;
 }
 

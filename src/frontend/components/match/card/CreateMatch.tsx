@@ -9,9 +9,11 @@ import { useEffect, useState } from "react";
 type Props = {
   currentPlayer: Player | undefined;
   setCurrentPlayer: (player: Player) => void;
+  /** Called after a match is created — lets a host (e.g. the modal) close itself. */
+  onCreated?: () => void;
 };
 
-export default function CreateMatch({ currentPlayer, setCurrentPlayer }: Props) {
+export default function CreateMatch({ currentPlayer, setCurrentPlayer, onCreated }: Props) {
   const { ownedPlayers } = usePlayers();
   const utils = trpc.useUtils();
 
@@ -29,6 +31,7 @@ export default function CreateMatch({ currentPlayer, setCurrentPlayer }: Props) 
   const createMatchMutation = trpc.match.create.useMutation({
     onSuccess() {
       void utils.match.invalidate();
+      onCreated?.();
     },
   });
 
@@ -104,12 +107,9 @@ export default function CreateMatch({ currentPlayer, setCurrentPlayer }: Props) 
 
   return (
     <div className="@w-full">
-      <h1>Match Page</h1>
-      <p>
-        To create a match, first change Current Player to any other player. Then click on create
-        game.
+      <p className="@pb-2 @text-slate-400">
+        Choose a map and rules, then open a slot. Your opponent picks their CO when they join.
       </p>
-      <br />
       {ownedPlayers ? (
         <div className="@flex @flex-col smallscreen:@flex-row @justify-center @items-center @py-2 @pb-6">
           <p className="@px-0 smallscreen:@pr-8">Current Player: </p>

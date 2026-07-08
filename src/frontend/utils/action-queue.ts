@@ -85,6 +85,16 @@ export type ActionQueueEvent =
 export const initialActionQueueState: ActionQueueState = { actions: [], nextSeq: 0 };
 
 /**
+ * Idempotency key for a queued action. Prefers `crypto.randomUUID`, but that is `undefined` on
+ * insecure origins (e.g. plain http:// on a LAN IP), where calling it throws and the board can't
+ * enqueue anything. Fall back to a time+random key so play still works there.
+ */
+export const makeClientId = (): string =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
  * The next action the transport should submit: the earliest still-`pending` one. Turn-based play
  * means we drain strictly in order — one in flight at a time — so a rejection can't leave later
  * optimistic actions built on an outcome the BE never accepted.

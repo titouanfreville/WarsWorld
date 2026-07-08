@@ -1,6 +1,6 @@
 import type { inferTRPCOutput } from "frontend/utils/trpc-client";
 import type { BoardPosition } from "./match-view";
-import { samePosition } from "./match-view";
+import { posKey, samePosition } from "./match-view";
 
 /**
  * The turn snapshot the backend sends at the start of a player's turn — the client buffers this
@@ -58,20 +58,23 @@ export const reconstructPath = (
   unit: SnapshotUnit,
   destination: BoardPosition,
 ): BoardPosition[] | null => {
-  const key = (p: BoardPosition) => `${p[0]},${p[1]}`;
-  const byPosition = new Map(unit.reachableTiles.map((tile) => [key(tile.position), tile]));
+  const byPosition = new Map(unit.reachableTiles.map((tile) => [posKey(tile.position), tile]));
 
-  let current = byPosition.get(key(destination));
+  let current = byPosition.get(posKey(destination));
 
   if (current === undefined) {
     return null;
   }
 
   const reversePath: BoardPosition[] = [];
+  // Guard against a malformed snapshot whose parent pointers form a cycle — without `seen` this walk
+  // would loop forever and hang the tab.
+  const seen = new Set<string>();
 
-  while (current !== undefined) {
+  while (current !== undefined && !seen.has(posKey(current.position))) {
+    seen.add(posKey(current.position));
     reversePath.push(current.position);
-    current = current.parent === null ? undefined : byPosition.get(key(current.parent));
+    current = current.parent === null ? undefined : byPosition.get(posKey(current.parent));
   }
 
   return reversePath.reverse();

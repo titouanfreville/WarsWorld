@@ -66,6 +66,8 @@ describe("move feature", () => {
 
     // Replaying the event log on boot can hit a stand-still event whose unit has since been
     // removed. Applying it must be a no-op, not throw — otherwise the whole server crashes on boot.
-    expect(() => applyMoveEvent(match, { type: "move", path: [[1, 0]], trap: false })).not.toThrow();
+    expect(() =>
+      applyMoveEvent(match, { type: "move", path: [[1, 0]], trap: false }),
+    ).not.toThrow();
   });
 });

@@ -5,6 +5,7 @@ import { pageMatchIndex } from "server/page-match-index";
 import { playerMatchIndex } from "server/player-match-index";
 import { prisma } from "server/prisma/prisma-client";
 import { DispatchableError } from "shared/DispatchedError";
+import { logger } from "shared/utils/logger";
 import { applyMainEventToMatch } from "shared/match-logic/events/apply-event-to-match";
 import { INITIAL_FUNDS } from "shared/match-logic/game-constants/funds";
 import { createMatchStartEvent } from "shared/match-logic/events/handlers/match-start";
@@ -25,7 +26,12 @@ import {
 } from "../trpc/trpc-setup";
 import { createMatchProcedure } from "./match/create";
 import { deriveGameOver } from "./match/game-over";
-import { allMatchSlotsReady, matchToFrontend, throwIfMatchNotInSetupState } from "./match/util";
+import {
+  allMatchSlotsReady,
+  finishedRowToFrontend,
+  matchToFrontend,
+  throwIfMatchNotInSetupState,
+} from "./match/util";
 
 /**
  * Reject a CO that isn't implemented for its game version (e.g. von-bolt only exists in AWDS). If it
@@ -35,7 +41,15 @@ import { allMatchSlotsReady, matchToFrontend, throwIfMatchNotInSetupState } from
 const throwIfCOUnavailable = (selectedCO: z.infer<typeof coIdSchema>) => {
   try {
     getCOProperties(selectedCO);
-  } catch {
+  } catch (error) {
+    // getCOProperties throws when the CO isn't implemented for this version. Surface that as a typed,
+    // user-facing error — but don't swallow the cause: log it so an unrelated failure in CO property
+    // resolution isn't silently misreported as "not available in game version".
+    logger.warn(
+      `[throwIfCOUnavailable] getCOProperties failed for ${selectedCO.name}/${selectedCO.version}:`,
+      error instanceof Error ? error.message : error,
+    );
+
     throw new DispatchableError(
       `CO "${selectedCO.name}" is not available in game version ${selectedCO.version}.`,
     );
@@ -55,6 +69,21 @@ export const matchRouter = router({
     ({ ctx: { currentPlayer } }) =>
       playerMatchIndex.getPlayerMatches(currentPlayer.id)?.map(matchToFrontend) ?? [],
   ),
+
+  // Finished matches are archived out of the live store (rebuild skips them), so the player's
+  // history is read straight from the DB. Membership lives in the `playerState` JSON (the
+  // `_MatchToPlayer` relation is currently unpopulated), so filter it in memory after fetching.
+  getPlayerFinishedMatches: playerBaseProcedure.query(async ({ ctx: { currentPlayer } }) => {
+    const rows = await prisma.match.findMany({
+      where: { status: "finished" },
+      include: { map: true },
+      orderBy: { finishedAt: "desc" },
+    });
+
+    return rows
+      .filter((row) => row.playerState.some((player) => player.id === currentPlayer.id))
+      .map(finishedRowToFrontend);
+  }),
   full: matchBaseProcedure.query(({ ctx: { match, currentPlayer } }) => {
     const fogOfWar = match.isFogOfWar();
     const viewerTeam = match.getPlayerById(currentPlayer.id)?.team;

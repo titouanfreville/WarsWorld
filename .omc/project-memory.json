@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1783341750668,
+  "lastScanned": 1783450944965,
   "projectRoot": "/Users/titouan/perso/WarsWorld",
   "techStack": {
     "languages": [
@@ -52,8 +52,8 @@
     "runtime": "Node.js 21.0.0"
   },
   "build": {
-    "buildCommand": "cd /Users/titouan/perso/WarsWorld\necho \"=== tsc total ===\"; rtk proxy npx tsc --noEmit 2>&1 | grep -c 'error TS'\necho \"=== tests ===\"; rtk proxy npx vitest run 2>&1 | grep -E \"Test Files|Tests |FAIL\" | tail -3\necho \"=== lint (full) ===\"; rtk lint 2>&1 | grep -iE \"error|warning|problem\" | head -5 || echo \"lint clean\"\necho \"=== uncommitted src ===\"; rtk git status --porcelain | grep 'src/'",
-    "testCommand": "cd /Users/titouan/perso/WarsWorld\necho \"=== tsc total ===\"; rtk proxy npx tsc --noEmit 2>&1 | grep -c 'error TS'\necho \"=== tests ===\"; rtk proxy npx vitest run 2>&1 | grep -E \"Test Files|Tests |FAIL\" | tail -3\necho \"=== lint (full) ===\"; rtk lint 2>&1 | grep -iE \"error|warning|problem\" | head -5 || echo \"lint clean\"\necho \"=== uncommitted src ===\"; rtk git status --porcelain | grep 'src/'",
+    "buildCommand": "cd /Users/titouan/perso/WarsWorld; for i in $(seq 1 90); do if ! pgrep -f \"tsc --noEmit -p tsconfig.json\" >/dev/null 2>&1; then break; fi; sleep 2; done; rtk read /private/tmp/claude-503/-Users-titouan-perso-WarsWorld/fa95b3ec-93cc-4100-94e7-c8d9b67d497d/tasks/b0evz6wrh.output",
+    "testCommand": "cd /Users/titouan/perso/WarsWorld; for i in $(seq 1 40); do if ! pgrep -f \"vitest run src/tests/features/finalize\" >/dev/null 2>&1; then break; fi; sleep 1; done; rtk read /private/tmp/claude-503/-Users-titouan-perso-WarsWorld/fa95b3ec-93cc-4100-94e7-c8d9b67d497d/tasks/bh2ocoiug.output --tail-lines 20",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -109,18 +109,27 @@
       "path": "deployment",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1783341750641,
+      "lastAccessed": 1783450944905,
       "keyFiles": [
         "README.md",
         "main.tf",
         "variables.tf"
       ]
     },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1783450944919,
+      "keyFiles": [
+        "tsconfig.tsbuildinfo"
+      ]
+    },
     "prisma": {
       "path": "prisma",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1783341750653,
+      "lastAccessed": 1783450944922,
       "keyFiles": [
         "schema.prisma",
         "seed.ts"
@@ -130,7 +139,7 @@
       "path": "public",
       "purpose": "Public files",
       "fileCount": 3,
-      "lastAccessed": 1783341750654,
+      "lastAccessed": 1783450944926,
       "keyFiles": [
         "aw2Font.fnt",
         "aw2Font.ttf_0.png",
@@ -141,14 +150,14 @@
       "path": "src",
       "purpose": "Source code",
       "fileCount": 0,
-      "lastAccessed": 1783341750655,
+      "lastAccessed": 1783450944929,
       "keyFiles": []
     },
     "utils": {
       "path": "utils",
       "purpose": "Utility functions",
       "fileCount": 1,
-      "lastAccessed": 1783341750656,
+      "lastAccessed": 1783450944930,
       "keyFiles": [
         "README.md"
       ]
@@ -157,7 +166,7 @@
       "path": "prisma/migrations",
       "purpose": "Database migrations",
       "fileCount": 1,
-      "lastAccessed": 1783341750658,
+      "lastAccessed": 1783450944931,
       "keyFiles": [
         "migration_lock.toml"
       ]
@@ -166,14 +175,14 @@
       "path": "src/components",
       "purpose": "UI components",
       "fileCount": 0,
-      "lastAccessed": 1783341750659,
+      "lastAccessed": 1783450944933,
       "keyFiles": []
     },
     "src/pages": {
       "path": "src/pages",
       "purpose": "Page components",
       "fileCount": 9,
-      "lastAccessed": 1783341750660,
+      "lastAccessed": 1783450944934,
       "keyFiles": [
         "404.tsx",
         "_app.tsx",
@@ -184,7 +193,7 @@
       "path": "src/tests",
       "purpose": "Test files",
       "fileCount": 1,
-      "lastAccessed": 1783341750660,
+      "lastAccessed": 1783450944939,
       "keyFiles": [
         "calculate-damage.test.ts"
       ]
@@ -192,303 +201,303 @@
   },
   "hotPaths": [
     {
-      "path": "src/server/routers/match.ts",
-      "accessCount": 22,
-      "lastAccessed": 1783446891938,
+      "path": "src/components/client-only/MatchBoardV2.tsx",
+      "accessCount": 30,
+      "lastAccessed": 1783516557372,
       "type": "file"
     },
     {
-      "path": ".eslintrc.cjs",
-      "accessCount": 6,
-      "lastAccessed": 1783344399432,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/wrappers/vision.ts",
-      "accessCount": 6,
-      "lastAccessed": 1783437267505,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/move.ts",
-      "accessCount": 6,
-      "lastAccessed": 1783438915738,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/types/component-data.ts",
-      "accessCount": 6,
-      "lastAccessed": 1783447219448,
-      "type": "file"
-    },
-    {
-      "path": "src/tests/features/capture.test.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783350096876,
-      "type": "file"
-    },
-    {
-      "path": "src/pixi/renderAttackTiles.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783360651095,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/wrappers/team.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783428919842,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/wrappers/match.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783437229996,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/passTurn.ts",
-      "accessCount": 5,
-      "lastAccessed": 1783446967589,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/types/events.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783343774528,
-      "type": "file"
-    },
-    {
-      "path": "src/tests/features/win-loss.test.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783350130587,
-      "type": "file"
-    },
-    {
-      "path": "src/frontend/context/players.tsx",
-      "accessCount": 4,
-      "lastAccessed": 1783368231792,
-      "type": "file"
-    },
-    {
-      "path": "src/tests/helpers/scenario.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783428128452,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/action.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783430904523,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/match/create.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783435466337,
+      "path": "src/pages/your-matches.tsx",
+      "accessCount": 15,
+      "lastAccessed": 1783517569430,
       "type": "file"
     },
     {
       "path": "src/server/match-store.ts",
-      "accessCount": 4,
-      "lastAccessed": 1783439802735,
+      "accessCount": 13,
+      "lastAccessed": 1783517614599,
       "type": "file"
     },
     {
-      "path": "src/shared/match-logic/events/handlers/match-start.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783350371991,
+      "path": "src/frontend/components/match/lobby/match-status.ts",
+      "accessCount": 13,
+      "lastAccessed": 1783519257693,
       "type": "file"
     },
     {
-      "path": "src/shared/match-logic/events/apply-event-to-match.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783350385300,
+      "path": "src/frontend/components/match/optimistic-view.ts",
+      "accessCount": 10,
+      "lastAccessed": 1783516530900,
       "type": "file"
     },
     {
-      "path": "src/shared/types/server-match-state.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783428152555,
+      "path": "src/server/CLAUDE.md",
+      "accessCount": 9,
+      "lastAccessed": 1783489855715,
       "type": "file"
     },
     {
-      "path": "src/shared/match-logic/events/event-to-emittable.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783446394692,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/attack/applyAttackEvent.ts",
-      "accessCount": 3,
-      "lastAccessed": 1783446462319,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/user.ts",
-      "accessCount": 2,
-      "lastAccessed": 1783344683785,
-      "type": "file"
-    },
-    {
-      "path": "src/server/routers/article.ts",
-      "accessCount": 2,
-      "lastAccessed": 1783345223409,
+      "path": "src/shared/match-logic/pathfinding.ts",
+      "accessCount": 9,
+      "lastAccessed": 1783489906042,
       "type": "file"
     },
     {
       "path": "src/shared/wrappers/player-in-match.ts",
+      "accessCount": 9,
+      "lastAccessed": 1783516003127,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/path-planning.ts",
+      "accessCount": 9,
+      "lastAccessed": 1783516257922,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/match-logic/combat-forecast.ts",
+      "accessCount": 9,
+      "lastAccessed": 1783516535470,
+      "type": "file"
+    },
+    {
+      "path": "src/server/routers/match.ts",
+      "accessCount": 9,
+      "lastAccessed": 1783517334032,
+      "type": "file"
+    },
+    {
+      "path": "src/server/routers/match/previews.ts",
+      "accessCount": 8,
+      "lastAccessed": 1783489910148,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/match-view.ts",
+      "accessCount": 8,
+      "lastAccessed": 1783516521039,
+      "type": "file"
+    },
+    {
+      "path": "src/pixi/v2/render-from-view.ts",
+      "accessCount": 8,
+      "lastAccessed": 1783516611982,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/buffered-intent.ts",
+      "accessCount": 7,
+      "lastAccessed": 1783516582484,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 6,
+      "lastAccessed": 1783456956153,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/turn-snapshot-view.ts",
+      "accessCount": 6,
+      "lastAccessed": 1783516220420,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/card/MatchCard.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1783516600470,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/lobby/MatchHistoryRow.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1783519270199,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/match-logic/events/handlers/move.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783489341225,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/utils/action-queue.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783489897211,
+      "type": "file"
+    },
+    {
+      "path": "src/server/routers/match/turn-snapshot.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783489909659,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/types/server-match-state.ts",
+      "accessCount": 5,
+      "lastAccessed": 1783516990210,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/lobby/MatchStatusBadge.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1783516624072,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/card/CreateMatch.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1783455856181,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/card/MatchCardSetup.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1783458320019,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/CLAUDE.md",
+      "accessCount": 3,
+      "lastAccessed": 1783489855953,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/card/MatchCardTop.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1783489944027,
+      "type": "file"
+    },
+    {
+      "path": "src/server/maps/maps.usecase.ts",
+      "accessCount": 3,
+      "lastAccessed": 1783516632869,
+      "type": "file"
+    },
+    {
+      "path": "src/frontend/components/match/card/MatchPlayer.tsx",
       "accessCount": 2,
-      "lastAccessed": 1783429206741,
+      "lastAccessed": 1783458307095,
       "type": "file"
     },
     {
-      "path": "prisma/seed.ts",
+      "path": "src/frontend/components/match/lobby/LobbyRail.tsx",
       "accessCount": 2,
-      "lastAccessed": 1783435484079,
+      "lastAccessed": 1783489872077,
       "type": "file"
     },
     {
-      "path": "src/tests/features/vision-fog.test.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783342457163,
+      "path": "src/frontend/components/match/lobby/CreateMatchModal.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1783489877630,
       "type": "file"
     },
     {
-      "path": "src/tests/features/fog-leak-guard.test.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783342596539,
+      "path": "src/shared/match-logic/events/handlers/attack/applyAttackEvent.ts",
+      "accessCount": 2,
+      "lastAccessed": 1783516130329,
+      "type": "file"
+    },
+    {
+      "path": "src/shared/wrappers/unit.ts",
+      "accessCount": 2,
+      "lastAccessed": 1783516470597,
       "type": "file"
     },
     {
       "path": "src/shared/types/domain-entities.ts",
       "accessCount": 1,
-      "lastAccessed": 1783343756619,
+      "lastAccessed": 1783451116012,
       "type": "file"
     },
     {
-      "path": "src/shared/wrappers/map.ts",
+      "path": "src/frontend/components/match/card/MatchSection.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783343765052,
+      "lastAccessed": 1783451140808,
       "type": "file"
     },
     {
-      "path": "src/shared/schemas/preferences.ts",
+      "path": "tailwind.config.ts",
       "accessCount": 1,
-      "lastAccessed": 1783344577758,
+      "lastAccessed": 1783451154961,
       "type": "file"
     },
     {
-      "path": "src/shared/schemas/auth.ts",
+      "path": "src/frontend/styles/global.scss",
       "accessCount": 1,
-      "lastAccessed": 1783344578237,
+      "lastAccessed": 1783451155453,
       "type": "file"
     },
     {
-      "path": "src/shared/schemas/article.ts",
+      "path": "src/server/maps/router.ts",
       "accessCount": 1,
-      "lastAccessed": 1783344578485,
+      "lastAccessed": 1783452162116,
       "type": "file"
     },
     {
-      "path": "src/server/players/schemas.ts",
+      "path": "src/shared/match-logic/events/handlers/attack/getPowerChargeGain.ts",
       "accessCount": 1,
-      "lastAccessed": 1783344637853,
+      "lastAccessed": 1783455469757,
       "type": "file"
     },
     {
-      "path": "src/server/prisma/prisma-json-types.ts",
+      "path": "src/frontend/components/layout/modal/DefaultDialogDesign.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783344649539,
+      "lastAccessed": 1783455506308,
       "type": "file"
     },
     {
-      "path": "src/server/auth/schemas.ts",
+      "path": "src/frontend/components/modals/LoginSignupModal.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783344672037,
+      "lastAccessed": 1783455506695,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/auth/signup-schema.ts",
+      "path": "src/frontend/context/players.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783344674722,
+      "lastAccessed": 1783455507216,
       "type": "file"
     },
     {
-      "path": "src/pages/api/authOptions.ts",
+      "path": "src/shared/types/component-data.ts",
       "accessCount": 1,
-      "lastAccessed": 1783344685279,
+      "lastAccessed": 1783455507689,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/auth/SignupForm.tsx",
+      "path": "src/frontend/components/layout/SquareButton.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783344687291,
+      "lastAccessed": 1783455559721,
       "type": "file"
     },
     {
-      "path": "src/server/articles/schemas.ts",
+      "path": "src/frontend/components/layout/PageTitle.tsx",
       "accessCount": 1,
-      "lastAccessed": 1783345205442,
+      "lastAccessed": 1783455559777,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/layout/article/article-schemas.ts",
+      "path": "src/shared/schemas/action.ts",
       "accessCount": 1,
-      "lastAccessed": 1783345209841,
+      "lastAccessed": 1783455607010,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/layout/article/article-types.ts",
+      "path": "src/tests/features/co-power-charge.test.ts",
       "accessCount": 1,
-      "lastAccessed": 1783345211558,
+      "lastAccessed": 1783455636529,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/layout/article/CreateArticleForm.tsx",
+      "path": "src/server/page-match-index.ts",
       "accessCount": 1,
-      "lastAccessed": 1783345224946,
+      "lastAccessed": 1783458409992,
       "type": "file"
     },
     {
-      "path": "src/frontend/components/layout/article/ArticleCommentSection.tsx",
+      "path": "src/server/player-match-index.ts",
       "accessCount": 1,
-      "lastAccessed": 1783345226936,
-      "type": "file"
-    },
-    {
-      "path": "src/frontend/components/layout/article/Article.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1783345228261,
-      "type": "file"
-    },
-    {
-      "path": "src/server/trpc/middleware/player.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783346689215,
-      "type": "file"
-    },
-    {
-      "path": "src/tests/features/pass-turn.test.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350019781,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/game-constants/funds.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350338535,
-      "type": "file"
-    },
-    {
-      "path": "src/tests/features/match-start.test.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350443736,
-      "type": "file"
-    },
-    {
-      "path": "src/shared/match-logic/events/handlers/attack/attackActionToEvent.ts",
-      "accessCount": 1,
-      "lastAccessed": 1783350466885,
+      "lastAccessed": 1783458410433,
       "type": "file"
     }
   ],

@@ -7,7 +7,12 @@ import type {
   MatchUnit,
   MatchView,
 } from "frontend/components/match/match-view";
-import { getArmyForSlot, getTileAt, visualHP } from "frontend/components/match/match-view";
+import {
+  getArmyForSlot,
+  getTileAt,
+  samePosition,
+  visualHP,
+} from "frontend/components/match/match-view";
 import type { Resource } from "pixi.js";
 import { AnimatedSprite, Container, Sprite, Texture } from "pixi.js";
 import type { LoadedSpriteSheet } from "../load-spritesheet";
@@ -203,7 +208,7 @@ export const renderUnitsFromView = (
 ): Container => {
   const unitContainer = new Container();
   const isPhantom = (position: BoardPosition) =>
-    phantomPositions.some((phantom) => phantom[0] === position[0] && phantom[1] === position[1]);
+    phantomPositions.some((phantom) => samePosition(phantom, position));
 
   for (const unit of match.units) {
     const army = getArmyForSlot(match, unit.playerSlot);
@@ -249,6 +254,7 @@ export const renderInteractiveTilesFromView = (
   match: MatchView,
   onTileClick: (pos: BoardPosition) => void,
   onTileHover: (pos: BoardPosition) => void,
+  onTileRightClick?: (pos: BoardPosition) => void,
 ): Container => {
   const container = new Container();
   container.x = baseTileSize / 2;
@@ -265,6 +271,7 @@ export const renderInteractiveTilesFromView = (
       sprite.interactive = true;
       sprite.on("pointertap", () => onTileClick([x, y]));
       sprite.on("pointerenter", () => onTileHover([x, y]));
+      sprite.on("rightclick", () => onTileRightClick?.([x, y]));
       container.addChild(sprite);
     }
   }

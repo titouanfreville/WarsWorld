@@ -9,7 +9,7 @@ import { addUnit, createTestMatch, tiles } from "../helpers/scenario";
  * This data-driven matrix locks which cargo each transport accepts, covering every transport type
  * and both facility-gated rules (lander = land units, carrier = air units) without N×M hand-writing.
  */
-const LOAD_MATRIX: Array<[transport: UnitType, cargo: UnitType, canLoad: boolean]> = [
+const LOAD_MATRIX: [transport: UnitType, cargo: UnitType, canLoad: boolean][] = [
   ["apc", "infantry", true],
   ["apc", "mech", true],
   ["apc", "tank", false], // apc carries soldiers only

@@ -2,6 +2,7 @@ import type { DisplayObject } from "pixi.js";
 import { BitmapText, Container, Sprite, Texture } from "pixi.js";
 import { type MutableRefObject } from "react";
 import type { MainAction } from "shared/schemas/action";
+import { logger } from "frontend/utils/logger";
 import { /*baseTileSize,*/ renderedTileSize } from "../components/client-only/MatchRenderer";
 import type { Position } from "../shared/schemas/position";
 import { isSamePosition } from "../shared/schemas/position";
@@ -52,7 +53,7 @@ export function renderAttackTiles(
       const unit2 = match.getUnit(pos);
 
       if (unit1 !== null && unit2 !== undefined) {
-        console.log("PATHREF:", pathRef, pathRef.current);
+        logger.debug("PATHREF:", pathRef, pathRef.current);
         const attackingPos =
           pathRef.current !== null
             ? pathRef.current[pathRef.current.length - 1]
@@ -84,7 +85,7 @@ export function renderAttackTiles(
             ? pathRef.current
             : [attackOrigin];
 
-        console.log("sending action:", pos, path);
+        logger.debug("sending action:", pos, path);
         void sendAction({
           type: "move",
           subAction: {

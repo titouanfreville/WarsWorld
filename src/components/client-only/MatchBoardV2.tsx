@@ -1,8 +1,13 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
-import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
+import type {
+  BoardDirection,
+  BoardPosition,
+  MatchView,
+} from "frontend/components/match/match-view";
 import {
+  DIRECTION_OFFSET,
   getArmyForSlot,
   getCurrentTurnPlayer,
   getPlayerById,
@@ -10,9 +15,11 @@ import {
   getUnitAt,
   isOutOfBounds,
   samePosition,
+  toMutablePath,
 } from "frontend/components/match/match-view";
 import { applyBufferedActions } from "frontend/components/match/optimistic-view";
 import { PingIndicator } from "frontend/components/match/PingIndicator";
+import { createLogger } from "frontend/utils/logger";
 import { PowerBar } from "frontend/components/match/PowerBar";
 import type { SnapshotUnit, TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
 import {
@@ -31,6 +38,7 @@ import {
   canBufferAttack,
   hasUnresolvedActions,
   initialActionQueueState,
+  makeClientId,
   nextPendingAction,
   optimisticActions,
   type ActionKind,
@@ -71,18 +79,17 @@ const REACHABLE_COLOR = "#43d9e4";
 const ATTACK_COLOR = "#be1919";
 const UNLOAD_COLOR = "#3fb950";
 
-const DROP_DIRECTIONS: { direction: UnloadDrop["direction"]; dx: number; dy: number }[] = [
-  { direction: "up", dx: 0, dy: -1 },
-  { direction: "down", dx: 0, dy: 1 },
-  { direction: "left", dx: -1, dy: 0 },
-  { direction: "right", dx: 1, dy: 0 },
-];
-
-const toMutable = (path: readonly BoardPosition[]): [number, number][] =>
-  path.map((p) => [p[0], p[1]]);
+const DROP_DIRECTIONS = (Object.keys(DIRECTION_OFFSET) as BoardDirection[]).map((direction) => ({
+  direction,
+  dx: DIRECTION_OFFSET[direction][0],
+  dy: DIRECTION_OFFSET[direction][1],
+}));
 
 const inList = (list: readonly BoardPosition[], pos: BoardPosition): boolean =>
   list.some((p) => samePosition(p, pos));
+
+/** Board-scoped logger — uses the logger migration's `createLogger(scope)` convention for the tag. */
+const boardLog = createLogger("v2");
 
 /**
  * Snapshot-driven board (Phase C). Renders from the plain `match.full` data and drives actions off
@@ -200,7 +207,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   );
 
   const onActionError = (label: string) => (error: { message: string }) =>
-    console.error(`[v2] ${label} rejected by BE:`, error.message);
+    boardLog.warn(`${label} rejected by BE:`, error.message);
 
   // Drain the buffer: submit the earliest pending action, one in flight at a time.
   useEffect(() => {
@@ -228,11 +235,12 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         },
         onError(error) {
           onActionError(pending.kind)(error);
-          // Reject only THIS action. Each unit acts once per turn, so buffered actions are
-          // independent; the rest keep draining and are re-validated by the BE, so a genuinely
-          // dependent one (e.g. moving onto a tile a failed move was meant to vacate) fails there
-          // on its own. We don't pre-cancel unrelated moves.
+          // Locked reconciliation rule (src/frontend/CLAUDE.md): apply up to and INCLUDING the first
+          // failure, then cancel every action buffered after it — the later ones were built on intent
+          // the BE never accepted (e.g. a move blocked by a fog-hidden unit invalidates whatever was
+          // queued to follow it). Reject this one, then cancel its followers.
           dispatchQueue({ type: "rejected", clientId: pending.clientId });
+          dispatchQueue({ type: "cancelFollowing", clientId: pending.clientId });
         },
         onSettled() {
           inFlightRef.current.delete(pending.clientId);
@@ -279,10 +287,15 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     app.stage.scale.set(renderMultiplier, renderMultiplier);
     const canvas = app.view as unknown as HTMLCanvasElement;
     canvas.style.imageRendering = "pixelated";
+    // Right-click is our universal "cancel current interaction" gesture, so suppress the browser
+    // context menu over the board (handled per-tile via onTileRightClick below).
+    const suppressContextMenu = (event: Event) => event.preventDefault();
+    canvas.addEventListener("contextmenu", suppressContextMenu);
     containerRef.current.appendChild(canvas);
     appRef.current = app;
 
     return () => {
+      canvas.removeEventListener("contextmenu", suppressContextMenu);
       app.destroy(true, { children: true });
       appRef.current = null;
     };
@@ -335,6 +348,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     selectionRef.current = null;
     stagedDestRef.current = null;
     attackTargetsRef.current = [];
+    // Also drop the armed-missile / staged-unload interaction: their overlays are destroyed with the
+    // stage on this rebuild, so leaving the refs set would make the next click fire a missile / unload
+    // at a stale target with no visible cue.
+    missileArmRef.current = null;
+    unloadDropsRef.current = [];
 
     let openMenu: Container | null = null;
 
@@ -405,7 +423,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // reconciles against the BE. This is the ONLY submit path for board actions now.
     const enqueue = (kind: ActionKind, action: MainAction) => {
       resetInteraction();
-      dispatchQueue({ type: "enqueue", clientId: crypto.randomUUID(), kind, action });
+      dispatchQueue({ type: "enqueue", clientId: makeClientId(), kind, action });
     };
 
     const enqueueMove = (
@@ -415,7 +433,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         | { type: "wait" }
         | { type: "ability" }
         | { type: "attack"; defenderPosition: [number, number] },
-    ) => enqueue(kind, { type: "move", path: toMutable(path), subAction });
+    ) => enqueue(kind, { type: "move", path: toMutablePath(path), subAction });
 
     // A unit's reachable tiles minus those a BUFFERED move now occupies (a tile another unit has
     // been moved onto isn't a valid plain-move destination — we'd stack two units). Its own tile and
@@ -534,7 +552,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         if (path !== null) {
           enqueue("repair", {
             type: "move",
-            path: toMutable(path),
+            path: toMutablePath(path),
             subAction: { type: "repair", direction: target.direction },
           });
         }
@@ -796,19 +814,16 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         return; // the match is decided — the board is read-only
       }
 
-      // --- Arming a missile: the next in-bounds click is the strike target. ---
+      // --- Arming a missile: the next click is the strike target. Every board tile is in-bounds, so
+      // there is no "click off the board to cancel" — right-click cancels instead (onTileRightClick).
       const arm = missileArmRef.current;
 
       if (arm !== null) {
-        if (!isOutOfBounds(currentMatch, pos)) {
-          enqueue("launch", {
-            type: "move",
-            path: toMutable(arm.path),
-            subAction: { type: "launchMissile", targetPosition: [pos[0], pos[1]] },
-          });
-        } else {
-          resetInteraction();
-        }
+        enqueue("launch", {
+          type: "move",
+          path: toMutablePath(arm.path),
+          subAction: { type: "launchMissile", targetPosition: [pos[0], pos[1]] },
+        });
 
         return;
       }
@@ -827,7 +842,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
             if (path !== null) {
               enqueue("move", {
                 type: "move",
-                path: toMutable(path),
+                path: toMutablePath(path),
                 subAction: {
                   type: "unloadWait",
                   unloads: [{ isSecondUnit: drop.isSecondUnit, direction: drop.direction }],
@@ -933,6 +948,10 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       drawPathArrow();
     };
 
+    // Right-click anywhere on the board is the universal cancel: clear any selection, staged move,
+    // open menu, or armed missile and return to a clean slate. (Left-click drives every action.)
+    const onTileRightClick = () => resetInteraction();
+
     // Buffered (unconfirmed) intent: an AW arrow per buffered move at phantom opacity, plus the units
     // it targets rendered as translucent phantoms, so pending actions read directly on the board.
     const buffered = optimisticActions(queue);
@@ -957,7 +976,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     app.stage.addChild(
       mapContainer,
       renderUnitsFromView(view, spriteSheets, phantomPositions(buffered)),
-      renderInteractiveTilesFromView(view, onTileClick, onTileHover),
+      renderInteractiveTilesFromView(view, onTileClick, onTileHover, onTileRightClick),
       menuLayer,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -993,7 +1012,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               resetInteractionRef.current();
               dispatchQueue({
                 type: "enqueue",
-                clientId: crypto.randomUUID(),
+                clientId: makeClientId(),
                 kind: "coPower",
                 action: { type: "coPower", isSuper },
               });

@@ -16,14 +16,14 @@ it decides nothing.
   and resulting state come from tRPC queries / the WS subscription. The FE draws what the BE sends.
 - **No backend/domain imports.** The only contract across the boundary is the tRPC API. Client
   types come from **tRPC type inference** (and subscription outputs) — never `import … from
-  "shared/…"` or from `src/server`. `src/shared` is being removed; don't add new references to it.
+"shared/…"` or from `src/server`. `src/shared` is being removed; don't add new references to it.
 
 ## Action buffer & reconciliation (locked design)
 
 The FE never stores authoritative game state (that's what makes it drift and desync). It stores
 exactly two things and rebases on the BE:
 
-1. **Turn snapshot** — handed over by the BE at the *start of the player's turn*. It carries
+1. **Turn snapshot** — handed over by the BE at the _start of the player's turn_. It carries
    everything needed to buffer simple actions with **zero rules knowledge** on the client:
    - per owned unit: its **reachable move tiles**. Computed over the player's **visible** state —
      a fog-hidden enemy must **not** shrink the reachable set (that would leak its position). The
@@ -38,11 +38,12 @@ exactly two things and rebases on the BE:
    - **production** → place the unit, subtract the price-table cost from local funds.
 
 **Attack is never resolved on the client** — combat (damage, luck, counterattack) is BE-only. Buffer
-the attack, submit it, and **serialize on attacks**: an unresolved attack blocks the *next attack*
+the attack, submit it, and **serialize on attacks**: an unresolved attack blocks the _next attack_
 until the BE returns its resolution, but moves / captures / production keep buffering optimistically
 alongside it.
 
-**Reconciliation** (the FE stack is the source of truth for *intent*; the BE for *rules*):
+**Reconciliation** (the FE stack is the source of truth for _intent_; the BE for _rules_):
+
 - Replay the buffered stack against authoritative BE state; the BE rules each action.
 - **Fog move failure**: when a buffered move fails (a hidden enemy was in the way), apply moves up
   to **and including** the first one that fails, then **cancel every buffered action after it**.
