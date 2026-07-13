@@ -9,7 +9,7 @@ import {
 } from "frontend/utils/action-queue";
 import { createLogger } from "frontend/utils/logger";
 import { trpc } from "frontend/utils/trpc-client";
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 type Params = {
   matchId: string;
@@ -42,6 +42,12 @@ export function useMatchBoard({ matchId, playerId }: Params) {
   const acknowledgedRef = useRef<Set<string>>(new Set());
   // clientIds currently in flight, so a re-run of the drain effect can't submit the same one twice.
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Set when the BE reports a move was trapped (path cut short by a fog-hidden enemy): the tile the
+  // unit halted on, so the board can pin an "ambush" label there. `id` bumps each time so a repeat
+  // trap on the same tile still re-triggers the label's show/auto-dismiss.
+  const [trapNotice, setTrapNotice] = useState<{ position: [number, number]; id: number } | null>(
+    null,
+  );
 
   const matchQuery = trpc.match.full.useQuery({ matchId, playerId });
   const match = matchQuery.data;
@@ -99,7 +105,14 @@ export function useMatchBoard({ matchId, playerId }: Params) {
     actionMutation.mutate(
       { ...pending.action, playerId, matchId },
       {
-        onSuccess() {
+        onSuccess(result) {
+          // The BE accepted the action but a move can still have been trapped (stopped short by a
+          // fog-hidden enemy). Pin an ambush label on the tile the unit halted on.
+          if (result?.trapped === true && result.trapPosition !== null) {
+            const position = result.trapPosition; // narrowed to [number, number]
+            setTrapNotice((prev) => ({ position, id: (prev?.id ?? 0) + 1 }));
+          }
+
           // Keep the optimistic delta until the authoritative refetch lands, then drop it (below).
           acknowledgedRef.current.add(pending.clientId);
           // Force a refetch AFTER acknowledging, so the [match] reconcile effect is guaranteed to run
@@ -158,5 +171,6 @@ export function useMatchBoard({ matchId, playerId }: Params) {
     priceTableRef,
     actionMutation,
     onActionError,
+    trapNotice,
   };
 }

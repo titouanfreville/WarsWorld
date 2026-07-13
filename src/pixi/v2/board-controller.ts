@@ -1,4 +1,4 @@
-import { baseTileSize } from "components/client-only/MatchRenderer";
+import { baseTileSize } from "frontend/components/match/render-constants";
 import {
   buildableUnits,
   classifyTileClick,
@@ -13,6 +13,7 @@ import {
   getArmyForSlot,
   getPlayerById,
   getUnitAt,
+  samePosition,
   toMutablePath,
 } from "frontend/components/match/match-view";
 import { updateTracedPath } from "frontend/components/match/path-planning";
@@ -30,15 +31,27 @@ import {
 } from "frontend/utils/action-queue";
 import type { LoadedSpriteSheet } from "pixi/load-spritesheet";
 import type { Dispatch } from "react";
-import type { MainAction } from "shared/schemas/action";
+import type { MainAction } from "frontend/components/match/board-actions";
 import type { BoardRenderer, BoardSceneRefs } from "./board-scene";
 import { createActionMenuElement, createBoardMenu, createUnitMenuElement } from "./board-menu";
+
+/** The engagement the player is currently eyeing — enough for the BE combat-forecast query. */
+export type AttackForecastFocus = {
+  attackerPosition: BoardPosition;
+  toPosition: BoardPosition;
+  targetPosition: BoardPosition;
+};
 
 /**
  * Interaction handlers for the v2 snapshot board — the click/hover/menu logic extracted from
  * `mountBoardScene`. Owns nothing about pixi assembly; it reads/writes the refs it's handed and
  * draws through the `BoardRenderer` passed in, so it stays agnostic of how highlights/menus/arrows
  * are actually rendered.
+ *
+ * Two optional callbacks surface board state to React for the HUD overlays (pure "events out", no
+ * pixi coupling): `onAttackTargetFocus` fires while hovering a lit enemy attack target (drives the
+ * floating combat-forecast box), `onUnitInspect` fires on a right-click that lands on a visible unit
+ * (drives the unit-detail card). Both pass plain positions; React fetches the BE preview and renders.
  */
 export function createBoardController(deps: {
   view: MatchView;
@@ -49,6 +62,8 @@ export function createBoardController(deps: {
   mapSize: { width: number; height: number };
   refs: BoardSceneRefs;
   renderer: BoardRenderer;
+  onAttackTargetFocus?: (focus: AttackForecastFocus | null) => void;
+  onUnitInspect?: (position: BoardPosition | null) => void;
 }): {
   resetInteraction: () => void;
   onTileClick: (pos: BoardPosition) => void;
@@ -56,6 +71,7 @@ export function createBoardController(deps: {
   onTileRightClick: (pos: BoardPosition) => void;
 } {
   const { view, spriteSheets, playerId, dispatchQueue, mapSize, refs, renderer } = deps;
+  const { onAttackTargetFocus, onUnitInspect } = deps;
   const {
     selectionRef,
     stagedDestRef,
@@ -79,6 +95,10 @@ export function createBoardController(deps: {
     renderer.closeMenu();
     renderer.drawHighlights([], []);
     renderer.drawPathArrow();
+    onAttackTargetFocus?.(null); // no target under consideration once the interaction is cleared
+    // NOTE: the inspect card is NOT cleared here — a right-click runs resetInteraction before
+    // (re)inspecting, and clearing would wipe the state the second-click toggle reads. Left-click
+    // dismissal is handled explicitly in `onTileClick`.
   };
 
   // The route to commit for a move to `dest`: the cursor-traced path when it ends there, otherwise
@@ -337,7 +357,8 @@ export function createBoardController(deps: {
     }
 
     const sheet = spriteSheets[army];
-    const availableFunds = myPlayer.funds;
+    // Own funds are always sent (only opponents' funds are nulled under fog), so coalesce defensively.
+    const availableFunds = myPlayer.funds ?? 0;
     const entries = buildableUnits(priceTable, facility, availableFunds);
 
     const unitSize = baseTileSize / 2;
@@ -367,6 +388,9 @@ export function createBoardController(deps: {
 
   const onTileClick = (pos: BoardPosition) => {
     const currentMatch = matchRef.current;
+
+    // Any left-click means the player is acting — dismiss the passive inspect card/overlay.
+    onUnitInspect?.(null);
 
     if (currentMatch === null || currentMatch.gameOver !== null) {
       return; // the match is decided — the board is read-only
@@ -445,12 +469,26 @@ export function createBoardController(deps: {
     }
   };
 
-  // Hovering a reachable tile (with a unit selected, before a destination is staged) extends the
-  // cursor-drawn route toward that tile and redraws the AW arrow. The exact route is what gets
-  // committed, so the player controls which tiles the unit crosses — critical in fog.
+  // Hovering a lit enemy attack target (after ATTACK is chosen, or while the staged menu is up) asks
+  // React for the combat forecast; hovering a reachable tile (before a destination is staged) extends
+  // the cursor-drawn route and redraws the AW arrow. The exact route is what gets committed, so the
+  // player controls which tiles the unit crosses — critical in fog.
   const onTileHover = (pos: BoardPosition) => {
     const snapshot = snapshotRef.current;
     const selected = selectionRef.current;
+
+    // Combat forecast: only when this tile is one of the currently-latched red targets.
+    if (selected !== null && attackTargetsRef.current.some((target) => samePosition(target, pos))) {
+      onAttackTargetFocus?.({
+        attackerPosition: selected,
+        toPosition: stagedDestRef.current ?? selected,
+        targetPosition: pos,
+      });
+
+      return;
+    }
+
+    onAttackTargetFocus?.(null); // left the target row (or never on it) — hide the box
 
     // Only trace while still choosing a destination — not once a move is staged (menu open / picking
     // an attack target or unload tile) and not while arming a missile.
@@ -473,9 +511,17 @@ export function createBoardController(deps: {
     renderer.drawPathArrow();
   };
 
-  // Right-click anywhere on the board is the universal cancel: clear any selection, staged move,
-  // open menu, or armed missile and return to a clean slate. (Left-click drives every action.)
-  const onTileRightClick = () => resetInteraction();
+  // Right-click is the universal cancel (clear selection / staged move / menu / armed missile). When
+  // it lands on a visible unit it ALSO opens that unit's detail card and its range preview — for ANY
+  // unit, own or enemy, so a player can read an enemy's movement reach and threat. The ranges come
+  // from the BE (via the card's query) and are painted by React; the controller just signals which
+  // unit. A fogged/concealed unit isn't in the view, so it can't be probed this way.
+  const onTileRightClick = (pos: BoardPosition) => {
+    const currentMatch = matchRef.current;
+    const unitHere = currentMatch === null ? undefined : getUnitAt(currentMatch, pos);
+    resetInteraction();
+    onUnitInspect?.(unitHere !== undefined ? pos : null);
+  };
 
   return { resetInteraction, onTileClick, onTileHover, onTileRightClick };
 }

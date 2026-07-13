@@ -1,4 +1,4 @@
-import { baseTileSize } from "components/client-only/MatchRenderer";
+import { baseTileSize } from "frontend/components/match/render-constants";
 import type { IntentArrow } from "frontend/components/match/buffered-intent";
 import type { BoardPosition } from "frontend/components/match/match-view";
 import { Container, Sprite } from "pixi.js";

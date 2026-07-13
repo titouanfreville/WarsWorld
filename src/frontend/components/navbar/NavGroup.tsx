@@ -32,7 +32,7 @@ const navItemObject = [
   },
   {
     text: "COMMUNITY",
-    location: "/",
+    location: "/social",
     iconPath: "/img/layout/Cruiser-0.png",
     iconAlt: "Blue Moon Cruiser",
     flip: false,

@@ -1,4 +1,4 @@
-import type { MainAction } from "shared/schemas/action";
+import type { MainAction } from "frontend/components/match/board-actions";
 
 /**
  * Client action buffer + reconciliation (see the locked design in `src/frontend/CLAUDE.md`).
@@ -12,8 +12,8 @@ import type { MainAction } from "shared/schemas/action";
  * (submits `pending` actions) and feeds outcomes back via `confirmed`/`rejected`. Turn-scoped:
  * `reset` clears it on a turn change or a full resync (the "BE wins" cutover).
  *
- * `MainAction` is a tRPC-inferred input type (the API contract), not engine logic — importing it
- * here does not couple the client to the engine.
+ * `MainAction` is the FE's own redeclaration of the API contract (`board-actions.ts`), not engine
+ * logic — importing it here does not couple the client to the engine.
  */
 
 /**

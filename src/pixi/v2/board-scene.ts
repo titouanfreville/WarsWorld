@@ -1,4 +1,8 @@
-import { mapBorder, renderedTileSize } from "components/client-only/MatchRenderer";
+import {
+  baseTileSize,
+  mapBorder,
+  renderedTileSize,
+} from "frontend/components/match/render-constants";
 import { intentArrows, phantomPositions } from "frontend/components/match/buffered-intent";
 import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
 import type { TurnSnapshot, UnloadDrop } from "frontend/components/match/turn-snapshot-view";
@@ -11,7 +15,7 @@ import type { LoadedSpriteSheet } from "pixi/load-spritesheet";
 import type { Application } from "pixi.js";
 import { Container } from "pixi.js";
 import type { Dispatch, MutableRefObject } from "react";
-import { createBoardController } from "./board-controller";
+import { createBoardController, type AttackForecastFocus } from "./board-controller";
 import {
   renderHighlightTiles,
   renderInteractiveTilesFromView,
@@ -19,6 +23,7 @@ import {
   renderUnitsFromView,
 } from "./render-from-view";
 import { renderBufferedArrows, renderPathArrow, shimmerBufferedArrows } from "./render-path-arrow";
+import { renderWeatherOverlay } from "./render-weather";
 
 const REACHABLE_COLOR = "#43d9e4";
 const ATTACK_COLOR = "#be1919";
@@ -32,12 +37,19 @@ export type BoardSceneRefs = {
   pathArrowRef: MutableRefObject<Container | null>;
   plannedPathRef: MutableRefObject<BoardPosition[]>;
   shimmerRef: MutableRefObject<((delta: number) => void) | null>;
+  /** The active weather animation on the ticker, tracked so it's dropped before a stage rebuild. */
+  weatherAnimRef: MutableRefObject<((delta: number) => void) | null>;
   selectionRef: MutableRefObject<BoardPosition | null>;
   stagedDestRef: MutableRefObject<BoardPosition | null>;
   attackTargetsRef: MutableRefObject<BoardPosition[]>;
   unloadDropsRef: MutableRefObject<UnloadDrop[]>;
   missileArmRef: MutableRefObject<{ path: readonly BoardPosition[] } | null>;
   resetInteractionRef: MutableRefObject<() => void>;
+  // Lets React paint the inspect overlay's reachable/threat tiles (right-click preview) onto the
+  // board — the same highlight layer the interaction uses, so the next board action clears it.
+  inspectHighlightRef: MutableRefObject<
+    (reachable: readonly BoardPosition[], attack: readonly BoardPosition[]) => void
+  >;
   matchRef: MutableRefObject<MatchView | null>;
   snapshotRef: MutableRefObject<TurnSnapshot | null>;
   priceTableRef: MutableRefObject<TurnSnapshot["production"]["priceTable"]>;
@@ -64,6 +76,10 @@ export type MountBoardSceneParams = {
   queue: ActionQueueState;
   dispatchQueue: Dispatch<ActionQueueEvent>;
   refs: BoardSceneRefs;
+  /** Surfaces the hovered attack engagement to React for the floating combat-forecast box. */
+  onAttackTargetFocus?: (focus: AttackForecastFocus | null) => void;
+  /** Surfaces a right-clicked unit's position to React for the unit-detail card. */
+  onUnitInspect?: (position: BoardPosition | null) => void;
 };
 
 /**
@@ -75,6 +91,7 @@ export type MountBoardSceneParams = {
  */
 export function mountBoardScene(params: MountBoardSceneParams): void {
   const { app, view, spriteSheets, playerId, queue, dispatchQueue, refs } = params;
+  const { onAttackTargetFocus, onUnitInspect } = params;
   const {
     reachableHighlightRef,
     attackHighlightRef,
@@ -82,6 +99,7 @@ export function mountBoardScene(params: MountBoardSceneParams): void {
     pathArrowRef,
     plannedPathRef,
     shimmerRef,
+    weatherAnimRef,
     selectionRef,
     stagedDestRef,
     attackTargetsRef,
@@ -100,6 +118,12 @@ export function mountBoardScene(params: MountBoardSceneParams): void {
   if (shimmerRef.current !== null) {
     app.ticker.remove(shimmerRef.current);
     shimmerRef.current = null;
+  }
+
+  // Same for the weather animation — its particles are destroyed with the stage below.
+  if (weatherAnimRef.current !== null) {
+    app.ticker.remove(weatherAnimRef.current);
+    weatherAnimRef.current = null;
   }
 
   for (const child of app.stage.removeChildren()) {
@@ -193,8 +217,14 @@ export function mountBoardScene(params: MountBoardSceneParams): void {
     mapSize,
     refs,
     renderer,
+    onAttackTargetFocus,
+    onUnitInspect,
   });
   resetInteractionRef.current = controller.resetInteraction;
+  // Draw the inspect overlay's ranges through the same highlight helper the controller uses (blue
+  // reachable, red threat), so a later board interaction's `drawHighlights` naturally replaces them.
+  refs.inspectHighlightRef.current = (reachable, attack) =>
+    renderer.drawHighlights(reachable, attack);
 
   // Buffered (unconfirmed) intent: an AW arrow per buffered move at phantom opacity, plus the units
   // it targets rendered as translucent phantoms, so pending actions read directly on the board.
@@ -226,6 +256,21 @@ export function mountBoardScene(params: MountBoardSceneParams): void {
       controller.onTileHover,
       controller.onTileRightClick,
     ),
-    menuLayer,
   );
+
+  // Weather sits above the board/units but below menus, non-interactive so clicks pass through. The
+  // +1 tile matches the renderer resize (one tile of total border); coords are in baseTileSize units.
+  const weather = renderWeatherOverlay(
+    view.currentWeather,
+    (mapSize.width + 1) * baseTileSize,
+    (mapSize.height + 1) * baseTileSize,
+  );
+
+  if (weather !== null) {
+    app.stage.addChild(weather.container);
+    app.ticker.add(weather.animate);
+    weatherAnimRef.current = weather.animate;
+  }
+
+  app.stage.addChild(menuLayer);
 }

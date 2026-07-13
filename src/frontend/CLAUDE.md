@@ -14,9 +14,17 @@ it decides nothing.
   outcome, stop — ask the BE instead.
 - **Get previews from the BE.** Available actions, reachable tiles, attack ranges, damage previews
   and resulting state come from tRPC queries / the WS subscription. The FE draws what the BE sends.
-- **No backend/domain imports.** The only contract across the boundary is the tRPC API. Client
-  types come from **tRPC type inference** (and subscription outputs) — never `import … from
-"shared/…"` or from `src/server`. `src/shared` is being removed; don't add new references to it.
+- **No backend/domain imports.** The only contract across the boundary is the tRPC API — never
+  `import … from "shared/…"` or from `src/server`. The FE owns its half of every contract as
+  **FE-local types**, redeclared structurally (see `frontend/components/match/board-actions.ts`,
+  `unit-types.ts`, `lobby/match-status.ts`) rather than relying on tRPC type inference for the
+  contract shape: the BE re-validates every input regardless of what the client's type says, so
+  drift between an FE-local type and the server schema surfaces as a tsc error at the typed
+  boundary (a `mutate`/prop call site), not silently at runtime. `src/shared` is being removed;
+  don't add new references to it.
+  > The large read-models `MatchView` (`match-view.ts`) and `TurnSnapshot`
+  > (`turn-snapshot-view.ts`) are still tRPC-inferred — the known remaining inference coupling,
+  > left for a separate migration to FE-local redeclarations.
 
 ## Action buffer & reconciliation (locked design)
 

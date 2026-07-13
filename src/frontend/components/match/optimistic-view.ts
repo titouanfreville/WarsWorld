@@ -58,7 +58,8 @@ export const applyBufferedActions = (
   }
 
   let units: MatchUnit[] = match.units;
-  let funds = me.funds;
+  // `me` is the viewer, whose own funds are always sent (only opponents' are nulled under fog).
+  let funds = me.funds ?? 0;
 
   const slideUnit = (
     from: BoardPosition,

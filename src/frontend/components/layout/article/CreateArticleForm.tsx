@@ -48,7 +48,11 @@ export default function CreateArticleForm({ articleData, setArticleData }: Props
   const [error, setError] = useState("");
   const [newstCreatedArticleLink, setNewestCreatedArticleLink] = useState("");
 
-  const { mutateAsync: createArticle, isSuccess } = trpc.article.create.useMutation();
+  const {
+    mutateAsync: createArticle,
+    isSuccess,
+    isLoading: isCreatingArticle,
+  } = trpc.article.create.useMutation();
 
   const clearForm = () => {
     setArticleData({
@@ -182,7 +186,9 @@ export default function CreateArticleForm({ articleData, setArticleData }: Props
 
         <div className="@flex @flex-col @items-center @justify-center @pt-4 @px-10">
           <div className="@w-[80vw] smallscreen:@w-96 @h-20 @text-5xl @my-2">
-            <SquareButton>Submit</SquareButton>
+            <SquareButton disabled={isCreatingArticle}>
+              {isCreatingArticle ? "Submitting…" : "Submit"}
+            </SquareButton>
           </div>
         </div>
       </form>

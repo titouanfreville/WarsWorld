@@ -1,4 +1,4 @@
-import { baseTileSize, mapBorder } from "components/client-only/MatchRenderer";
+import { baseTileSize, mapBorder } from "frontend/components/match/render-constants";
 import type { SpriteAnimationKeys } from "frontend/components/match/getSpritesheetData";
 import type {
   BoardPosition,
@@ -13,7 +13,7 @@ import {
   samePosition,
   visualHP,
 } from "frontend/components/match/match-view";
-import type { Resource } from "pixi.js";
+import type { FederatedPointerEvent, Resource } from "pixi.js";
 import { AnimatedSprite, Container, Sprite, Texture } from "pixi.js";
 import type { LoadedSpriteSheet } from "../load-spritesheet";
 
@@ -28,11 +28,18 @@ type AnimationsProperty = Record<SpriteAnimationKeys, Texture<Resource>[]>;
 // Multiplicative tint applied to a fogged tile's sprite (~48% brightness) — the fog-of-war dim.
 const FOG_TINT = "#7a7a7a";
 
+// Only snow and rain have per-tile art (suffix "-snow"/"-rain" on the base frame/animation name);
+// every other weather — and any tile lacking a variant (sea, roads, rivers…) — keeps its base sprite.
+const weatherTileVariant = (weather: MatchView["currentWeather"]): "snow" | "rain" | null =>
+  weather === "snow" || weather === "rain" ? weather : null;
+
 const tileSprite = (
   match: MatchView,
   tile: MatchTile | MatchChangeableTile,
   spriteSheets: LoadedSpriteSheet,
 ): Sprite => {
+  const variant = weatherTileVariant(match.currentWeather);
+
   if (!("playerSlot" in tile)) {
     let spriteName: string = tile.type;
 
@@ -44,11 +51,19 @@ const tileSprite = (
       spriteName += `-${tile.variant}`;
     }
 
-    return new Sprite(spriteSheets.neutral.textures[`${spriteName}.png`]);
+    const { textures } = spriteSheets.neutral;
+    const weatherKey = `${spriteName}-${variant}.png`;
+    const key = variant !== null && weatherKey in textures ? weatherKey : `${spriteName}.png`;
+
+    return new Sprite(textures[key]);
   }
 
   if (tile.playerSlot === -1) {
-    return new Sprite(spriteSheets.neutral.textures[tile.type + "-0.png"]);
+    const { textures } = spriteSheets.neutral;
+    const weatherKey = `${tile.type}-${variant}-0.png`;
+    const key = variant !== null && weatherKey in textures ? weatherKey : `${tile.type}-0.png`;
+
+    return new Sprite(textures[key]);
   }
 
   const army = getArmyForSlot(match, tile.playerSlot);
@@ -59,7 +74,10 @@ const tileSprite = (
 
   // pixi's spritesheet type doesn't index the generic properly, hence the cast.
   const animations = spriteSheets[army].animations as AnimationsProperty;
-  const sprite = new AnimatedSprite(animations[tile.type]);
+  const weatherKey = `${tile.type}-${variant}` as keyof AnimationsProperty;
+  const frames =
+    variant !== null && weatherKey in animations ? animations[weatherKey] : animations[tile.type];
+  const sprite = new AnimatedSprite(frames);
   sprite.animationSpeed = 0.04;
   sprite.play();
 
@@ -160,7 +178,14 @@ export const renderUnitFromView = (
 
   const hp = visualHP(unit);
 
-  if (hp !== undefined && hp !== 10) {
+  if (hp === undefined) {
+    // HP is masked (an enemy Sonja unit hides its HP) — show the "?" badge where the health digit
+    // would sit, so it reads as "unknown" rather than the absence of a badge (which means full HP).
+    // Same pixel-art sprite family as health-1..9 (see icons.json), rendered identically to a digit.
+    unitContainer.addChild(
+      createIcon(spriteSheets, spriteX + 8, spriteY + 8, "health-question.png"),
+    );
+  } else if (hp !== 10) {
     unitContainer.addChild(createIcon(spriteSheets, spriteX + 8, spriteY + 8, `health-${hp}.png`));
   }
 
@@ -269,7 +294,14 @@ export const renderInteractiveTilesFromView = (
       sprite.x = x * baseTileSize;
       sprite.y = (y + 1) * baseTileSize;
       sprite.interactive = true;
-      sprite.on("pointertap", () => onTileClick([x, y]));
+      // `pointertap` also fires for the right (and middle) button, so gate it to the LEFT button —
+      // otherwise a right-click would run the action path (select/stage) AND the `rightclick` handler,
+      // and the co-fired tap would clobber the inspect card that `rightclick` just opened.
+      sprite.on("pointertap", (event: FederatedPointerEvent) => {
+        if (event.button === 0) {
+          onTileClick([x, y]);
+        }
+      });
       sprite.on("pointerenter", () => onTileHover([x, y]));
       sprite.on("rightclick", () => onTileRightClick?.([x, y]));
       container.addChild(sprite);

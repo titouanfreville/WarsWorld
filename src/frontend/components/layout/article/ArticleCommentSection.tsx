@@ -35,7 +35,8 @@ const getFormattedTime = (createdAt: Date) => {
 export default function ArticleCommentSection({ comments }: Props) {
   const { slug: params } = useParams<{ slug: string[] }>();
   const articleId = params[0];
-  const { mutateAsync: createComment } = trpc.article.addComment.useMutation();
+  const { mutateAsync: createComment, isLoading: isPostingComment } =
+    trpc.article.addComment.useMutation();
   const trpcUtils = trpc.useUtils();
   const { currentPlayer } = usePlayers();
   const [errorMessage, setErrorMessage] = useState("");
@@ -95,7 +96,9 @@ export default function ArticleCommentSection({ comments }: Props) {
               errorMessage={errorMessage}
             />
             <div className="@self-end @my-4">
-              <SquareButton type="submit">Add comment</SquareButton>
+              <SquareButton type="submit" disabled={isPostingComment}>
+                {isPostingComment ? "Posting…" : "Add comment"}
+              </SquareButton>
             </div>
           </form>
         </div>

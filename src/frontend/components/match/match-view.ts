@@ -79,8 +79,8 @@ export const ownsSlot = (player: MatchPlayer, playerSlot: number): boolean =>
   player.slot === playerSlot;
 
 /**
- * Visual HP (0–10) of a unit. `undefined` for a fog-hidden unit whose stats the viewer can't see —
- * such a unit shows no HP badge.
+ * Visual HP (0–10) of a unit. `undefined` when the stats are masked from the viewer — an enemy Sonja
+ * unit hides its HP. The board renders a "?" badge for that case (see render-from-view).
  */
 export const visualHP = (unit: MatchUnit): number | undefined =>
   unit.stats === "hidden" ? undefined : Math.ceil(unit.stats.hp / 10);

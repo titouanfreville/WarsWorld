@@ -24,7 +24,8 @@ export default function SignupForm({ setIsSignupForm, setDidSignUp, callbackUrl 
   const [formErrors, setFormErrors] = useState<ZodError>();
   const [error, setError] = useState("");
 
-  const { mutateAsync: registerAsync } = trpc.user.registerUser.useMutation();
+  const { mutateAsync: registerAsync, isLoading: isRegistering } =
+    trpc.user.registerUser.useMutation();
 
   const onChangeGenericHandler = (identifier: string, value: string) => {
     setSignupData((prevData) => ({
@@ -140,11 +141,12 @@ export default function SignupForm({ setIsSignupForm, setDidSignUp, callbackUrl 
         <div className="@flex @flex-col @items-center @justify-center @py-4 @px-10">
           <div className="@w-[80vw] smallscreen:@w-96 @h-16 @text-3xl @my-2">
             <SquareButton
+              disabled={isRegistering}
               onClick={(event: FormEvent) => {
                 void onSubmitSignupForm(event);
               }}
             >
-              Signup
+              {isRegistering ? "Signing up…" : "Signup"}
             </SquareButton>
           </div>
         </div>

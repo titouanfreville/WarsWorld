@@ -1,6 +1,8 @@
 import { ProtectPage } from "frontend/components/auth/ProtectPage";
+import PlayButton from "frontend/components/matchmaking/PlayButton";
 import MatchCard from "frontend/components/match/card/MatchCard";
 import CreateMatchModal from "frontend/components/match/lobby/CreateMatchModal";
+import LobbyInvites from "frontend/components/match/lobby/LobbyInvites";
 import LobbyRail from "frontend/components/match/lobby/LobbyRail";
 import MatchHistoryRow from "frontend/components/match/lobby/MatchHistoryRow";
 import type { LobbyMatch, LobbyView } from "frontend/components/match/lobby/match-status";
@@ -140,24 +142,29 @@ export default function YourMatches() {
               </h1>
               <p className="@py-0 @text-slate-400">{meta.description}</p>
             </div>
-            {filters !== undefined && (
-              <div className="@flex @gap-1.5">
-                {filters.map((filter) => (
-                  <button
-                    key={filter.key}
-                    onClick={() => setFilterKey(filter.key)}
-                    className={`@rounded-lg @border @px-3 @py-1.5 @text-xs @font-semibold @uppercase @tracking-wide @transition ${
-                      activeFilter?.key === filter.key
-                        ? "@border-primary @bg-bg-secondary @text-white"
-                        : "@border-bg-tertiary @text-slate-400 hover:@text-white"
-                    }`}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="@flex @flex-wrap @items-center @gap-2">
+              <PlayButton />
+              {filters !== undefined && (
+                <div className="@flex @gap-1.5">
+                  {filters.map((filter) => (
+                    <button
+                      key={filter.key}
+                      onClick={() => setFilterKey(filter.key)}
+                      className={`@rounded-lg @border @px-3 @py-1.5 @text-xs @font-semibold @uppercase @tracking-wide @transition ${
+                        activeFilter?.key === filter.key
+                          ? "@border-primary @bg-bg-secondary @text-white"
+                          : "@border-bg-tertiary @text-slate-400 hover:@text-white"
+                      }`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </header>
+
+          <LobbyInvites />
 
           {view === "history" ? (
             historyMatches.length === 0 ? (

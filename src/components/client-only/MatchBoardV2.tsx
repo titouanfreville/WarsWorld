@@ -2,20 +2,32 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
 import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
-import { getPlayerById } from "frontend/components/match/match-view";
-import { PingIndicator } from "frontend/components/match/PingIndicator";
-import { PowerBar } from "frontend/components/match/PowerBar";
+import { getArmyForSlot, getUnitAt, samePosition } from "frontend/components/match/match-view";
+import { inspectHighlights, type InspectMode } from "frontend/components/match/inspect-highlights";
+import { AmbushLabel } from "frontend/components/match/hud/AmbushLabel";
+import { CombatForecastCard } from "frontend/components/match/hud/CombatForecastCard";
+import { EndGameScreen } from "frontend/components/match/hud/EndGameScreen";
+import { GameOverOverlay } from "frontend/components/match/hud/GameOverOverlay";
+import { GameShell } from "frontend/components/match/hud/GameShell";
+import { useEndGameFlow } from "frontend/components/match/useEndGameFlow";
+import { IntelOverlay } from "frontend/components/match/hud/IntelOverlay";
+import { MatchChat } from "frontend/components/match/hud/MatchChat";
+import { MatchHud } from "frontend/components/match/hud/MatchHud";
+import { UnitDetailCard } from "frontend/components/match/hud/UnitDetailCard";
 import type { TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
 import type { UnloadDrop } from "frontend/components/match/turn-snapshot-view";
 import { useMatchBoard } from "frontend/components/match/useMatchBoard";
-import { hasUnresolvedActions, makeClientId } from "frontend/utils/action-queue";
-import { BufferIndicator } from "frontend/components/match/BufferIndicator";
+import { makeClientId } from "frontend/utils/action-queue";
+import { trpc } from "frontend/utils/trpc-client";
+import type { Army } from "frontend/utils/sprites";
+import { useRouter } from "next/router";
 import { loadSpritesFromSpriteMap } from "pixi/load-spritesheet";
+import type { AttackForecastFocus } from "../../pixi/v2/board-controller";
 import { mountBoardScene } from "../../pixi/v2/board-scene";
 import type { Container } from "pixi.js";
 import { Application, Assets } from "pixi.js";
-import { useEffect, useRef } from "react";
-import { renderMultiplier } from "./MatchRenderer";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { renderMultiplier } from "frontend/components/match/render-constants";
 
 type Props = {
   matchId: string;
@@ -55,6 +67,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const plannedPathRef = useRef<BoardPosition[]>([]);
   // The pixi ticker callback animating the shimmer along buffered arrows; removed on each re-render.
   const shimmerRef = useRef<((delta: number) => void) | null>(null);
+  const weatherAnimRef = useRef<((delta: number) => void) | null>(null);
   // Selection: the unit's origin tile. Staged destination: where a move is being composed (null =
   // acting from the origin). Attack targets: the currently clickable red tiles. Unload drops: the
   // clickable green drop tiles once UNLOAD is chosen. All read by the imperative pixi click handler.
@@ -65,6 +78,10 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   // While arming a missile: the move path onto the silo. The next board click is the strike target.
   const missileArmRef = useRef<{ path: readonly BoardPosition[] } | null>(null);
   const resetInteractionRef = useRef<() => void>(() => undefined);
+  // Set by the scene so React can paint the inspect overlay's reachable/threat tiles onto the board.
+  const inspectHighlightRef = useRef<
+    (reachable: readonly BoardPosition[], attack: readonly BoardPosition[]) => void
+  >(() => undefined);
 
   const matchRef = useRef<MatchView | null>(null);
   const snapshotRef = useRef<TurnSnapshot | null>(null);
@@ -90,7 +107,71 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     priceTableRef,
     actionMutation,
     onActionError,
+    trapNotice,
   } = useMatchBoard({ matchId, playerId });
+
+  // HUD overlays fed by board events: the engagement being eyed (floating combat-forecast box) and
+  // the right-clicked unit being inspected (unit-detail card). The pixi controller sets these via the
+  // callbacks passed into `mountBoardScene`; the queries below fetch the BE data to render.
+  const [attackFocus, setAttackFocus] = useState<AttackForecastFocus | null>(null);
+  // The inspected unit + which overlay it shows: `full` (movement + reach) on the first right-click,
+  // `direct` (in-place attack only) after a second right-click on the same unit — toggling thereafter.
+  const [inspect, setInspect] = useState<{ pos: BoardPosition; mode: InspectMode } | null>(null);
+  const inspectPos = inspect?.pos ?? null;
+
+  // A right-click on the SAME unit toggles full <-> direct; a different unit resets to full; null clears.
+  const handleInspect = useCallback((pos: BoardPosition | null) => {
+    if (pos === null) {
+      setInspect(null);
+
+      return;
+    }
+
+    setInspect((prev) =>
+      prev !== null && samePosition(prev.pos, pos)
+        ? { pos, mode: prev.mode === "full" ? "direct" : "full" }
+        : { pos, mode: "full" },
+    );
+  }, []);
+
+  const toTuple = (position: BoardPosition): [number, number] => [position[0], position[1]];
+
+  // BE combat forecast for the focused engagement — min/max damage both ways + defense stars. Only
+  // runs while a target is focused; the disabled-state input is a harmless placeholder.
+  const forecastQuery = trpc.matchPreview.combatForecast.useQuery(
+    {
+      matchId,
+      playerId,
+      attackerPosition: attackFocus === null ? [0, 0] : toTuple(attackFocus.attackerPosition),
+      toPosition: attackFocus === null ? [0, 0] : toTuple(attackFocus.toPosition),
+      targetPosition: attackFocus === null ? [0, 0] : toTuple(attackFocus.targetPosition),
+    },
+    { enabled: attackFocus !== null },
+  );
+
+  // BE stat readout for the inspected unit. Enabled only while a unit is being inspected.
+  const detailsQuery = trpc.matchPreview.unitDetails.useQuery(
+    { matchId, playerId, unitPosition: inspectPos === null ? [0, 0] : toTuple(inspectPos) },
+    { enabled: inspectPos !== null },
+  );
+
+  // Drop the inspect card if its unit is gone (moved/destroyed by a refetch) — the BE rejects the
+  // stale position, so close rather than show a spinning query.
+  useEffect(() => {
+    if (inspectPos !== null && detailsQuery.isError) {
+      setInspect(null);
+    }
+  }, [inspectPos, detailsQuery.isError]);
+
+  // Army of the inspected unit's owner, for its sprite in the detail card.
+  const inspectUnit =
+    inspectPos !== null && optimisticView !== undefined
+      ? getUnitAt(optimisticView, inspectPos)
+      : undefined;
+  const inspectArmy =
+    inspectUnit !== undefined && optimisticView !== undefined
+      ? (getArmyForSlot(optimisticView, inspectUnit.playerSlot) as Army | undefined)
+      : undefined;
 
   // Interaction handlers read the OPTIMISTIC view (what's on screen), not the raw authoritative one,
   // so a just-moved unit is looked up at its new tile and can't be re-selected. Assign in an effect
@@ -153,20 +234,45 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         pathArrowRef,
         plannedPathRef,
         shimmerRef,
+        weatherAnimRef,
         selectionRef,
         stagedDestRef,
         attackTargetsRef,
         unloadDropsRef,
         missileArmRef,
         resetInteractionRef,
+        inspectHighlightRef,
         matchRef,
         snapshotRef,
         priceTableRef,
         queueRef,
       },
+      onAttackTargetFocus: setAttackFocus,
+      onUnitInspect: handleInspect,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optimisticView, spriteSheets]);
+
+  // Paint the inspected unit's ranges once the BE returns them — coloured per rule (own vs enemy) and
+  // per mode (full vs the second-click direct view). Depends on `optimisticView` so it repaints after
+  // a scene rebuild while a unit stays inspected. We don't clear on the empty branch: the board's own
+  // reset owns clearing the highlight layer, and clearing here would wipe a fresh selection's tiles.
+  useEffect(() => {
+    if (inspect !== null && detailsQuery.data !== undefined) {
+      const { reachable, attack } = inspectHighlights(detailsQuery.data, inspect.mode);
+      inspectHighlightRef.current(reachable, attack);
+    }
+  }, [inspect, detailsQuery.data, optimisticView]);
+
+  const router = useRouter();
+
+  // End-of-match screen sequencing: play the victory/defeat "moment", then auto-load the End-Game
+  // screen (a reconnect to an already-finished match skips straight to it). Presentation only — the
+  // outcome itself is the BE's.
+  const { phase, secondsLeft, skip } = useEndGameFlow({
+    over: (optimisticView?.gameOver ?? null) !== null,
+    ready: optimisticView !== undefined,
+  });
 
   if (matchQuery.isError || spriteSheetQuery.isError) {
     return <p>error {":("}</p>;
@@ -175,78 +281,151 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   // Match outcome (derived by the BE from player elimination); non-null => banner + no more actions.
   const gameOver = optimisticView?.gameOver ?? null;
 
+  // The full CO cast for the game-over overlay — every general tagged with how their match ended
+  // (from `player.result`) so the overlay can colour winners and grey out losers. The viewer is
+  // flagged so their own CO gets a "You" marker.
+  const gameOverCos =
+    optimisticView?.players.map((player) => ({
+      name: player.coId.name,
+      result: player.result,
+      isViewer: player.id === playerId,
+    })) ?? [];
+
+  // Viewer-relative outcome for the End-Game screen header + theme.
+  const outcome =
+    gameOver === null
+      ? null
+      : gameOver.viewerWon
+        ? "victory"
+        : gameOver.winnerTeamIndex === null
+          ? "draw"
+          : "defeat";
+
+  // Richer per-seat summary for the End-Game screen (name + army + CO + result).
+  const endGamePlayers =
+    optimisticView?.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      army: player.army as Army,
+      coName: player.coId.name,
+      result: player.result,
+      isViewer: player.id === playerId,
+    })) ?? [];
+
+  // Turn management + CO power aren't tied to a board tile, so they live in the HUD bar (every other
+  // action is a pixi menu on the board). Both reset any in-progress board interaction first.
+  const handleActivatePower = (isSuper: boolean) => {
+    resetInteractionRef.current();
+    dispatchQueue({
+      type: "enqueue",
+      clientId: makeClientId(),
+      kind: "coPower",
+      action: { type: "coPower", isSuper },
+    });
+  };
+
+  const handlePassTurn = () => {
+    resetInteractionRef.current();
+    actionMutation.mutate(
+      { type: "passTurn", playerId, matchId },
+      { onError: onActionError("pass turn") },
+    );
+  };
+
+  const powerPending = queue.actions.some(
+    (action) => action.kind === "coPower" && action.status !== "rejected",
+  );
+
+  // Map size (tiles) drives the shell's adaptive layout; 0 until the view lands (board stays mounted).
+  const mapWidth = optimisticView?.map.tiles[0]?.length ?? 0;
+  const mapHeight = optimisticView?.map.tiles.length ?? 0;
+
   return (
-    <div className="@w-full @h-full @flex @flex-col @items-center @justify-center @py-4">
-      <PingIndicator />
-      <p>
-        {optimisticView === undefined || spriteSheets === undefined
-          ? "Loading v2 board…"
-          : `[v2 snapshot board] Funds: ${getPlayerById(optimisticView, playerId)?.funds ?? 0} — ${
-              isMyTurn ? "your turn — pick a unit or facility on the board" : "waiting for opponent"
-            }`}
-      </p>
-      {/* Turn management + CO power live in the bar (a power isn't tied to a board tile); every
-          other action is a menu on the board. */}
-      <div className="@flex @items-center @gap-3">
-        {isMyTurn && snapshot !== null && (
-          <PowerBar
-            power={snapshot.power}
-            pending={queue.actions.some(
-              (action) => action.kind === "coPower" && action.status !== "rejected",
+    <>
+      <GameShell
+        mapWidth={mapWidth}
+        mapHeight={mapHeight}
+        overlay={() =>
+          optimisticView === undefined ? null : (
+            <IntelOverlay view={optimisticView} playerId={playerId} />
+          )
+        }
+        chat={() =>
+          optimisticView === undefined ? null : (
+            <MatchChat
+              matchId={matchId}
+              playerId={playerId}
+              players={optimisticView.players.map((player) => ({
+                id: player.id,
+                name: player.name,
+              }))}
+            />
+          )
+        }
+        hud={(orientation, controls) =>
+          optimisticView === undefined || spriteSheets === undefined ? null : (
+            <MatchHud
+              orientation={orientation}
+              controls={controls}
+              view={optimisticView}
+              snapshot={snapshot}
+              playerId={playerId}
+              isMyTurn={isMyTurn}
+              queue={queue}
+              gameOver={gameOver}
+              powerPending={powerPending}
+              onActivatePower={handleActivatePower}
+              onPassTurn={handlePassTurn}
+            />
+          )
+        }
+        board={
+          // pixi appends its own canvas here (created once, StrictMode-safe); the loading state and the
+          // game-over banner overlay it. This node is always mounted so the canvas ref stays attached.
+          <div className="@relative" style={{ imageRendering: "pixelated" }}>
+            <div ref={containerRef} />
+            <AmbushLabel notice={trapNotice} />
+            {attackFocus !== null && (
+              <CombatForecastCard
+                targetPosition={attackFocus.targetPosition}
+                forecast={forecastQuery.data}
+              />
             )}
-            onActivate={(isSuper) => {
-              resetInteractionRef.current();
-              dispatchQueue({
-                type: "enqueue",
-                clientId: makeClientId(),
-                kind: "coPower",
-                action: { type: "coPower", isSuper },
-              });
-            }}
-          />
-        )}
-        <BufferIndicator queue={queue} />
-        <button
-          className="btn @select-none"
-          // Can't end the turn on UNRESOLVED intent — wait for pending/in-flight actions to drain.
-          // Rejected actions linger for visibility but must not block the turn (that was a bug).
-          disabled={!isMyTurn || gameOver !== null || hasUnresolvedActions(queue)}
-          onClick={() => {
-            resetInteractionRef.current();
-            actionMutation.mutate(
-              { type: "passTurn", playerId, matchId },
-              { onError: onActionError("pass turn") },
-            );
-          }}
-        >
-          {isMyTurn ? "Pass Turn" : "Not your turn"}
-        </button>
-      </div>
-      {/* pixi appends its own canvas here (created once, StrictMode-safe); the game-over banner
-          overlays it once the match is decided. */}
-      <div className="@relative" style={{ imageRendering: "pixelated" }}>
-        <div ref={containerRef} />
-        {gameOver !== null && (
-          <div className="@absolute @inset-0 @flex @flex-col @items-center @justify-center @gap-1 @bg-black/60 @text-white">
-            <p
-              className={`@text-5xl @font-extrabold @drop-shadow ${
-                gameOver.viewerWon
-                  ? "@text-emerald-400"
-                  : gameOver.winnerTeamIndex === null
-                    ? "@text-slate-200"
-                    : "@text-red-400"
-              }`}
-            >
-              {gameOver.viewerWon
-                ? "Victory!"
-                : gameOver.winnerTeamIndex === null
-                  ? "Draw"
-                  : "Defeat"}
-            </p>
-            <p className="@opacity-80 @text-sm">Game over</p>
+            {inspectPos !== null && (
+              <UnitDetailCard
+                position={inspectPos}
+                army={inspectArmy}
+                details={detailsQuery.data}
+                onClose={() => {
+                  setInspect(null);
+                  inspectHighlightRef.current([], []); // also wipe the range overlay it was showing
+                }}
+              />
+            )}
+            {(optimisticView === undefined || spriteSheets === undefined) && (
+              <div className="@absolute @inset-0 @flex @items-center @justify-center @text-slate-400">
+                Loading v2 board…
+              </div>
+            )}
+            {phase === "moment" && gameOver !== null && (
+              <GameOverOverlay
+                gameOver={gameOver}
+                cos={gameOverCos}
+                secondsLeft={secondsLeft}
+                onContinue={skip}
+              />
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        }
+      />
+      {phase === "endgame" && outcome !== null && (
+        <EndGameScreen
+          matchId={matchId}
+          outcome={outcome}
+          players={endGamePlayers}
+          onBackToLobby={() => void router.push("/your-matches")}
+        />
+      )}
+    </>
   );
 }
