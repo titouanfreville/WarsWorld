@@ -1,7 +1,7 @@
 {
-  "tool_name": "mcp__claude-in-chrome__javascript_tool",
-  "tool_input_preview": "{\"action\":\"javascript_exec\",\"text\":\"\\nconst $=id=>document.getElementById(id);\\n$('lobbyScreen').classList.remove('active');\\n$('pickScreen').classList.add('active');\\n$('readyWrap').style.display='';...",
-  "error": "JavaScript execution error: TypeError: Cannot read properties of null (reading 'classList')\n    at <anonymous>:3:17",
-  "timestamp": "2026-07-08T18:40:53.211Z",
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /Users/titouan/perso/WarsWorld\\nOUT=/private/tmp/claude-503/-Users-titouan-perso-WarsWorld/ec095c69-fbef-402f-afcf-da6fdac3fe3c/scratchpad\\nnode <<'EOF'\\nconst g = require(OUTDIR + '/gr...",
+  "error": "Exit code 1\n[stdin]:1\nconst g = require(OUTDIR + '/graph.json');\n                  ^\n\nReferenceError: OUTDIR is not defined\n    at [stdin]:1:19\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin...",
+  "timestamp": "2026-07-13T13:42:18.551Z",
   "retry_count": 1
 }
