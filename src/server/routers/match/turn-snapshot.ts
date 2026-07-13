@@ -1,15 +1,49 @@
-import { getCOProperties } from "shared/match-logic/co";
-import { throwIfCantMoveIntoUnit } from "shared/match-logic/events/handlers/move";
-import { getUnloadablePositions } from "shared/match-logic/events/handlers/unload/checkUnloadTiles";
-import type { Facility } from "shared/match-logic/game-constants/unit-properties";
-import { unitPropertiesMap } from "shared/match-logic/game-constants/unit-properties";
-import type { PathNode } from "shared/match-logic/pathfinding";
-import { getAccessibleNodes, getAttackTargetTiles } from "shared/match-logic/pathfinding";
-import type { Direction, Position } from "shared/schemas/position";
-import { addDirection, allDirections, getDirection, isSamePosition } from "shared/schemas/position";
-import type { UnitType } from "shared/schemas/unit";
-import type { MatchWrapper } from "shared/wrappers/match";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
+import { getCOProperties } from "server/engine/rules/co";
+import { throwIfCantMoveIntoUnit } from "server/engine/events/handlers/move";
+import { getUnloadablePositions } from "server/engine/events/handlers/unload/checkUnloadTiles";
+import type { Facility } from "server/engine/constants/unit-properties";
+import { unitPropertiesMap } from "server/engine/constants/unit-properties";
+import type { PathNode } from "server/engine/previews/pathfinding";
+import { getAccessibleNodes, getAttackTargetTiles } from "server/engine/previews/pathfinding";
+import type { Direction, Position } from "server/core/schemas/position";
+import {
+  addDirection,
+  allDirections,
+  getDirection,
+  isSamePosition,
+} from "server/core/schemas/position";
+import type { UnitType } from "server/core/schemas/unit";
+import type { MatchWrapper } from "server/engine/entities/match";
+import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
+
+/**
+ * The public, fog-safe slice of a player's CO-power state: display name, the raw meter, and its star
+ * breakdown. Power charge isn't secret in AW (both players watch each other's meter fill), so
+ * `match.full` exposes this for EVERY player. The acting player's turn snapshot additionally carries
+ * the activatable-power detail (cost/availability), which is self-only.
+ */
+export const buildPublicPowerSummary = (player: PlayerInMatchWrapper) => {
+  const coProperties = getCOProperties(player.data.coId);
+  const starCost = player.getPowerStarCost();
+  const maxMeter = player.getMaxPowerMeter();
+
+  return {
+    coName: coProperties.displayName,
+    state: player.data.COPowerState,
+    meter: player.data.powerMeter,
+    maxMeter,
+    // How many stars are lit vs the CO's total (== super stars, or CO stars when it has no super).
+    // starCost > 0 for any CO with a power; guard just in case. The meter can briefly go negative
+    // right after a power is used, so floor at 0.
+    currentStars: starCost > 0 ? Math.max(0, Math.floor(player.data.powerMeter / starCost)) : 0,
+    totalStars: starCost > 0 ? Math.floor(maxMeter / starCost) : 0,
+    // Star thresholds so the meter can draw the two AW2 zones: the first `coStars` are the CO-power
+    // zone (normal stars), the remainder up to `superStars` are the Super zone (drawn larger).
+    // Either is null when that CO lacks that power.
+    coStars: coProperties.powers.COPower?.stars ?? null,
+    superStars: coProperties.powers.superCOPower?.stars ?? null,
+  };
+};
 
 /**
  * Build the turn snapshot for a player: everything the client needs to buffer this turn's simple
@@ -254,7 +288,6 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
   // `{ type: "coPower", isSuper }`; its board effects are BE-resolved (never previewed).
   const coProperties = getCOProperties(player.data.coId);
   const starCost = player.getPowerStarCost();
-  const maxMeter = player.getMaxPowerMeter();
   const canActivate = player.data.COPowerState === "no-power";
 
   const describePower = (isSuper: boolean) => {
@@ -274,16 +307,10 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
     };
   };
 
+  // Public meter/star breakdown (shared with `match.full` for every player) + the acting player's
+  // activatable-power detail (self-only — cost/availability aren't surfaced for opponents).
   const power = {
-    coName: coProperties.displayName,
-    state: player.data.COPowerState,
-    meter: player.data.powerMeter,
-    maxMeter,
-    // Star breakdown for the bar: how many are lit vs the CO's total (== super stars, or CO stars
-    // when the CO has no super). starCost > 0 for any CO that has a power; guard just in case. The
-    // meter can briefly go negative right after a power is used, so floor at 0.
-    currentStars: starCost > 0 ? Math.max(0, Math.floor(player.data.powerMeter / starCost)) : 0,
-    totalStars: starCost > 0 ? Math.floor(maxMeter / starCost) : 0,
+    ...buildPublicPowerSummary(player),
     copower: describePower(false),
     superCopower: describePower(true),
   };

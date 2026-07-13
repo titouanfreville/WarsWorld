@@ -1,17 +1,18 @@
 import type { Match, WWMap } from "@prisma/client";
 import { prisma } from "server/prisma/prisma-client";
-import { MatchWrapper } from "shared/wrappers/match";
+import { MatchWrapper } from "server/engine/entities/match";
 import { logger } from "shared/utils/logger";
 import { pageMatchIndex } from "./page-match-index";
 import { playerMatchIndex } from "./player-match-index";
-import type { ChangeableTile } from "../shared/types/server-match-state";
-import { willBeChangeableTile } from "../shared/schemas/tile";
+import type { ChangeableTile } from "server/core/schemas/tile-state";
+import { willBeChangeableTile } from "server/core/schemas/tile";
 import {
   applyMainEventToMatch,
   applySubEventToMatch,
-} from "../shared/match-logic/events/apply-event-to-match";
-import { UnitWrapper } from "shared/wrappers/unit";
+} from "server/engine/events/apply-event-to-match";
+import { UnitWrapper } from "server/engine/entities/unit";
 import { finalizeIfGameOver } from "./routers/match/finalize";
+import { matchPlayerToRuntime, type MatchPlayerRow } from "./matches/match-player";
 
 const getChangeableTilesFromMap = (map: WWMap): ChangeableTile[] => {
   const changeableTiles: ChangeableTile[] = [];
@@ -47,22 +48,49 @@ const getChangeableTilesFromMap = (map: WWMap): ChangeableTile[] => {
   return changeableTiles;
 };
 
+/**
+ * Build a fresh, UNREPLAYED match wrapper (turn 0) from its DB rows — the seed both `MatchStore`
+ * indexes for the live game and one-off consumers (e.g. the end-game stats aggregator) replay the
+ * event log onto. v2 matches seed from relational `MatchPlayer` rows; v1 from the `playerState` blob.
+ * Pure: it indexes nothing and starts no timers, so callers can throw the result away after replay.
+ */
+export const buildMatchWrapper = (
+  rawMatch: Match,
+  rawMap: WWMap,
+  matchPlayers?: MatchPlayerRow[],
+): MatchWrapper => {
+  const players =
+    matchPlayers !== undefined && matchPlayers.length > 0
+      ? matchPlayers.map(matchPlayerToRuntime)
+      : rawMatch.playerState;
+
+  return new MatchWrapper(
+    rawMatch.id,
+    rawMatch.leagueType,
+    getChangeableTilesFromMap(rawMap),
+    rawMatch.rules,
+    rawMatch.status,
+    rawMap,
+    players,
+    rawMap.predeployedUnits,
+    UnitWrapper,
+    0,
+  );
+};
+
 export class MatchStore {
   private index = new Map<Match["id"], MatchWrapper>();
 
-  createMatchAndIndex(rawMatch: Match, rawMap: WWMap) {
-    const match = new MatchWrapper(
-      rawMatch.id,
-      rawMatch.leagueType,
-      getChangeableTilesFromMap(rawMap),
-      rawMatch.rules,
-      rawMatch.status,
-      rawMap,
-      rawMatch.playerState,
-      rawMap.predeployedUnits,
-      UnitWrapper,
-      0,
-    );
+  /**
+   * Build and index a match wrapper. Two hydration sources coexist:
+   * - **v2 path** — when relational `MatchPlayer` rows are supplied, the runtime player seed is
+   *   derived from them (identity/team/CO/army). `rules.teamMapping` is persisted at spawn, so the
+   *   wrapper's team resolution is unchanged.
+   * - **v1 path** — otherwise the seed comes from the legacy `playerState` JSON blob, untouched.
+   * Either way the volatile runtime (funds, power, turn) is re-derived by replaying the event log.
+   */
+  createMatchAndIndex(rawMatch: Match, rawMap: WWMap, matchPlayers?: MatchPlayerRow[]) {
+    const match = buildMatchWrapper(rawMatch, rawMap, matchPlayers);
 
     this.index.set(match.id, match);
 
@@ -86,12 +114,19 @@ export class MatchStore {
       },
       include: {
         map: true,
-        Event: true,
+        // MUST be replayed strictly in `index` order (the per-match event sequence). Prisma adds NO
+        // implicit ORDER BY for an `include`, and SQL leaves relation row order undefined without one —
+        // so events could come back shuffled and replay out of order, scrambling turn state. Because a
+        // built unit's owner is derived from getCurrentTurnPlayer() at apply time, an out-of-order
+        // build/passTurn silently reassigns units to the wrong player on reboot ("units change hands").
+        Event: { orderBy: { index: "asc" } },
+        // v2 relational membership; empty for v1 matches (which hydrate from playerState instead).
+        matchPlayers: { include: { player: { select: { id: true, name: true } } } },
       },
     });
 
     for (const rawMatch of rawMatches) {
-      const match = this.createMatchAndIndex(rawMatch, rawMatch.map);
+      const match = this.createMatchAndIndex(rawMatch, rawMatch.map, rawMatch.matchPlayers);
 
       // Replay strictly in order. A single bad event must not crash the whole server on boot (that
       // would take down every match at once) — but it must ALSO not be silently skipped while later

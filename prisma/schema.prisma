@@ -7,7 +7,7 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x"]
 }
 
@@ -164,6 +164,28 @@ model Player {
   Comments   ArticleComment[]
   ownedClans Clan[]           @relation(name: "owner")
   clans      Clan[]           @relation(name: "member")
+
+  // v2 lobby/match path (coexists with the v1 `matches` implicit relation above)
+  matchPlayers     MatchPlayer[]
+  lobbyMemberships PlayerInLobby[]
+  hostedLobbies    Lobby[]            @relation(name: "lobbyHost")
+  infractions      PlayerInfraction[]
+
+  // Minimal social & communication linkages (queried explicitly on demand)
+  sentFriendships      Friendship[]              @relation("sentFriendships")
+  receivedFriendships  Friendship[]              @relation("receivedFriendships")
+  ownedCategories      FriendCategory[]          @relation("ownedCategories")
+  blockedUsers         Block[]                   @relation("blockedUsers")
+  blockedByUsers       Block[]                   @relation("blockedByUsers")
+  mutedUsers           Mute[]                    @relation("mutedUsers")
+  mutedByUsers         Mute[]                    @relation("mutedByUsers")
+  notifications        Notification[]            @relation("notifications")
+  conversationsJoined  ConversationParticipant[]
+  sentMessages         Message[]                 @relation("sentMessages")
+
+  // Honor: medals awarded to opponents post-match (see Commendation).
+  commendationsGiven    Commendation[] @relation("commendationsGiven")
+  commendationsReceived Commendation[] @relation("commendationsReceived")
 }
 
 // Right now maps need to be immutable but we
@@ -178,6 +200,7 @@ model WWMap {
   predeployedUnits Json
   numberOfPlayers  Int
   matches          Match[]
+  lobbies          Lobby[]
   createdAt        DateTime @default(now())
 
   // TODO maps should have different sets of captureLimits and bannedUnitTypes
@@ -199,9 +222,24 @@ model ChatMessage {
 }
 
 enum MatchStatus {
-  setup
+  setup // general-picker round (timed CO selection; enemy COs hidden until reveal)
   playing
   finished
+  cancelled // pick-phase abandoned / timed out with players unready
+}
+
+enum LobbyStatus {
+  assembling // gathering players (custom invite or matchmaking)
+  ready_check // AFK accept window (matchmaking only)
+  map_ban // matchmaking map pick & ban (after both accept, before the Match spawns)
+  map_reveal // winning map locked in; both players study it (~30s) before the CO pick
+  cancelled // nobody joined / someone declined
+  started // spawned its Match, lobby closed
+}
+
+enum LobbyMembership {
+  invited // pending invite (custom lobby); accept -> active, reject -> row deleted
+  active // joined the lobby
 }
 
 enum LeagueType {
@@ -249,15 +287,37 @@ model Match {
   winnerTeamIndex Int?
   finishedAt      DateTime?
 
+  // --- v2 lobby/match path ---
+  isRanked     Boolean   @default(false)
+  /// [PrismaTeamFactions] cosmetic faction per team index (carried from the Lobby)
+  teamFactions Json?
+  /// general-picker deadline (setup status only); FE renders `pickEndsAt - now`
+  pickEndsAt   DateTime?
+  /// CO reveal gate: while null, enemy generals are hidden from queries/emits
+  revealedAt   DateTime?
+  /// set when MMR has been applied for this (ranked) match — idempotency guard for finalize
+  ratedAt      DateTime?
+
+  /// the Lobby this match was spawned from (v2 provenance; null for v1 matches)
+  lobby   Lobby?  @relation(fields: [lobbyId], references: [id])
+  lobbyId String? @unique
+
   map   WWMap  @relation(fields: [mapId], references: [id])
   mapId String
 
-  /// [PrismaPlayerState]
+  /// [PrismaPlayerState] v1 durable player state — KEPT for the v1 game (transition period).
+  /// New code must read `matchPlayers`, never this blob.
   playerState Json
   // playersConsentingToPublishChat Player[]
 
+  /// v2 relational membership — the queryable durable store for the new match path
+  matchPlayers MatchPlayer[]
+
   chatMessages ChatMessage[]
   chatIsPublic Boolean       @default(false)
+
+  /// In-match chat channels (all + per-team), on the shared Conversation/Message system.
+  conversations Conversation[]
 
   createdAt DateTime @default(now())
   Notes     Notes[]
@@ -289,5 +349,462 @@ model Event {
   @@id([matchId, index])
 }
 
+// ─── v2 lobby / match path ──────────────────────────────────────────────────
+// A Lobby is a PRE-ROOM that gathers players (custom invite or matchmaking) and runs the AFK
+// ready-check. A Match is spawned only once players accept / the host starts. The Match's `setup`
+// status is the general-picker round. See .ai/plans/lobby-backend-plan.md.
+
+model Lobby {
+  id           String     @id @default(cuid())
+  host         Player?    @relation(name: "lobbyHost", fields: [hostPlayerId], references: [id])
+  hostPlayerId String? // set for custom lobbies; null for matchmaking
+  isRanked     Boolean    @default(false)
+  mode         String // "1v1" | "2v2" | "ffa4" — drives team count + slots
+  leagueType   LeagueType
+
+  /// [PrismaMatchRules] MatchRules draft (fog, funds, pickSeconds, teamMapping…)
+  rules Json
+
+  map   WWMap?  @relation(fields: [mapId], references: [id])
+  mapId String? // host-chosen; matchmaking assigns
+
+  /// [PrismaTeamFactions] random AW faction per team index (cosmetic)
+  teamFactions Json?
+
+  status      LobbyStatus @default(assembling)
+  readyEndsAt DateTime? // AFK ready-check deadline (matchmaking, ~30s)
+
+  // --- matchmaking map pick & ban (status = map_ban) ---
+  readyCheckLenient Boolean @default(false) // wide MMR gap: longer window + no sanction on decline
+  mmrDiff           Int? // the rating gap that produced this match (audit/display)
+  /// [PrismaMapPool] candidate WWMap ids for the ban phase (mapId stays null until the roll)
+  mapPool           Json?
+  mapPhaseEndsAt    DateTime? // map pick & ban deadline (mirrors readyEndsAt)
+
+  /// the Match spawned from this lobby (back-relation; FK lives on Match.lobbyId)
+  match Match?
+
+  createdAt DateTime        @default(now())
+  members   PlayerInLobby[]
+}
+
+model PlayerInLobby {
+  id       String @id @default(cuid())
+  lobby    Lobby  @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  lobbyId  String
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  membership  LobbyMembership @default(active) // invited = pending; accept -> active, reject -> delete
+  team        Int? // self-assigned team index (null = unassigned bench)
+  slot        Int? // slot within team (or overall for FFA)
+  isSpectator Boolean         @default(false) // FFA overflow / explicit spectator
+  accepted    Boolean         @default(false) // AFK ready-check accepted (matchmaking only)
+
+  // --- matchmaking map pick & ban ---
+  /// [PrismaBannedMapIds] this player's banned WWMap ids (2 in 1v1)
+  bannedMapIds Json?
+  votedMapId   String? // this player's single map vote (must be a non-banned pool member)
+
+  joinedAt    DateTime        @default(now())
+
+  @@unique([lobbyId, playerId])
+  @@index([playerId])
+}
+
+// Relational per-player match facts (the v2 durable store). Named MatchPlayer to avoid clashing
+// with the v1 runtime `PlayerInMatch` type (shared/types/server-match-state), which is kept.
+model MatchPlayer {
+  id       String @id @default(cuid())
+  match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  matchId  String
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  slot Int
+  team Int // authoritative team; rules.teamMapping is derived from this at spawn
+  army String // faction colour (Army enum lives in TS/zod, not Prisma)
+
+  /// [PrismaCoId] chosen general — null until picked; hidden from enemies until Match.revealedAt
+  coId Json?
+
+  ready       Boolean @default(false) // CO locked in during the setup/picker round
+  isSpectator Boolean @default(false)
+
+  /// [PrismaPlayerSkins] per-match cosmetic override; defaults from Player.preferences.skins
+  skins Json?
+
+  result    String? // "won" | "lost" | "drawn" (set at finalize)
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, playerId])
+  @@index([playerId]) // fast "player X's matches", W/L, CO usage
+}
+
+// Durable, cross-cutting behaviour log for long-term moderation + sanctions (not just leavers).
+model PlayerInfraction {
+  id       String @id @default(cuid())
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  type     String // "afk_ingame" | "missed_ready_check" | "abandoned_map_ban" | "abandoned_pick" | "left_lobby" | "chat_harassment" | …
+  severity Int     @default(1) // weight for sanction thresholds
+  matchId  String? // context when applicable
+  lobbyId  String?
+  detail   Json? // freeform (e.g. turns missed, message id)
+
+  createdAt DateTime @default(now())
+
+  @@index([playerId])
+  @@index([playerId, type])
+  @@index([playerId, createdAt])
+}
+
+// ─── Game reference data (DB source of truth) ───────────────────────────────
+// All game vocabulary + stats live here, managed by SQL. The engine never imports @prisma/client;
+// a boot adapter loads these into a synchronous in-memory `gameData` cache the engine reads, and a
+// `/api/gameData` endpoint ships the same payload to the v1 client-side engine.
+// See .ai/plans/game-data-in-db-plan.md. Seeded bit-identically from the current code constants.
+
+// ---- Units ----
+model UnitGroup {
+  id          String     @id @default(cuid())
+  key         String     @unique // "infantry" | "directVehicle" | "indirect" | "air" | "sea"
+  displayName String
+  units       UnitType[] // many-to-many: a unit can be in several groups (battleship = indirect + sea)
+}
+
+model UnitType {
+  id          String      @id @default(cuid())
+  key         String      @unique // "infantry", "mdTank", …
+  displayName String
+  groups      UnitGroup[] // a unit belongs to every group whose predicate it matches
+
+  facility       String // "base" | "airport" | "port"
+  movementType   String // "foot" | "boots" | "tires" | "treads" | "air" | "sea" | "lander" | "pipe"
+  movementPoints Int
+  vision         Int
+  fuel           Int
+  ammo           Int? // null = no primary weapon ammo
+  cost           Int
+  attackRangeMin Int? // null = cannot attack (e.g. APC)
+  attackRangeMax Int?
+
+  coModifiers CoModifier[] // per-unit override rows target this
+}
+
+// ---- Terrain & properties ----
+model TerrainKind {
+  id            String                @id @default(cuid())
+  key           String                @unique // "plain","road","woods","mountain","sea","river",…
+  displayName   String
+  defenseStars  Int
+  isProperty    Boolean               @default(false)
+  movementCosts TerrainMovementCost[]
+  property      Property?
+}
+
+model TerrainMovementCost {
+  id           String      @id @default(cuid())
+  terrain      TerrainKind @relation(fields: [terrainId], references: [id], onDelete: Cascade)
+  terrainId    String
+  movementType String
+  cost         Int? // null = impassable
+
+  @@unique([terrainId, movementType])
+}
+
+model Property {
+  id              String      @id @default(cuid())
+  terrain         TerrainKind @relation(fields: [terrainId], references: [id])
+  terrainId       String      @unique
+  key             String      @unique // "hq","city","base","airport","port","commtower","lab"
+  fundsPerTurn    Int
+  repairsFacility String? // which facility's units it repairs
+  buildsFacility  String? // which facility it produces
+  vision          Int         @default(0)
+}
+
+// ---- Commanders ----
+model Co {
+  id          String    @id @default(cuid())
+  key         String // "max"
+  gameVersion String // "AW1" | "AW2" | "AWDS"
+  displayName String
+  phases      CoPhase[]
+
+  @@unique([key, gameVersion])
+}
+
+model CoPhase {
+  id    String @id @default(cuid())
+  co    Co     @relation(fields: [coId], references: [id], onDelete: Cascade)
+  coId  String
+  phase String // "dayToDay" | "coPower" | "superCoPower"
+
+  name        String? // power name (null for dayToDay)
+  stars       Float? // power cost (null for dayToDay; fractional for AW1, e.g. Sami 2.5)
+  description String
+  luckGood    Int? // luck roll bonus (Nell/Rachel/Flak/Jugger)
+  luckBad     Int?
+  // The power's own activation animation (AW-style cutscene). Owned by the power, not its effects.
+  visualKey String? // "missile" | "meteor" | "blast" | "healWave" | …
+
+  modifiers CoModifier[]
+  effects   CoPhaseEffect[]
+
+  @@unique([coId, phase])
+}
+
+// "general modification over units" — group-level rows, with optional per-unit override.
+model CoModifier {
+  id           String    @id @default(cuid())
+  phase        CoPhase   @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phaseId      String
+  // Exactly one target: a group, or a specific unit (override).
+  unitGroupKey String? // references UnitGroup.key
+  unitType     UnitType? @relation(fields: [unitTypeId], references: [id])
+  unitTypeId   String?
+
+  attackPct     Int? // firepower % delta (+20, -10)
+  defensePct    Int?
+  rangeDelta    Int?
+  movementDelta Int?
+  visionDelta   Int?
+  buildCostPct  Int?
+  terrainStarsPct Int? // reserved: scale terrain stars by a percent
+  terrainStarsDelta Int? // Drake: flat +N terrain stars on the defender's own units
+  terrainStarsMult  Int? // Lash SCOP: multiply the defender's terrain stars (×2)
+  // Sturm-style: flat movement cost on every terrain (overrides per-terrain cost).
+  movementCostAll Int?
+
+  // Conditional application (null/false = always).
+  onTerrainKey String? // Jake = "plain", Koal = "road"
+  onProperty   Boolean @default(false) // Kindle
+  onWeather    String? // Olaf AWDS = "snow"
+  notWeather   String? // Sturm/Lash all-terrain-cost-1 = NOT "snow"
+  onFacility   String? // Eagle/Sensei/Drake target by build facility ("airport" | "port" | "base")
+  facilityNot  String? // Lash firepower skips "airport" units
+  requiresWeapon Boolean @default(false) // Max movement bonus excludes transports (no attackRange)
+  vsGroup      String? // opponent condition: Javier defence vs "indirect" attackers
+
+  // Scaling by an injectable runtime variable: the stat gains floor(variable / scaleDivisor) *
+  // scaleFactor percent. Colin SCOP = {scaleStat:"attack", scaleVariable:"funds", scaleDivisor:300,
+  // scaleFactor:1}; Javier = {scaleStat:"defense", scaleVariable:"commtowerBoost", scaleFactor:1..3}.
+  scaleStat     String? // "attack" | "defense"
+  scaleVariable String? // "funds" | "commtowerBoost" | "terrainStars" | "ownedProperties"
+  scaleDivisor  Int?
+  scaleFactor   Int?
+
+  @@index([phaseId])
+}
+
+// Typed non-stat / exotic effects (heal, funds, AoE, hide-HP, resupply, missiles…).
+model CoPhaseEffect {
+  id      String  @id @default(cuid())
+  phase   CoPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phaseId String
+  kind    String // "heal" | "funds" | "aoeDamage" | "hideHp" | "resupply" | …
+  params  Json? // kind-specific payload the engine interprets
+
+  @@index([phaseId])
+}
+
+// ---- Skins (asset resolution) ----
+model SkinType {
+  id    String @id @default(cuid())
+  key   String @unique // "map" | "army" | "camp" | "co"
+  skins Skin[]
+}
+
+model Skin {
+  id          String      @id @default(cuid())
+  type        SkinType    @relation(fields: [typeId], references: [id])
+  typeId      String
+  key         String // "aw2","ds","orange-star",…
+  displayName String
+  group       String? // optional grouping
+  assets      SkinAsset[]
+
+  @@unique([typeId, key])
+}
+
+model SkinAsset {
+  id         String @id @default(cuid())
+  skin       Skin   @relation(fields: [skinId], references: [id], onDelete: Cascade)
+  skinId     String
+  elementKey String // "infantry-0","tile-city","hq","portrait"
+  path       String // "/img/units/orangeStar/Infantry-0.png"
+
+  @@unique([skinId, elementKey])
+}
+
 // 2. move/map data structures
 // 3. tiers in general, map/league tiers?
+
+// ─── SOCIAL, NOTIFICATION & UNIFIED CONVERSATION SUBSYSTEM ───────────────────
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
+enum ConversationKind {
+  DM
+  GROUP
+  LOBBY
+  MATCH
+}
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPT
+  LOBBY_INVITE
+  SYSTEM
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  senderId    String
+  receiverId  String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  sender      Player           @relation("sentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver    Player           @relation("receivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
+  categories  FriendCategory[] @relation("CategoryFriendships")
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+}
+
+model FriendCategory {
+  id          String       @id @default(cuid())
+  name        String       // e.g. "Family", "In-Game Friends", "Scrim Partners"
+  ownerId     String
+  createdAt   DateTime     @default(now())
+
+  owner       Player       @relation("ownedCategories", fields: [ownerId], references: [id], onDelete: Cascade)
+  friendships Friendship[] @relation("CategoryFriendships")
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model Block {
+  id          String   @id @default(cuid())
+  blockerId   String
+  blockedId   String
+  createdAt   DateTime @default(now())
+
+  blocker     Player   @relation("blockedUsers", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked     Player   @relation("blockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+}
+
+model Mute {
+  id          String   @id @default(cuid())
+  muterId     String
+  mutedId     String
+  createdAt   DateTime @default(now())
+
+  muter       Player   @relation("mutedUsers", fields: [muterId], references: [id], onDelete: Cascade)
+  muted       Player   @relation("mutedByUsers", fields: [mutedId], references: [id], onDelete: Cascade)
+
+  @@unique([muterId, mutedId])
+  @@index([muterId])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  playerId    String
+  type        NotificationType
+  content     String           @db.Text // JSON string containing custom payloads (senderName, lobbyId, etc.)
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  player      Player           @relation("notifications", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId, isRead, createdAt(desc)])
+}
+
+model Conversation {
+  id          String                    @id @default(cuid())
+  name        String?                   // Display name (null for DMs, custom name for Groups)
+  kind        ConversationKind
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  // In-match channel linkage (null for DMs/groups). teamIndex: -1 = whole-match "All" channel,
+  // >= 0 = that team's team-only channel. The (matchId, teamIndex) pair uniquely identifies a
+  // match channel so it can be get-or-created idempotently.
+  match     Match?  @relation(fields: [matchId], references: [id])
+  matchId   String?
+  teamIndex Int?
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@unique([matchId, teamIndex])
+  @@index([kind, updatedAt]) // Excellent for automated cleanup runs on old LOBBY/MATCH kinds
+}
+
+model ConversationParticipant {
+  conversationId String
+  playerId       String
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now()) // Keeps track of participant's view cursor
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  player         Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, playerId])
+  @@index([playerId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String   @db.Text
+  createdAt      DateTime @default(now())
+  editedAt       DateTime? // Set when a player modifies their message
+  deletedAt      DateTime? // Soft-delete timestamp (hidden in standard queries)
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Player       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+// ─── HONOR ───────────────────────────────────────────────────────────────────
+// Post-match "commendations": a player awards ONE medal to a single opponent (matchmaking games
+// only, enforced in the usecase). Tier + star sub-rank + overall Prestige are DERIVED from the
+// per-medal counts at read time (see src/server/honor) — not stored. Ranking (military chevrons) is
+// a separate system (MMR); honor is prestige, never chevrons. See .ai/plans/end-game-screen-plan.md.
+
+enum MedalType {
+  GOOD_CONDUCT // 👏 sportsmanship
+  MEDAILLE_MILITAIRE // 🤝 well played
+  CROIX_DE_GUERRE // ⚔️ worthy foe
+}
+
+model Commendation {
+  id      String @id @default(cuid())
+  matchId String
+
+  fromPlayer Player @relation("commendationsGiven", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId     String
+  toPlayer   Player @relation("commendationsReceived", fields: [toId], references: [id], onDelete: Cascade)
+  toId       String
+
+  medal     MedalType
+  createdAt DateTime  @default(now())
+
+  @@unique([matchId, fromId]) // one medal awarded per giver per match
+  @@index([toId, medal]) // per-medal tallies for tier + prestige
+}

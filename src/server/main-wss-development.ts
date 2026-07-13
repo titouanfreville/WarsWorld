@@ -1,9 +1,16 @@
 import { logger } from "shared/utils/logger";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
+import { matchesUsecase } from "./matches/router";
+import { matchmakingUsecase } from "./matchmaking/router";
 
 void (async () => {
   await matchStore.rebuild();
+  // Re-arm general-picker deadlines from Match.pickEndsAt so a restart never drops one.
+  await matchesUsecase.reschedulePickDeadlines();
+  // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
+  await matchmakingUsecase.rescheduleLobbyPhases();
+  matchmakingUsecase.startQueueTick();
 
   const wss = createTRPCwebSocketServer({
     port: 3001,

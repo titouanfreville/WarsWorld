@@ -2,20 +2,30 @@
 // ^ couldn't find a way around using namespaces yet
 // https://www.npmjs.com/package/prisma-json-types-generator#configuration
 
-import type { MatchRules } from "shared/schemas/match-rules";
-import type { Preferences } from "server/players/schemas";
-import type { Tile } from "shared/schemas/tile";
-import type { UnitWithVisibleStats } from "shared/schemas/unit";
-import type { MainEventWithSubEvents } from "shared/types/events";
-import type { PlayerInMatch } from "shared/types/server-match-state";
+import type { MatchRules } from "server/core/schemas/match-rules";
+import type { Preferences, PlayerSkins } from "server/players/schemas";
+import type { TeamFactions } from "server/matches/schemas";
+import type { COID } from "server/core/schemas/co";
+import type { Tile } from "server/core/schemas/tile";
+import type { UnitWithVisibleStats } from "server/core/schemas/unit";
+import type { MainEventWithSubEvents } from "server/engine/types/events";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 
 declare global {
   namespace PrismaJson {
     type PrismaPreferences = Preferences;
     type PrismaTiles = Tile[][];
     type PrismaUnits = UnitWithVisibleStats[];
+    // v1 durable player state (kept for the v1 game — see Match.playerState).
     type PrismaPlayerState = PlayerInMatch[];
     type PrismaEvent = MainEventWithSubEvents;
     type PrismaMatchRules = MatchRules;
+    // New lobby/match path (v2):
+    type PrismaCoId = COID; // MatchPlayer.coId — the chosen general
+    type PrismaPlayerSkins = PlayerSkins; // MatchPlayer.skins — per-match cosmetic override
+    type PrismaTeamFactions = TeamFactions; // Lobby/Match teamFactions — faction per team index
+    // Matchmaking map pick & ban:
+    type PrismaMapPool = string[]; // Lobby.mapPool — candidate WWMap ids for the ban phase
+    type PrismaBannedMapIds = string[]; // PlayerInLobby.bannedMapIds — this player's bans
   }
 }

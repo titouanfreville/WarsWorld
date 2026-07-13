@@ -1,6 +1,17 @@
 import { z } from "zod";
-import { coSchema } from "shared/schemas/co";
-import { unitTypeSchema } from "shared/schemas/unit";
+import { armySchema } from "server/core/schemas/army";
+import { coSchema } from "server/core/schemas/co";
+import { unitTypeSchema } from "server/core/schemas/unit";
+
+// Cosmetic, own-side-only skins (no gameplay effect). Chosen once as a preference and overridable
+// per match. Asset folders aren't organised yet, so `map` is a free-form tileset id for now.
+export const playerSkinsSchema = z.object({
+  map: z.string(), // tileset variant id (placeholder until skin assets exist)
+  army: armySchema, // faction palette
+  camp: z.enum(["aw1", "aw2", "ds", "dor"]), // building / HQ style
+});
+
+export type PlayerSkins = z.infer<typeof playerSkinsSchema>;
 
 // Player preferences are a `players` feature concern (not the game engine); the engine's co/unit
 // vocabulary is reused for the "favourite COs/units" fields. Moved out of src/shared.
@@ -23,6 +34,8 @@ export const preferencesSchema = z.object({
   favouriteGames: z.optional(z.array(favouriteGamesSchema)),
   youtubeChannelId: z.optional(z.string()),
   twitchUserName: z.optional(z.string()),
+  // Global default skins; a match may override them per-player (MatchPlayer.skins).
+  skins: z.optional(playerSkinsSchema),
 });
 
 export type Preferences = z.infer<typeof preferencesSchema>;

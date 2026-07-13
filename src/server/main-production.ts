@@ -2,8 +2,12 @@ import http from "http";
 import next from "next";
 import { parse } from "url";
 import { logger } from "shared/utils/logger";
+import { initGameData } from "./adapters/game-data/game-data-cache";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
+import { matchesUsecase } from "./matches/router";
+import { matchmakingUsecase } from "./matchmaking/router";
+import { prisma } from "./prisma/prisma-client";
 
 const port = parseInt(process.env.PORT ?? "3001", 10);
 const app = next({ dev: false });
@@ -11,6 +15,13 @@ const handler = app.getRequestHandler();
 
 void (async () => {
   await matchStore.rebuild();
+  // Warm the game-data cache (CO profiles) from the DB so the first request is fast.
+  await initGameData(prisma);
+  // Re-arm general-picker deadlines from Match.pickEndsAt so a restart never drops one.
+  await matchesUsecase.reschedulePickDeadlines();
+  // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
+  await matchmakingUsecase.rescheduleLobbyPhases();
+  matchmakingUsecase.startQueueTick();
   await app.prepare();
 
   const server = http.createServer((req, res) => {

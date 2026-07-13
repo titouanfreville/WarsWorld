@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
-import type { PlayerSlot } from "shared/schemas/player-slot";
-import type { Tile, TileType } from "shared/schemas/tile";
-import { isNotNeutralProperty, isUnitProducingProperty } from "shared/schemas/tile";
+import type { PlayerSlot } from "server/core/schemas/player-slot";
+import type { Tile, TileType } from "server/core/schemas/tile";
+import { isNotNeutralProperty, isUnitProducingProperty } from "server/core/schemas/tile";
 import type { CreatableMap } from "./schemas";
 
 /** Tile types surfaced in the map list's property breakdown. */

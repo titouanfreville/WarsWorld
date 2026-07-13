@@ -10,6 +10,9 @@ import { hashPassword } from "server/hashPassword";
 import { importAWBWMap } from "server/tools/map-importer-utilities";
 import { developmentPlayerNamePrefix as Prefix } from "server/trpc/middleware/player";
 import { articleSchema } from "server/articles/schemas";
+import { seedGameData } from "./scripts/seed-game-data";
+import { seedCos } from "./scripts/seed-cos";
+import { seedSkins } from "./scripts/seed-skins";
 
 const prisma = new PrismaClient();
 
@@ -76,6 +79,12 @@ async function seedArticles(articles: string[], type: string, authorId: string) 
 }
 
 async function main() {
+  // Game reference data (units/terrain/properties, then commanders) — the DB source of truth the
+  // engine and champ-select read. Units first: per-unit CO modifiers FK to UnitType.
+  await seedGameData(prisma);
+  await seedCos(prisma);
+  await seedSkins(prisma);
+
   const hashedPassword = await hashPassword("secret");
 
   const { id: userId } = await prisma.user.create({

@@ -2,8 +2,8 @@ import { matchStore } from "server/match-store";
 import { prisma } from "server/prisma/prisma-client";
 import { mapMiddleware } from "server/trpc/middleware/map";
 import { playerBaseProcedure } from "server/trpc/trpc-setup";
-import { INITIAL_FUNDS } from "shared/match-logic/game-constants/funds";
-import { matchRulesSchema } from "shared/schemas/match-rules";
+import { INITIAL_FUNDS } from "server/engine/constants/funds";
+import { matchRulesSchema } from "server/core/schemas/match-rules";
 import { z } from "zod";
 import { matchToFrontend } from "./util";
 

@@ -4,13 +4,13 @@ import { prisma } from "server/prisma/prisma-client";
 import {
   validateMainActionAndToEvent,
   validateSubActionAndToEvent,
-} from "shared/match-logic/events/action-to-event";
+} from "server/engine/events/action-to-event";
 import {
   applyMainEventToMatch,
   applySubEventToMatch,
-} from "shared/match-logic/events/apply-event-to-match";
-import { mainActionSchema } from "shared/schemas/action";
-import { getFinalPositionSafe } from "shared/schemas/position";
+} from "server/engine/events/apply-event-to-match";
+import { mainActionSchema } from "server/core/schemas/action";
+import { getFinalPositionSafe } from "server/core/schemas/position";
 import { logger } from "shared/utils/logger";
 import type {
   Emittable,
@@ -18,11 +18,12 @@ import type {
   MainEventsWithoutSubEvents,
   MainEventWithSubEvents,
   SubEvent,
-} from "shared/types/events";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
-import { mainEventToEmittables } from "../../shared/match-logic/events/event-to-emittable";
-import { updateMoveVision } from "../../shared/match-logic/events/handlers/move";
-import { fillDiscoveredUnitsAndProperties } from "../../shared/match-logic/events/vision-update";
+} from "server/engine/types/events";
+import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
+import { mainEventToEmittables } from "server/engine/events/event-to-emittable";
+import { updateMoveVision } from "server/engine/events/handlers/move";
+import { fillDiscoveredUnitsAndProperties } from "server/engine/events/vision-update";
+import { rankingUsecase } from "../ranking/router";
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "../trpc/trpc-setup";
 import { finalizeIfGameOver } from "./match/finalize";
 
@@ -62,6 +63,17 @@ export const actionRouter = router({
 
       /* 1. Move action to event */
       const mainEventWithoutSubEvent = validateMainActionAndToEvent(match, input);
+
+      // A move whose path was cut short by a (fog-hidden) enemy unit in the way. Surfaced to the
+      // client so it can flag the ambush — the unit stops before the blocker instead of reaching its
+      // requested destination. `trapPosition` is the tile the unit halted on, so the client can pin
+      // the "ambush" label right there instead of a screen-wide banner.
+      const trapped =
+        mainEventWithoutSubEvent.type === "move" && mainEventWithoutSubEvent.trap === true;
+      const trapPosition =
+        trapped && mainEventWithoutSubEvent.type === "move"
+          ? getFinalPositionSafe(mainEventWithoutSubEvent.path)
+          : null;
 
       // if there was a trap or join/load, the default subEvent is "wait" (check must be done before moving the unit)
       const isJoinOrLoad =
@@ -134,21 +146,54 @@ export const actionRouter = router({
         }
       });
 
-      /* 10. Save event */
-      // const eventOnDB = await prisma.event.create({
-      await prisma.event.create({
-        data: {
-          matchId: input.matchId,
-          content: attachSubEvent(mainEventWithoutSubEvent, subEvent),
-        },
-      });
-
-      /* 11. If this action decided the match, finalize it: flip status + stamp per-player result,
-       * persist the outcome snapshot (finished matches are archived out of the hot store on reboot,
-       * so the DB is their only record), and push a live matchEnd so open boards flip to their
-       * result screen without a refetch. */
+      /* 10. If this action decided the match, finalize it in memory: flip status + stamp each
+       * player's won/lost/drawn result (pure engine mutation — persistence is below). */
       const finished = finalizeIfGameOver(match);
 
+      /* 11. Persist the event and, when the match just ended, its outcome snapshot in ONE
+       * transaction. Finished matches are archived out of the hot store on reboot (rebuild skips
+       * `finished`), so the DB is their only record — a crash between the event write and the
+       * outcome write would strand a decided match as "playing" forever. The v1 `playerState` blob
+       * AND the v2 relational `MatchPlayer.result` are both stamped so either read path sees the
+       * result (the v2 columns are what the end-game summary/grade query). */
+      await prisma.$transaction(async (tx) => {
+        await tx.event.create({
+          data: {
+            matchId: input.matchId,
+            content: attachSubEvent(mainEventWithoutSubEvent, subEvent),
+          },
+        });
+
+        if (finished !== null) {
+          await tx.match.update({
+            where: { id: match.id },
+            data: {
+              status: "finished",
+              winnerTeamIndex: finished.winnerTeamIndex,
+              finishedAt: new Date(),
+              playerState: match.getAllPlayers().map((player) => player.data),
+            },
+          });
+
+          // v2 relational store: stamp result per seat. `updateMany` (keyed by matchId+playerId) is
+          // a no-op for v1 matches, which have no MatchPlayer rows — so this is safe on both paths.
+          await Promise.all(
+            match.getAllPlayers().map((player) =>
+              tx.matchPlayer.updateMany({
+                where: { matchId: match.id, playerId: player.data.id },
+                data: { result: player.data.result ?? null },
+              }),
+            ),
+          );
+
+          // Ranked matches move MMR in the SAME transaction, off the results just stamped above.
+          // Self-guards on `isRanked`/`ratedAt`, so v1 and unranked matches are a cheap no-op.
+          await rankingUsecase.applyMatchResult(tx, match.id);
+        }
+      });
+
+      /* 12. After the outcome is durably committed, push a live matchEnd so open boards flip to
+       * their result screen without a refetch. */
       if (finished !== null) {
         const winningTeamPlayerIds =
           finished.winnerTeamIndex === null
@@ -156,16 +201,6 @@ export const actionRouter = router({
             : (match.teams
                 .find((team) => team.index === finished.winnerTeamIndex)
                 ?.players.map((player) => player.data.id) ?? null);
-
-        await prisma.match.update({
-          where: { id: match.id },
-          data: {
-            status: "finished",
-            winnerTeamIndex: finished.winnerTeamIndex,
-            finishedAt: new Date(),
-            playerState: match.getAllPlayers().map((player) => player.data),
-          },
-        });
 
         match.getAllPlayers().forEach((player) => {
           emit(player.data.id, {
@@ -176,6 +211,8 @@ export const actionRouter = router({
           });
         });
       }
+
+      return { trapped, trapPosition };
 
       // TODO we still need something like the following to handle timeout eliminations.
 

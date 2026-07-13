@@ -4,19 +4,20 @@ import { matchStore } from "server/match-store";
 import { pageMatchIndex } from "server/page-match-index";
 import { playerMatchIndex } from "server/player-match-index";
 import { prisma } from "server/prisma/prisma-client";
-import { DispatchableError } from "shared/DispatchedError";
+import { DispatchableError } from "server/engine/DispatchedError";
 import { logger } from "shared/utils/logger";
-import { applyMainEventToMatch } from "shared/match-logic/events/apply-event-to-match";
-import { INITIAL_FUNDS } from "shared/match-logic/game-constants/funds";
-import { createMatchStartEvent } from "shared/match-logic/events/handlers/match-start";
-import type { Army } from "shared/schemas/army";
-import { armySchema } from "shared/schemas/army";
-import { coIdSchema } from "shared/schemas/co";
-import { getCOProperties } from "shared/match-logic/co";
-import { playerSlotForUnitsSchema } from "shared/schemas/player-slot";
-import { positionSchema } from "shared/schemas/position";
+import { applyMainEventToMatch } from "server/engine/events/apply-event-to-match";
+import { INITIAL_FUNDS } from "server/engine/constants/funds";
+import { createMatchStartEvent } from "server/engine/events/handlers/match-start";
+import type { Army } from "server/core/schemas/army";
+import { armySchema } from "server/core/schemas/army";
+import { coIdSchema } from "server/core/schemas/co";
+import { getCOProperties } from "server/engine/rules/co";
+import { maskUnitForViewer } from "server/engine/entities/team";
+import { playerSlotForUnitsSchema } from "server/core/schemas/player-slot";
+import { positionSchema } from "server/core/schemas/position";
 import { z } from "zod";
-import type { PlayerInMatch } from "../../shared/types/server-match-state";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 import {
   matchBaseProcedure,
   playerBaseProcedure,
@@ -25,7 +26,9 @@ import {
   router,
 } from "../trpc/trpc-setup";
 import { createMatchProcedure } from "./match/create";
+import { fogViewChangeableTiles } from "./match/fog-view";
 import { deriveGameOver } from "./match/game-over";
+import { buildPublicPowerSummary } from "./match/turn-snapshot";
 import {
   allMatchSlotsReady,
   finishedRowToFrontend,
@@ -120,14 +123,26 @@ export const matchRouter = router({
     return {
       id: match.id,
       leagueType: match.leagueType,
-      changeableTiles: match.changeableTiles,
+      // Fog-projected: fogged properties show their last-known owner, not the live one, so a capture
+      // out of the viewer's vision doesn't leak through this full-board refetch (see fogViewChangeableTiles).
+      changeableTiles: fogViewChangeableTiles(match, viewerTeam),
       currentWeather: match.getCurrentWeather(),
       map: match.map.data,
-      players: match.getAllPlayers().map((player) => player.data),
+      // Every player's public state + a fog-safe CO-power summary (meter/stars) so the HUD can show
+      // each army's charge. Power charge is public in AW. Funds are public too — EXCEPT under fog,
+      // where an opponent's exact treasury is secret: we null it on the wire (not just in the HUD) so
+      // it can't be read from the payload. The viewer always sees their own funds.
+      players: match.getAllPlayers().map((player) => ({
+        ...player.data,
+        funds: !fogOfWar || player.data.id === currentPlayer.id ? player.data.funds : null,
+        power: buildPublicPowerSummary(player),
+      })),
       rules: match.rules,
       status: match.status,
       turn: match.turn,
-      units: visibleUnits.map((u) => u.data),
+      // Sonja hides her units' HP/fuel/ammo from opponents even without fog; mask enemy Sonja units
+      // here (own team sees them unchanged) so the board never renders her true HP. See maskUnitForViewer.
+      units: visibleUnits.map((u) => maskUnitForViewer(u, viewerTeam ?? null)),
       fogOfWar,
       visibleTiles,
       gameOver,
