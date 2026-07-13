@@ -141,8 +141,8 @@
       "sourceSize": { "w": 8, "h": 7 }
     },
     "health-question.png": {
-      "frame": { "x": 37, "y": 286, "w": 8, "h": 7 },
-      "rotated": true,
+      "frame": { "x": 0, "y": 305, "w": 8, "h": 7 },
+      "rotated": false,
       "trimmed": false,
       "spriteSourceSize": { "x": 0, "y": 0, "w": 8, "h": 7 },
       "sourceSize": { "w": 8, "h": 7 }
@@ -293,7 +293,7 @@
     "version": "1.1",
     "image": "icons.png",
     "format": "RGBA8888",
-    "size": { "w": 64, "h": 305 },
+    "size": { "w": 64, "h": 313 },
     "scale": "1",
     "smartupdate": "$TexturePacker:SmartUpdate:0d2966677dee9ec5d6f2eca2496c7915:a9e2fc2f8b0e811266ea83b0aac25824:b5c5bd7252d2048fecbb1bda1760f9ef$"
   }
