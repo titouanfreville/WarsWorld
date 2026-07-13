@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveGameOver } from "server/routers/match/game-over";
 import { buildInspectionRanges, buildUnitDetails } from "server/routers/match/previews";
-import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
+import { buildTurnSnapshot } from "server/engine/previews/turn-snapshot";
 import { getBattleForecast } from "server/engine/previews/combat-forecast";
 import { unitPropertiesMap } from "server/engine/constants/unit-properties";
 import {

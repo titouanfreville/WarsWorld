@@ -28,7 +28,7 @@ import {
 import { createMatchProcedure } from "./match/create";
 import { fogViewChangeableTiles } from "./match/fog-view";
 import { deriveGameOver } from "./match/game-over";
-import { buildPublicPowerSummary } from "./match/turn-snapshot";
+import { buildPublicPowerSummary } from "server/engine/previews/turn-snapshot";
 import {
   allMatchSlotsReady,
   finishedRowToFrontend,

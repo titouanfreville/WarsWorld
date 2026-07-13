@@ -11,7 +11,7 @@ import {
 } from "server/engine/previews/pathfinding";
 import type { UnitType } from "server/core/schemas/unit";
 import { unitTypeSchema } from "server/core/schemas/unit";
-import { buildTurnSnapshot } from "./turn-snapshot";
+import { buildTurnSnapshot } from "server/engine/previews/turn-snapshot";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
 import { maskUnitForViewer, type TeamWrapper } from "server/engine/entities/team";
