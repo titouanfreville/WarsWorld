@@ -3,12 +3,12 @@ import { vi } from "vitest";
 import {
   validateMainActionAndToEvent,
   validateSubActionAndToEvent,
-} from "shared/match-logic/events/action-to-event";
+} from "server/engine/events/action-to-event";
 import {
   applyMainEventToMatch,
   applySubEventToMatch,
-} from "shared/match-logic/events/apply-event-to-match";
-import { updateMoveVision } from "shared/match-logic/events/handlers/move";
+} from "server/engine/events/apply-event-to-match";
+import { updateMoveVision } from "server/engine/events/handlers/move";
 import type { MainAction } from "shared/schemas/action";
 import type { MatchRules } from "shared/schemas/match-rules";
 import { getFinalPositionSafe } from "shared/schemas/position";
@@ -19,12 +19,16 @@ import type {
   MainEventsWithoutSubEvents,
   MainEventWithSubEvents,
   SubEvent,
-} from "shared/types/events";
-import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
+} from "server/engine/types/events";
+import type { ChangeableTile } from "server/core/schemas/tile-state";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 import type { UnitType, UnitWithVisibleStats } from "shared/schemas/unit";
-import { MatchWrapper } from "shared/wrappers/match";
-import type { DistributiveOmit, PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
-import { UnitWrapper } from "shared/wrappers/unit";
+import { MatchWrapper } from "server/engine/entities/match";
+import type {
+  DistributiveOmit,
+  PlayerInMatchWrapper,
+} from "server/engine/entities/player-in-match";
+import { UnitWrapper } from "server/engine/entities/unit";
 
 /**
  * Test harness for game-feature tests. Builds a small MatchWrapper and dispatches actions
@@ -49,6 +53,7 @@ const DEFAULT_RULES: MatchRules = {
 /** Concise tile fixtures (row-major: `tiles[y][x]`, positions are `[x, y]`). */
 export const tiles = {
   road: (): Tile => ({ type: "road", variant: "right-left" }),
+  plain: (): Tile => ({ type: "plain", variant: "normal" }),
   base: (playerSlot: PlayerSlot): Tile => ({ type: "base", playerSlot }),
   city: (playerSlot: PlayerSlot): Tile => ({ type: "city", playerSlot }),
   hq: (playerSlot: PlayerSlot): Tile => ({ type: "hq", playerSlot }),

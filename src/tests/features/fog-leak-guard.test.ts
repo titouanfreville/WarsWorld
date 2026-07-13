@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mainEventToEmittables } from "shared/match-logic/events/event-to-emittable";
+import { mainEventToEmittables } from "server/engine/events/event-to-emittable";
 import type { MainAction } from "shared/schemas/action";
 import {
   addUnit,

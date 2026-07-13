@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { deriveGameOver } from "server/routers/match/game-over";
+import { buildInspectionRanges, buildUnitDetails } from "server/routers/match/previews";
 import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
-import { getBattleForecast } from "shared/match-logic/combat-forecast";
+import { getBattleForecast } from "server/engine/previews/combat-forecast";
+import { unitPropertiesMap } from "server/engine/constants/unit-properties";
 import {
   getAccessibleNodes,
   getAttackableTiles,
   getAttackTargetTiles,
-} from "shared/match-logic/pathfinding";
+} from "server/engine/previews/pathfinding";
 import type { Position } from "shared/schemas/position";
 import { isSamePosition } from "shared/schemas/position";
 import {
@@ -457,5 +459,206 @@ describe("previews", () => {
       position: [1, 0],
       facility: "base",
     });
+  });
+});
+
+/**
+ * The unit-detail card's data. Reference stats (max fuel/ammo, movement, vision, range) are public
+ * from the unit's type and always sent; current fuel/ammo are intel and sent ONLY for the viewer's
+ * own units. Non-ammo units report null for both ammo fields.
+ */
+describe("unitDetails exposure", () => {
+  it("sends full stats — including current fuel/ammo — for the viewer's own unit", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const tank = addUnit(match.getPlayerBySlot(0)!, "tank", [0, 0]); // ammo unit, full stats
+
+    const details = buildUnitDetails(tank, true, match.getPlayerBySlot(0)!.team);
+
+    expect(details).toMatchObject({
+      type: "tank",
+      isOwn: true,
+      hp: 100,
+      visualHp: 10,
+      fuel: 50, // current (helper default)
+      ammo: 5, // current (helper default)
+      maxFuel: unitPropertiesMap.tank.initialFuel,
+      maxAmmo: unitPropertiesMap.tank.initialAmmo,
+      movementPoints: unitPropertiesMap.tank.movementPoints,
+      movementType: unitPropertiesMap.tank.movementType,
+      vision: unitPropertiesMap.tank.vision,
+    });
+    expect(details.attackRange).toEqual({ minRange: 1, maxRange: 1 });
+    // A tank has a MAIN gun (uses ammo) and an MG (unlimited); both reach ground, the MG also infantry.
+    const main = details.weapons.find((w) => w.kind === "main");
+    const mg = details.weapons.find((w) => w.kind === "mg");
+    expect(main?.usesAmmo).toBe(true);
+    expect(main?.targets).toContain("ground");
+    expect(mg?.usesAmmo).toBe(false);
+    expect(mg?.targets).toContain("infantry");
+  });
+
+  it("reports an infantry as having only an unlimited MG (no ammo weapon)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const infantry = addUnit(match.getPlayerBySlot(0)!, "infantry", [0, 0]);
+
+    const { weapons } = buildUnitDetails(infantry, true, match.getPlayerBySlot(0)!.team);
+
+    expect(weapons).toHaveLength(1);
+    expect(weapons[0]).toMatchObject({ kind: "mg", usesAmmo: false });
+    expect(weapons[0].targets).toContain("infantry");
+  });
+
+  it("reports an APC as unarmed (no weapons)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const apc = addUnit(match.getPlayerBySlot(0)!, "apc", [0, 0]);
+
+    expect(buildUnitDetails(apc, true, match.getPlayerBySlot(0)!.team).weapons).toEqual([]);
+  });
+
+  it("withholds an enemy unit's current fuel/ammo but still reports public reference stats + HP", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const enemyTank = addUnit(match.getPlayerBySlot(1)!, "tank", [2, 0]);
+
+    const details = buildUnitDetails(enemyTank, false, match.getPlayerBySlot(0)!.team);
+
+    expect(details.isOwn).toBe(false);
+    expect(details.hp).toBe(100); // HP is public in AW
+    expect(details.fuel).toBeNull(); // current consumables withheld from the opponent
+    expect(details.ammo).toBeNull();
+    expect(details.maxFuel).toBe(unitPropertiesMap.tank.initialFuel); // reference stats stay public
+    expect(details.maxAmmo).toBe(unitPropertiesMap.tank.initialAmmo);
+  });
+
+  it("masks the HP of an enemy whose HP is hidden (Sonja), via the shared maskUnitForViewer rule", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [
+        { slot: 0, hasCurrentTurn: true },
+        { slot: 1, coId: { name: "sonja", version: "AWDS" } },
+      ],
+    });
+    const sonjaTank = addUnit(match.getPlayerBySlot(1)!, "tank", [2, 0]);
+
+    const details = buildUnitDetails(sonjaTank, false, match.getPlayerBySlot(0)!.team);
+
+    expect(details.hp).toBeNull(); // "?" on the card — no true HP leaks
+    expect(details.visualHp).toBeNull();
+    expect(details.maxFuel).toBe(unitPropertiesMap.tank.initialFuel); // public reference stats unaffected
+  });
+
+  it("reports null ammo fields for an ammo-less unit even when it's the viewer's own", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const infantry = addUnit(match.getPlayerBySlot(0)!, "infantry", [0, 0]);
+
+    const details = buildUnitDetails(infantry, true, match.getPlayerBySlot(0)!.team);
+
+    expect(details.maxAmmo).toBeNull();
+    expect(details.ammo).toBeNull();
+    expect(details.fuel).toBe(50); // still tracks fuel
+  });
+});
+
+/**
+ * Fog safety for the inspect overlay: right-clicking must never reveal an enemy's position. The only
+ * set that names concrete unit positions (`attackTargetTiles`) must exclude fog-hidden enemies, and
+ * must be withheld entirely when inspecting an ENEMY unit (its targets are computed with the enemy's
+ * vision and could name a unit the viewer can't see).
+ */
+describe("unitDetails fog safety", () => {
+  it("does not name a fog-hidden enemy as an own unit's attack target (but keeps it in the geometry)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    // Artillery: vision 1, attack range 2–3. The enemy at distance 2 is IN range but OUT of sight.
+    const artillery = addUnit(match.getPlayerBySlot(0)!, "artillery", [0, 0]);
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [2, 0]);
+    recomputeVision(match);
+
+    expect(match.getPlayerBySlot(0)!.team.canSeeUnitAtPosition([2, 0])).toBe(false); // hidden
+
+    const ranges = buildInspectionRanges(match, artillery, true);
+
+    expect(ranges.attackableTiles).toContainEqual([2, 0]); // geometry still shows the reach
+    expect(ranges.attackTargetTiles).not.toContainEqual([2, 0]); // ...but the hidden enemy isn't named
+  });
+
+  it("names an enemy as an own unit's attack target once the team can see it", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const artillery = addUnit(match.getPlayerBySlot(0)!, "artillery", [0, 0]);
+    addUnit(match.getPlayerBySlot(0)!, "recon", [1, 0]); // vision 5 — reveals [2,0]
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [2, 0]);
+    recomputeVision(match);
+
+    expect(match.getPlayerBySlot(0)!.team.canSeeUnitAtPosition([2, 0])).toBe(true);
+
+    expect(buildInspectionRanges(match, artillery, true).attackTargetTiles).toContainEqual([2, 0]);
+  });
+
+  it("withholds attackTargetTiles entirely when inspecting an ENEMY unit", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    addUnit(match.getPlayerBySlot(0)!, "recon", [1, 0]); // sees the enemy so it's inspectable
+    const enemyArtillery = addUnit(match.getPlayerBySlot(1)!, "artillery", [2, 0]);
+    recomputeVision(match);
+
+    const ranges = buildInspectionRanges(match, enemyArtillery, false);
+
+    // Its movement/threat geometry is still available (for the danger-zone overlay)...
+    expect(ranges.reachableTiles.length).toBeGreaterThan(0);
+    // ...but it never names concrete targets, which would use the enemy's vision.
+    expect(ranges.attackTargetTiles).toEqual([]);
+  });
+});
+
+/**
+ * A combat forecast against a masked-HP defender (e.g. Sonja's) must not leak the true HP. With
+ * `assumeDefenderFullHp`, every output depends only on a full-HP defender, so the range is identical
+ * regardless of the real value — otherwise the damage would give it away.
+ */
+describe("getBattleForecast masked-HP defender", () => {
+  const forecastVsInfantryAt = (defenderHp: number, assumeFullHp: boolean) => {
+    const match = createTestMatch({
+      tiles: roadRow(2),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const attacker = addUnit(match.getPlayerBySlot(0)!, "infantry", [0, 0]);
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [1, 0], { stats: { hp: defenderHp, fuel: 99 } });
+
+    return getBattleForecast(match, attacker, [0, 0], [1, 0], assumeFullHp);
+  };
+
+  it("gives an identical forecast for any real HP when the defender's HP is assumed full", () => {
+    expect(forecastVsInfantryAt(30, true)).toEqual(forecastVsInfantryAt(70, true));
+  });
+
+  it("otherwise the forecast does depend on the defender's real HP", () => {
+    // Sanity: without masking, a near-dead defender (dies, can't counter) and a healthy one (survives
+    // and counters) yield different forecasts — proving the masked case above genuinely erases that
+    // dependency rather than the HPs happening to match.
+    expect(forecastVsInfantryAt(30, false)).not.toEqual(forecastVsInfantryAt(70, false));
   });
 });

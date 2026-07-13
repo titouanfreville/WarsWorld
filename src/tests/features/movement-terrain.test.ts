@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MovementType } from "shared/match-logic/game-constants/unit-properties";
-import { getBaseMovementCost } from "shared/match-logic/movement-cost";
+import type { MovementType } from "server/engine/constants/unit-properties";
+import { getBaseMovementCost } from "server/engine/rules/movement-cost";
 import type { GameVersion } from "shared/schemas/game-version";
 import type { TileType } from "shared/schemas/tile";
 import type { Weather } from "shared/schemas/weather";
@@ -31,14 +31,30 @@ const MOVEMENT_MATRIX: Case[] = [
   ["pipe", "pipe", "clear", "AW2", 1],
   ["treads", "pipe", "clear", "AW2", null], // only pipe-runners use pipes
 
-  // Weather penalties (non-AWDS).
-  ["treads", "plain", "rain", "AW2", 2], // +1 mud
-  ["foot", "plain", "snow", "AW2", 2], // +1 snow
-  ["air", "mountain", "snow", "AW2", 2], // air doubles in snow
-  ["foot", "mountain", "snow", "AW2", 4], // foot doubles on snowy mountains
+  // Rain (non-AWDS): tires/treads +1 on plains AND woods; everything else unaffected.
+  ["treads", "plain", "rain", "AW2", 2], // 1 -> 2 (mud)
+  ["treads", "forest", "rain", "AW2", 3], // 2 -> 3
+  ["tires", "plain", "rain", "AW2", 3], // 2 -> 3
+  ["tires", "forest", "rain", "AW2", 4], // 3 -> 4
+  ["foot", "plain", "rain", "AW2", 1], // infantry unaffected by rain
+  ["air", "mountain", "rain", "AW2", 1], // air unaffected by rain
+
+  // Snow (non-AWDS).
+  ["foot", "plain", "snow", "AW2", 2], // infantry double: 1 -> 2
+  ["foot", "forest", "snow", "AW2", 2], // infantry double on woods: 1 -> 2
+  ["foot", "mountain", "snow", "AW2", 4], // infantry double on mountains: 2 -> 4
+  ["boots", "mountain", "snow", "AW2", 2], // mech double on mountains: 1 -> 2
+  ["boots", "plain", "snow", "AW2", 1], // mech unaffected off mountains
+  ["treads", "plain", "snow", "AW2", 2], // tires/treads +1 on plains: 1 -> 2
+  ["treads", "forest", "snow", "AW2", 3], // ...and on woods: 2 -> 3 (the previously-missing penalty)
+  ["tires", "forest", "snow", "AW2", 4], // 3 -> 4 (woods)
+  ["air", "mountain", "snow", "AW2", 2], // air double everywhere: 1 -> 2
+  ["sea", "sea", "snow", "AW2", 2], // ships double on sea: 1 -> 2
+  ["lander", "port", "snow", "AW2", 2], // landers double on port: 1 -> 2
 
   // AWDS ignores weather movement penalties.
   ["treads", "plain", "rain", "AWDS", 1],
+  ["treads", "forest", "snow", "AWDS", 2], // no snow penalty in AWDS
 ];
 
 describe("terrain movement costs", () => {

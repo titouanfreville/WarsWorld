@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMoveEvent } from "shared/match-logic/events/handlers/move";
+import { applyMoveEvent } from "server/engine/events/handlers/move";
 import type { MainAction } from "shared/schemas/action";
 import { createTestMatch, dispatchMainAction, tiles } from "../helpers/scenario";
 
