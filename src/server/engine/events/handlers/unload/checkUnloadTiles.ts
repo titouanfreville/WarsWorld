@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { unitPropertiesMap } from "server/engine/constants/unit-properties";
 import { getBaseMovementCost } from "server/engine/rules/movement-cost";
 import { getWeatherSpecialMovement } from "server/engine/rules/weather";

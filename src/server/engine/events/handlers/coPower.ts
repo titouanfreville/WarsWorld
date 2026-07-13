@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { COPowerAction } from "server/core/schemas/action";
 import type { COPowerEvent } from "server/engine/types/events";
 import type { MatchWrapper } from "server/engine/entities/match";

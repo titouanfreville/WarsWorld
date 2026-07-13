@@ -14,9 +14,26 @@ import type { CoEffect, COProfile, UnitModifier } from "server/engine/constants/
 
 const PHASE_KEYS = ["dayToDay", "coPower", "superCoPower"] as const;
 
+const resolveUnitId = (
+  unit: string | undefined,
+  unitIdByKey: Record<string, string>,
+): string | null => {
+  if (unit === undefined) {
+    return null;
+  }
+
+  const id = unitIdByKey[unit];
+
+  if (id === undefined) {
+    throw new Error(`seed-cos: unknown unit key "${unit}" in a CO modifier`);
+  }
+
+  return id;
+};
+
 const modifierRow = (mod: UnitModifier, unitIdByKey: Record<string, string>) => ({
   unitGroupKey: mod.group ?? null,
-  unitTypeId: mod.unit !== undefined ? unitIdByKey[mod.unit] : null,
+  unitTypeId: resolveUnitId(mod.unit, unitIdByKey),
   attackPct: mod.attackPct ?? null,
   defensePct: mod.defensePct ?? null,
   rangeDelta: mod.rangeDelta ?? null,

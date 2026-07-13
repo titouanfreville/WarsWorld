@@ -1,5 +1,5 @@
 import type { LeagueType, MatchStatus, WWMap } from "server/engine/types/domain-entities";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { MatchRules } from "server/core/schemas/match-rules";
 import type { PlayerSlot } from "server/core/schemas/player-slot";
 import type { Position } from "server/core/schemas/position";

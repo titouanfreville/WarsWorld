@@ -1,4 +1,5 @@
 import { usePlayers } from "frontend/context/players";
+import { parseNotificationPayload } from "frontend/utils/notification-payload";
 import { trpc } from "frontend/utils/trpc-client";
 import { useEffect, useState, useRef } from "react";
 
@@ -162,10 +163,7 @@ export default function SocialPanel() {
               </p>
               <div className="@flex @flex-col @gap-2">
                 {notifications.map((notif) => {
-                  const payload = JSON.parse(notif.content) as {
-                    senderName?: string;
-                    senderId: string;
-                  };
+                  const payload = parseNotificationPayload(notif.content);
                   return (
                     <div
                       key={notif.id}
@@ -182,7 +180,7 @@ export default function SocialPanel() {
                             onClick={() =>
                               respondRequest.mutate({
                                 playerId: pId,
-                                senderId: payload.senderId,
+                                senderId: payload.senderId ?? "",
                                 accept: true,
                               })
                             }
@@ -195,7 +193,7 @@ export default function SocialPanel() {
                             onClick={() =>
                               respondRequest.mutate({
                                 playerId: pId,
-                                senderId: payload.senderId,
+                                senderId: payload.senderId ?? "",
                                 accept: false,
                               })
                             }
@@ -325,7 +323,7 @@ export default function SocialPanel() {
         {/* Identity block */}
         <div className="@pt-3 @border-t @border-bg-tertiary/40 @flex @items-center @gap-3">
           <div className="@h-7 @w-7 @rounded-full @bg-primary @text-black @font-bold @flex @items-center @justify-center @text-xs">
-            {currentPlayer.displayName[0].toUpperCase()}
+            {(currentPlayer.displayName[0] ?? "?").toUpperCase()}
           </div>
           <div className="@min-w-0">
             <p className="@text-xs @font-bold @text-slate-100 @truncate">
@@ -394,7 +392,7 @@ export default function SocialPanel() {
                     >
                       {!isMe && (
                         <div className="@h-7 @w-7 @rounded-full @bg-bg-tertiary @text-slate-100 @flex @items-center @justify-center @text-[11px] @font-bold @flex-none">
-                          {activePartner.displayName[0].toUpperCase()}
+                          {(activePartner.displayName[0] ?? "?").toUpperCase()}
                         </div>
                       )}
                       <div className="@flex @flex-col @gap-1">

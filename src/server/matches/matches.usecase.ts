@@ -4,7 +4,7 @@ import { emit } from "server/emitter/event-emitter";
 import type { MatchStore } from "server/match-store";
 import { pageMatchIndex } from "server/page-match-index";
 import { playerMatchIndex } from "server/player-match-index";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { getCOProperties } from "server/engine/rules/co";
 import { createMatchStartEvent } from "server/engine/events/handlers/match-start";
 import { applyMainEventToMatch } from "server/engine/events/apply-event-to-match";

@@ -1,6 +1,6 @@
 import type { MainActionToEvent } from "server/engine/events/handler-types";
 import type { DeleteAction } from "server/core/schemas/action";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { DeleteEvent } from "server/engine/types/events";
 

@@ -1,5 +1,5 @@
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "server/trpc/trpc-setup";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { getBattleForecast } from "server/engine/previews/combat-forecast";
 import { getAvailableSubActions } from "server/engine/events/available-sub-actions";
 import { getTerrainDefenseStars } from "server/engine/constants/terrain-properties";

@@ -52,6 +52,12 @@ export const rollMap = (
     return pickRandom(remaining, randomInt);
   }
 
+  if (pool.length === 0) {
+    // Callers guarantee a non-empty pool (createReadyCheck requeues on an empty one); fail loudly
+    // rather than returning `undefined` typed as `string`.
+    throw new Error("rollMap called with an empty pool");
+  }
+
   return pickRandom(pool, randomInt);
 };
 
@@ -77,6 +83,12 @@ export const canBan = (
   }
 
   if (player.bannedMapIds.length >= BANS_PER_PLAYER) {
+    return false;
+  }
+
+  // Already banned by someone (incl. the opponent) → no longer a survivor; banning it again just
+  // wastes a ban with no effect on the pool.
+  if (players.some((p) => p.bannedMapIds.includes(mapId))) {
     return false;
   }
 

@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { AbilityAction } from "server/core/schemas/action";
 import { addDirection, allDirections } from "server/core/schemas/position";
 import type { AbilityEvent } from "server/engine/types/events";

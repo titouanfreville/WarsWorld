@@ -1,3 +1,7 @@
+// Deliberate exception to "core is framework-free": these are TYPE-ONLY imports (erased at build,
+// zero runtime coupling). Sprite-sheet data IS the pixi wire format, so the `satisfies` clauses
+// below are a compile-time guarantee that our schema matches what pixi consumes — a real contract
+// check we'd lose by inlining local copies. Keep as type-only; never import pixi values here.
 import type { ISpritesheetData, ISpritesheetFrameData } from "pixi.js";
 import { z } from "zod";
 

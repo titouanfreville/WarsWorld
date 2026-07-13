@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { getFinalPositionSafe } from "server/core/schemas/position";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { MainEventsWithoutSubEvents, MoveEventWithSubEvent } from "server/engine/types/events";

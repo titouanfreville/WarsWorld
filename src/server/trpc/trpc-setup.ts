@@ -2,7 +2,7 @@ import { authMiddleware } from "./middleware/auth";
 import { matchMiddleware, withMatchIdSchema } from "./middleware/match";
 import { playerMiddleware, withPlayerIdSchema } from "./middleware/player";
 import { t } from "./trpc-init";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 
 export const { router } = t;
 export const publicBaseProcedure = t.procedure;

@@ -1,4 +1,5 @@
 import { usePlayers } from "frontend/context/players";
+import { parseNotificationPayload } from "frontend/utils/notification-payload";
 import { trpc } from "frontend/utils/trpc-client";
 import Link from "next/link";
 import { useEffect, useState, useRef } from "react";
@@ -45,6 +46,9 @@ export default function QuickChatWidget() {
     onSuccess: (conv) => {
       setActiveConvId(conv.id);
     },
+    // On failure (blocked/muted partner, backend error) clear the partner so the UI doesn't strand
+    // on a header with an empty chat body and no feedback.
+    onError: () => setActivePartner(null),
   });
 
   const sendMsg = trpc.social.sendMessage.useMutation({
@@ -232,7 +236,7 @@ export default function QuickChatWidget() {
                     </p>
                     <div className="@flex @flex-col @gap-1.5">
                       {notifications.map((notif) => {
-                        const payload = JSON.parse(notif.content) as { senderName?: string };
+                        const payload = parseNotificationPayload(notif.content);
                         return (
                           <div
                             key={notif.id}

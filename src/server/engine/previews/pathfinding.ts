@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { createPipeSeamUnitEquivalent, getBaseDamage } from "server/engine/constants/base-damage";
 import type { Position } from "server/core/schemas/position";
 import { getDistance, getNeighbourPositions, isSamePosition } from "server/core/schemas/position";

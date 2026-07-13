@@ -99,14 +99,14 @@ const eslintConfig = {
           "error",
           {
             // The engine is Prisma-free (see the src/shared migration map in CLAUDE.md). Map DB
-            // rows to domain entities (shared/types/domain-entities) at the adapter boundary — no
+            // rows to domain entities (engine/types/domain-entities) at the adapter boundary — no
             // Prisma imports at all, not even types. Exact-name `paths` (glob patterns don't match
             // the "@prisma/client" specifier reliably).
             paths: [
               {
                 name: "@prisma/client",
                 message:
-                  "The engine is Prisma-free: map rows to shared/types/domain-entities at the adapter boundary.",
+                  "The engine is Prisma-free: map rows to engine/types/domain-entities at the adapter boundary.",
                 allowTypeImports: false,
               },
             ],
@@ -144,7 +144,7 @@ const eslintConfig = {
               {
                 name: "@prisma/client",
                 message:
-                  "The engine is Prisma-free: map rows to shared/types/domain-entities at the adapter boundary.",
+                  "The engine is Prisma-free: map rows to engine/types/domain-entities at the adapter boundary.",
                 allowTypeImports: false,
               },
             ],
@@ -158,6 +158,18 @@ const eslintConfig = {
                 group: ["**pixi**"],
                 message: "Non-type Pixi.js can't be imported into the engine (SSR has no window)",
                 allowTypeImports: true,
+              },
+              {
+                // The engine imports only core + adapters — never transport or sibling features
+                // (even as types: an id/state type the engine needs is engine/core vocabulary).
+                group: [
+                  "**/server/routers/**",
+                  "**/server/trpc/**",
+                  "**/server/{matchmaking,ranking,social,matches,lobby,endgame,honor,players,auth,articles,maps,emitter,prisma}/**",
+                ],
+                message:
+                  "The engine imports only core + adapters — not transport (routers/trpc) or sibling features.",
+                allowTypeImports: false,
               },
             ],
           },

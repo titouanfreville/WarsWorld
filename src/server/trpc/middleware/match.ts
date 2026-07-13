@@ -8,7 +8,8 @@ export const withMatchIdSchema = z.object<{ matchId: z.ZodType<Match["id"]> }>({
   matchId: z.string(),
 });
 
-export type WithMatchId = z.infer<typeof withMatchIdSchema>;
+// The type is engine-event vocabulary (engine owns it); the schema here validates transport input.
+export type { WithMatchId } from "server/engine/types/events";
 
 export const matchMiddleware = t.middleware(async ({ ctx, input, next }) => {
   const parseResult = withMatchIdSchema.safeParse(input);

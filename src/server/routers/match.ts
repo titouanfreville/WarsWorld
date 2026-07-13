@@ -4,7 +4,7 @@ import { matchStore } from "server/match-store";
 import { pageMatchIndex } from "server/page-match-index";
 import { playerMatchIndex } from "server/player-match-index";
 import { prisma } from "server/prisma/prisma-client";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { logger } from "shared/utils/logger";
 import { applyMainEventToMatch } from "server/engine/events/apply-event-to-match";
 import { INITIAL_FUNDS } from "server/engine/constants/funds";

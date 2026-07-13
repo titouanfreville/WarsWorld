@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { BuildAction } from "server/core/schemas/action";
 import type { BuildEvent } from "server/engine/types/events";
 import type { MatchWrapper } from "server/engine/entities/match";

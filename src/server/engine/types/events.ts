@@ -1,4 +1,3 @@
-import type { WithMatchId } from "server/trpc/middleware/match";
 import type {
   AbilityAction,
   AttackAction,
@@ -21,6 +20,9 @@ import type { WWUnit } from "server/core/schemas/unit";
 import type { Weather } from "server/core/schemas/weather";
 import type { CapturableTile } from "server/core/schemas/tile-state";
 import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
+
+/** Engine events are per-match; this id wrapper travels with the non-stored event types below. */
+export type WithMatchId = { matchId: string };
 
 /** player slot 0 implicity starts */
 export type MatchStartEvent = {

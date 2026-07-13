@@ -1,8 +1,8 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { unitPropertiesMap } from "server/engine/constants/unit-properties";
 import { snowDoublesFuel } from "server/engine/rules/weather";
 import type { MoveAction } from "server/core/schemas/action";
-import { getFinalPositionSafe, isSamePosition } from "server/core/schemas/position";
+import { getFinalPositionSafe, isSamePosition, type Position } from "server/core/schemas/position";
 import type { UnitWithVisibleStats } from "server/core/schemas/unit";
 import { logger } from "shared/utils/logger";
 import type { MoveEventWithoutSubEvent, MoveEventWithSubEvent } from "server/engine/types/events";
@@ -249,7 +249,7 @@ const getOneTileFuelCost = (unit: UnitWrapper): number => (snowDoublesFuel(unit.
 // Fuel cost of a move, from a *start-inclusive* path (path[0] is the unit's current tile).
 // The start tile is free — only tiles *entered* cost fuel — so the count is `length - 1`.
 // Both the pre-move validation and the apply step must use this so they can never disagree.
-const getPathFuelCost = (unit: UnitWrapper, startInclusivePath: { length: number }): number =>
+const getPathFuelCost = (unit: UnitWrapper, startInclusivePath: readonly Position[]): number =>
   Math.max(0, startInclusivePath.length - 1) * getOneTileFuelCost(unit);
 
 export const applyMoveEvent = (match: MatchWrapper, event: MoveEventWithoutSubEvent) => {
