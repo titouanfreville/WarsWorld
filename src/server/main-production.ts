@@ -5,8 +5,8 @@ import { logger } from "shared/utils/logger";
 import { initGameData } from "./adapters/game-data/game-data-cache";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
-import { matchesUsecase } from "./matches/router";
-import { matchmakingUsecase } from "./matchmaking/router";
+import { matchesUsecase } from "./composition-root";
+import { matchmakingUsecase } from "./composition-root";
 import { prisma } from "./prisma/prisma-client";
 
 const port = parseInt(process.env.PORT ?? "3001", 10);

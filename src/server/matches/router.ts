@@ -1,13 +1,9 @@
 import { getCoProfiles } from "server/adapters/game-data/game-data-cache";
-import { matchStore } from "server/match-store";
+import { matchesUsecase } from "server/composition-root";
 import { prisma } from "server/prisma/prisma-client";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
 import { buildCoCodex } from "./co-codex";
-import { MatchesUsecase } from "./matches.usecase";
 import { lockCoSchema, pickViewSchema } from "./schemas";
-
-/** Shared instance: the pick timers and store are process-wide, so the app uses one usecase. */
-export const matchesUsecase = new MatchesUsecase(prisma, matchStore);
 
 export const matchesRouter = router({
   // General reference data for the champ-select dossier (AW2 rules for now), read from DB game data.

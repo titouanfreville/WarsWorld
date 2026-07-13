@@ -1,9 +1,6 @@
-import { prisma } from "server/prisma/prisma-client";
+import { endgameUsecase } from "server/composition-root";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { EndgameUsecase } from "./endgame.usecase";
 import { endgameChatHeartbeatSchema, endgameSummarySchema } from "./schemas";
-
-const endgameUsecase = new EndgameUsecase(prisma);
 
 export const endgameRouter = router({
   // Read-only battle report — usable for a finished match's End-Game screen or its history entry.

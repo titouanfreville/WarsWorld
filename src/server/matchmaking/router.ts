@@ -1,14 +1,8 @@
 import { observable } from "@trpc/server/observable";
+import { matchmakingUsecase } from "server/composition-root";
 import { subscribeQueue, type QueueEvent } from "server/emitter/matchmaking-emitter";
-import { matchesUsecase } from "server/matches/router";
-import { prisma } from "server/prisma/prisma-client";
-import { rankingUsecase } from "server/ranking/router";
 import { playerBaseProcedure, router } from "server/trpc/trpc-setup";
-import { MatchmakingUsecase } from "./matchmaking.usecase";
 import { joinQueueSchema, mapActionSchema, withLobbyIdSchema } from "./schemas";
-
-/** Composition root for matchmaking; the WS entrypoints import this to start the tick + reschedule. */
-export const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase, matchesUsecase);
 
 export const matchmakingRouter = router({
   join: playerBaseProcedure

@@ -23,7 +23,7 @@ import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-matc
 import { mainEventToEmittables } from "server/engine/events/event-to-emittable";
 import { updateMoveVision } from "server/engine/events/handlers/move";
 import { fillDiscoveredUnitsAndProperties } from "server/engine/events/vision-update";
-import { rankingUsecase } from "../ranking/router";
+import { rankingUsecase } from "../composition-root";
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "../trpc/trpc-setup";
 import { finalizeIfGameOver } from "./match/finalize";
 

@@ -1,9 +1,7 @@
 import { observable } from "@trpc/server/observable";
+import { lobbyUsecase as lobby } from "server/composition-root";
 import { subscribeLobby, type LobbyRoomEvent } from "server/emitter/lobby-emitter";
-import { matchesUsecase } from "server/matches/router";
-import { prisma } from "server/prisma/prisma-client";
 import { playerBaseProcedure, router } from "server/trpc/trpc-setup";
-import { LobbyUsecase } from "./lobby.usecase";
 import {
   assignTeamSchema,
   createLobbySchema,
@@ -12,8 +10,6 @@ import {
   respondInviteSchema,
   withLobbyIdSchema,
 } from "./schemas";
-
-const lobby = new LobbyUsecase(prisma, matchesUsecase);
 
 export const lobbyRouter = router({
   create: playerBaseProcedure

@@ -1,8 +1,8 @@
 import { logger } from "shared/utils/logger";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
-import { matchesUsecase } from "./matches/router";
-import { matchmakingUsecase } from "./matchmaking/router";
+import { matchesUsecase } from "./composition-root";
+import { matchmakingUsecase } from "./composition-root";
 
 void (async () => {
   await matchStore.rebuild();

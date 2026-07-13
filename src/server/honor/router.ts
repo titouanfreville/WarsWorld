@@ -1,9 +1,6 @@
-import { prisma } from "server/prisma/prisma-client";
+import { honorUsecase } from "server/composition-root";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { HonorUsecase } from "./honor.usecase";
 import { awardMedalSchema, honorStandingSchema } from "./schemas";
-
-const honorUsecase = new HonorUsecase(prisma);
 
 export const honorRouter = router({
   // A player's medals + prestige — public (standings appear on profiles / lobby / champ-select).
