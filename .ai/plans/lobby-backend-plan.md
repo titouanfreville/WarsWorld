@@ -1,7 +1,41 @@
 # Backend implementation plan — Lobby + Match (revised)
 
-Status: **draft for review** (revised per feedback 2026-07-08). Implements
-`.ai/plans/lobby-two-phase-design.md`. Emphasis: the **data model**. Server-authoritative throughout.
+Status: **approved; build in progress**. Implements `.ai/plans/lobby-two-phase-design.md`. Emphasis:
+the **data model**. Server-authoritative throughout.
+
+**Implementation progress**
+- ✅ **Step 1 — Schema (2026-07-09).** Added enums `LobbyStatus`, `LobbyMembership`, `cancelled` on
+  `MatchStatus`; models `Lobby`, `PlayerInLobby`, `MatchPlayer`, `PlayerInfraction`; `Match` v2
+  columns (`isRanked`, `teamFactions`, `pickEndsAt`, `revealedAt`, `lobbyId @unique`); JSON types
+  (`PrismaCoId`, `PrismaPlayerSkins`, `PrismaTeamFactions`, `Preferences.skins`) + `matches/schemas.ts`
+  (`teamFactions`) + `players/schemas.ts` (`playerSkins`). Domain `MatchStatus` + FE `MatchCard` union
+  widened for `cancelled`. `db push` applied; tsc + lint clean; 145/145 tests pass.
+  - **Two deviations from the text below:** (1) the relational table is named **`MatchPlayer`**, not
+    `PlayerInMatch`, to avoid a permanent clash with the v1 runtime type `PlayerInMatch`
+    (`shared/types/server-match-state`), which we keep. (2) The 1:1 Lobby↔Match link is a single FK
+    on **`Match.lobbyId @unique`** with a `Lobby.match` back-relation — no `Lobby.matchId` column.
+  - `MatchmakingTicket` intentionally **not** added yet (Phase 2 / step 8 — avoid dead schema).
+- ✅ **Step 2 — v2 hydration (2026-07-09).** `match-store.createMatchAndIndex` takes optional
+  `MatchPlayer` rows: when present it seeds the runtime `PlayerInMatch[]` from them
+  (`matches/match-player.ts` — `matchPlayerToRuntime` + `teamMappingFromRows`), else falls back to
+  the v1 `playerState` blob (untouched). `rebuild()` includes `matchPlayers`. Additive branch, no rip-out.
+- ✅ **Step 3 — lobby feature (2026-07-09).** `src/server/lobby/` — `lobby.usecase.ts`
+  (create/get/join/assignTeam/invite/respondInvite/kick/leave/start), `schemas.ts`, `views.ts`,
+  `router.ts`; mounted as `lobby` in `app.ts`. Invites = `membership: invited|active`; self-assign
+  switchboard with per-mode layout (`matches/layout.ts`: 1v1/2v2/ffa4). Prisma inline (no dbo yet).
+- ✅ **Step 4 — spawn + general-picker (2026-07-09).** `src/server/matches/matches.usecase.ts` —
+  `spawnFromLobby` (creates `Match(setup)` + `MatchPlayer` rows, derives `teamMapping`, rolls
+  `teamFactions` + distinct armies, sets `pickEndsAt`, indexes in store), `lockCo`, `pickView`
+  (enemy-CO hidden until `revealedAt`), `reveal` (→ matchStart + `playing`), `onPickDeadline`
+  (all-ready → reveal / else cancel + `abandoned_pick` infractions), server-authoritative
+  `pick-timer.ts` (rescheduled from `pickEndsAt` at boot in both main-\* entrypoints). Mounted as
+  `matches` (pickView/lockCo). WS events (`pick-started`/`co-locked`/`pick-reveal`/`match-cancelled`)
+  typed in `shared/types/events.ts` and broadcast per-player (the emitter is per-player — the old
+  single-arg lobby emits were suppressed no-ops).
+  - tsc + eslint + prettier clean; **155/155 tests pass** (+10: `lobby-layout`, `match-player-hydration`).
+- ⬜ **Not built:** MMR-on-finalize (step 5's ranking half), skins preference endpoints (step 6), the
+  FE screens (step 7), matchmaking (step 8). Lobby-phase live WS (before the Match exists) deferred
+  until the FE consumes it — lobby mutations return the fresh view to the caller for now.
 
 ## The key structural decision — Lobby is NOT the Match
 
@@ -22,13 +56,23 @@ Lobby(assembling) ──host start / all-accept──▶ Match(setup = general p
   cancelled (nobody / declined)                              Match(playing) ─▶ finished / cancelled
 ```
 
-## Relational, not JSON
+## Relational, not JSON — and the v1 coexistence rule
 
-Per-player match facts move from the `Match.playerState` JSON blob to a **real associative table**
-so quick SQL checks (who's ready, which CO, which team, W/L) don't parse JSON. The **volatile engine
+**`playerState` is NOT retired.** A **v1 of the game still exists** and there will be a transition
+period where both run; v1 keeps reading/writing `Match.playerState` unchanged. The rule is
+**directional**: the **new lobby / match / picker path must not depend on `playerState`** — it reads
+and writes the relational `MatchPlayer` table exclusively. The two systems **coexist**; the new
+code just never reaches back into the old blob.
+
+Per-player match facts for the **new path** live in a **real associative table** (`MatchPlayer`) so
+quick SQL checks (who's ready, which CO, which team, W/L) don't parse JSON. The **volatile engine
 runtime** (funds, power meter, unit positions/HP, whose turn) stays **event-sourced** (the `Event`
-log + in-memory `match-store`) — that's unchanged. The relational rows hold the **durable/queryable**
-facts; the event log holds the **game simulation**.
+log + in-memory `match-store`) — unchanged. The relational rows hold the **durable/queryable** facts;
+the event log holds the **game simulation**; `playerState` remains the **v1** durable store.
+
+> **Boundary check:** any new lobby/matches usecase, view, or WS emit reads identity/team/CO/result
+> from `MatchPlayer`. `playerState` may only be touched by legacy v1 code paths (and the one-off
+> backfill that *seeds* `MatchPlayer` from it). No new read of `playerState`.
 
 ## Data model
 
@@ -54,25 +98,29 @@ model Lobby {
   members      PlayerInLobby[]
 }
 
+enum LobbyMembership { invited active }   // invited = pending invite; active = joined
+
 model PlayerInLobby {
-  id          String   @id @default(cuid())
-  lobby       Lobby    @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  id          String          @id @default(cuid())
+  lobby       Lobby           @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
   lobbyId     String
-  player      Player   @relation(fields: [playerId], references: [id])
+  player      Player          @relation(fields: [playerId], references: [id])
   playerId    String
-  team        Int?     // self-assigned team index (null = unassigned bench)
-  slot        Int?     // slot within team (or overall for FFA)
-  isSpectator Boolean  @default(false)   // FFA overflow / explicit spectator
-  accepted    Boolean  @default(false)   // AFK ready-check accepted
-  joinedAt    DateTime @default(now())
+  membership  LobbyMembership @default(active)  // invited row = pending; accept → active, reject → delete
+  team        Int?            // self-assigned team index (null = unassigned bench)
+  slot        Int?            // slot within team (or overall for FFA)
+  isSpectator Boolean         @default(false)   // FFA overflow / explicit spectator
+  accepted    Boolean         @default(false)   // AFK ready-check accepted (matchmaking only)
+  joinedAt    DateTime        @default(now())
   @@unique([lobbyId, playerId])
   @@index([playerId])
 }
 ```
 
-Invites (custom lobby): an invitee is a pending `PlayerInLobby`-adjacent record until they respond.
-Simplest: a small `LobbyInvite { lobbyId, playerId (or username), status, createdAt }` table, or a
-`pending` flag on `PlayerInLobby`. (Open Q.)
+Invites (custom lobby): **decided — a `pending`-style flag on `PlayerInLobby`** (no separate table).
+An invitee is a `PlayerInLobby` row whose membership is `invited`; **accept** flips it to active,
+**reject** deletes the row. One table, whole roster (members + pending) in one query. Add a
+`membership` field below (`invited | active`) rather than the separate `LobbyInvite` table.
 
 ### 2. Match — refined + relational players
 
@@ -87,11 +135,11 @@ model Match {
   revealedAt   DateTime?        // CO reveal gate (null → enemy COs hidden)
   lobbyId      String?  @unique // provenance
 
-  players      PlayerInMatch[]  // ← relational, replaces the durable part of playerState JSON
-  // Match.playerState JSON is retired: durable facts → PlayerInMatch; volatile runtime → event log.
+  players      MatchPlayer[]  // ← relational, the durable store for the NEW match path
+  // playerState JSON is KEPT for v1 (transition period). New code reads MatchPlayer, never playerState.
 }
 
-model PlayerInMatch {
+model MatchPlayer {
   id        String   @id @default(cuid())
   match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
   matchId   String
@@ -114,12 +162,13 @@ model PlayerInMatch {
 ```
 
 - `MatchStatus.cancelled` already planned; **`setup` is reused as the general-picker round** (no
-  rename). `PlayerInMatch` is the queryable authority for membership/team/CO/result.
-- **Retire `Match.playerState` JSON**: durable fields → `PlayerInMatch`; volatile runtime (funds,
-  powerMeter, COPowerState, hasCurrentTurn, hasBuiltUnit, units) is derived from the event log by
-  `match-store` on rebuild. This is the **heaviest refactor** — the in-memory `MatchWrapper` must be
-  hydrated from `PlayerInMatch` rows (identity/team/CO) + replayed events (runtime), instead of from
-  `playerState`. Sequence it carefully (see build order).
+  rename). `MatchPlayer` is the queryable authority for membership/team/CO/result **in the new path**.
+- **`playerState` is kept** (v1 durable store, transition period). For the **new match path**, the
+  in-memory `MatchWrapper` hydrates identity/team/CO from `MatchPlayer` rows + runtime from replayed
+  events — it does **not** read `playerState`. v1 matches keep hydrating from `playerState` as today.
+  How the two hydration paths cohabit in `match-store` (branch on `players.length > 0` vs a
+  `Match.schemaVersion` flag) is the one thing to nail down in build step 2 — but it's **additive**,
+  not a risky rip-out of the old code.
 
 ### 3. Behavior / moderation log (durable, cross-cutting)
 
@@ -149,13 +198,13 @@ throttling. This replaces the narrow `MatchAbandon` idea and covers in-game AFK,
 
 - **Global default:** add `skins { map; army; camp }` to `Preferences` (`Player.preferences`, already
   a Json field). Player sets these once.
-- **Per-match override:** `PlayerInMatch.skins` (nullable). In the picker, the control **defaults to
+- **Per-match override:** `MatchPlayer.skins` (nullable). In the picker, the control **defaults to
   the preference** and can be changed for that match only. Visual, own-side, gameplay-irrelevant.
 
 ### 5. Ranking / MMR — wired now
 
 On `finalizeIfGameOver` (already exists), if `isRanked`: compute rating deltas from `winnerTeamIndex`
-+ each `PlayerInMatch.result`, update per-league `MMR` in the same transaction, and write the new
++ each `MatchPlayer.result`, update per-league `MMR` in the same transaction, and write the new
 rating snapshot. (Simple Elo/rating fn first; refine later.) The relational `result` makes this a
 clean per-row update.
 
@@ -181,7 +230,7 @@ Matchmaker pairs tickets → creates a **Lobby** in `ready_check` (30 s). All ac
 - **Pick timer:** `Match.pickEndsAt` (setup) and `Lobby.readyEndsAt` (ready-check) are the sources of
   truth. Per-match `setTimeout` in the WS server, rebuilt on boot from the columns. FE only renders
   the deadline.
-- **CO-hiding (fog for generals):** a read filter strips other-team `PlayerInMatch.coId` while
+- **CO-hiding (fog for generals):** a read filter strips other-team `MatchPlayer.coId` while
   `revealedAt === null`; WS emits `co-locked { playerId }` (no coId) until `pick-reveal`.
 - **Reveal → launch:** all `ready` (or deadline with full rosters) → set `revealedAt`, emit reveal,
   10 s → `matchStart` event + `status = playing`.
@@ -201,20 +250,21 @@ Add: `player-joined-lobby` / `-left-lobby`, `player-changed-team`, `lobby-invite
   kick · startReadyCheck · accept · start→spawnMatch · cancel), `dbo.ts` (Lobby + PlayerInLobby +
   invites + tickets), `schemas.ts`, `router.ts`, `views.ts` (lobby view).
 - **`src/server/matches/`** — extend: `spawnFromLobby`, `lockCo`, `onPickDeadline`, reveal, cancel,
-  `matchToFrontend` reading `PlayerInMatch` (+ CO-hiding), `finalize` (+ MMR).
+  `matchToFrontend` reading `MatchPlayer` (+ CO-hiding), `finalize` (+ MMR).
 - **`src/server/players/`** — skins in preferences (`getSkins`/`setSkins`).
 - Engine stays Prisma-free; the `matches`/`lobby` usecases own persistence + timers.
 
 ## Migration & backfill
 
-- New tables: `Lobby`, `PlayerInLobby`, `PlayerInMatch`, `PlayerInfraction`, `MatchmakingTicket`
+- New tables: `Lobby`, `PlayerInLobby`, `MatchPlayer`, `PlayerInfraction`, `MatchmakingTicket`
   (Phase 2); `LobbyStatus` enum; `Match` columns (`isRanked`, `teamFactions`, `pickEndsAt`,
   `revealedAt`, `lobbyId`); JSON-type additions (`Preferences.skins`, `MatchRules.pickSeconds/mode`,
   `PrismaPlayerSkins`, `PrismaCoId`, `PrismaTeamFactions`).
-- **Backfill playerState → PlayerInMatch:** for every existing match, explode `playerState` JSON into
-  `PlayerInMatch` rows (slot, team via `teamMapping`, army, coId, result). One-off script
-  (reuse the backfill pattern). Then `playerState` can be dropped once `match-store` hydrates from the
-  new sources.
+- **Backfill playerState → MatchPlayer (seed, non-destructive):** for every existing match, explode
+  `playerState` JSON into `MatchPlayer` rows (slot, team via `teamMapping`, army, coId, result).
+  One-off script (reuse the backfill pattern). `playerState` **stays in place** — the backfill only
+  *reads* it to seed the relational rows so old matches are visible to the new query path too. Column
+  is not dropped (v1 still uses it).
 - Use `rtk proxy npx prisma db push` (the rtk/prisma gotcha).
 
 ## Testing
@@ -224,15 +274,16 @@ Add: `player-joined-lobby` / `-left-lobby`, `player-changed-team`, `lobby-invite
 - Match setup: lock→reveal (all-locked vs deadline), cancel + `abandoned_pick`, CO-hiding filter
   (enemy coId null before reveal / present after).
 - Rebuild: a `setup` match reconstructs `pickEndsAt`; a `playing` match hydrates identity from
-  `PlayerInMatch` + runtime from events.
+  `MatchPlayer` + runtime from events.
 - Finalize: MMR deltas per `result` on a ranked match.
 
 ## Build order
 
-1. **Schema**: Lobby/PlayerInLobby, PlayerInMatch, PlayerInfraction, Match columns, enums, JSON types
-   + migration + **playerState→PlayerInMatch backfill**.
-2. **Match hydration refactor**: `match-store` builds `MatchWrapper` from `PlayerInMatch` + event log
-   (retire `playerState`). ← highest-risk; do behind tests first.
+1. **Schema**: Lobby/PlayerInLobby, MatchPlayer, PlayerInfraction, Match columns, enums, JSON types
+   + migration + **playerState→MatchPlayer seed backfill** (non-destructive; `playerState` kept).
+2. **New-path hydration (additive)**: `match-store` gains a branch that builds `MatchWrapper` from
+   `MatchPlayer` + event log for new matches, **leaving the v1 `playerState` path untouched**. Guard
+   the branch (e.g. `players.length > 0` or a `schemaVersion` flag). Behind tests; no rip-out.
 3. **Lobby feature**: assemble/team/invite/kick + lobby view (custom path).
 4. **Spawn Match(setup) + general-picker**: pick timer, `lockCo`, CO-hiding, reveal → play.
 5. **Cancel + PlayerInfraction**; **MMR on finalize**.
@@ -240,14 +291,14 @@ Add: `player-joined-lobby` / `-left-lobby`, `player-changed-team`, `lobby-invite
 7. **FE**: replace `MatchCardSetup`; wire the mockup screens with **real CO/unit sprites**.
 8. **Phase 2**: matchmaking tickets + ready-check.
 
-## Open questions
+## Open questions — all resolved (2026-07-08)
 
-1. **playerState retirement** — full move to `PlayerInMatch` + event-derived runtime now (clean,
-   heavier), or keep `playerState` as a runtime cache and add `PlayerInMatch` alongside for
-   queryability (lower risk, some duplication)?
-2. **Invites** — dedicated `LobbyInvite` table vs a `pending` flag on `PlayerInLobby`?
-3. **Custom lobby ready-check** — do host-made lobbies also get the 30 s accept step, or only
-   matchmaking (host just presses start)?
-4. **Rating function** — which model for MMR deltas (plain Elo to start)?
-5. **Team vs slot** — is `team` authoritative on `PlayerInMatch` and `teamMapping` derived from it at
-   spawn, or keep both in sync?
+1. **playerState retirement** — **KEPT** (v1 coexistence). New path uses `MatchPlayer` exclusively;
+   backfill only *seeds* from it; new-path hydration is additive.
+2. **Invites** — **`membership: invited|active` flag on `PlayerInLobby`** (no separate table).
+3. **Custom lobby ready-check** — **matchmaking only.** Custom host presses Start → `Match(setup)`;
+   the picker timer still catches AFK. `readyEndsAt`/`accepted` are matchmaking-only.
+4. **Rating function** — **plain Elo per-league** (expected-score, fixed K, symmetric zero-sum).
+   Refine (Glicko/decay) later.
+5. **Team vs slot** — **`team` on `MatchPlayer` is authoritative**; `teamMapping` is derived from the
+   rows at spawn (and for any legacy/engine consumer that still reads it). No dual-write.
