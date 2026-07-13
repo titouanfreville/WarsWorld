@@ -318,7 +318,13 @@ export class MatchmakingUsecase {
       data: { accepted: true },
     });
 
-    const allAccepted = lobby.members.every((m) => m.accepted || m.playerId === playerId);
+    // Compute completion from state re-read AFTER the write. Reading the pre-write snapshot let two
+    // simultaneous accepts each miss the other, deferring the transition to the deadline timer.
+    const updated = await this.db.lobby.findUnique({
+      where: { id: lobbyId },
+      include: LOBBY_MEMBERS,
+    });
+    const allAccepted = updated?.members.every((m) => m.accepted) ?? false;
 
     if (allAccepted) {
       cancelLobbyPhase(lobbyId);
@@ -464,6 +470,10 @@ export class MatchmakingUsecase {
       throw new TRPCError({ code: "BAD_REQUEST", message: "You can't ban that map" });
     }
 
+    // TODO(review): this is a read-check-write with no atomicity. Two simultaneous bans of the two
+    // last survivors both pass canBan on stale state and empty the pool, defeating the last-survivor
+    // guard (both players then get flagged as abandoners at the deadline). A race-safe fix needs an
+    // atomicity decision — serializable isolation + retry, or an app-level per-lobby lock. Deferred.
     await this.db.playerInLobby.update({
       where: { lobbyId_playerId: { lobbyId, playerId } },
       data: { bannedMapIds: [...(member.bannedMapIds ?? []), mapId] },
@@ -489,8 +499,14 @@ export class MatchmakingUsecase {
 
     await this.notifyLobby(lobbyId);
 
-    // Everyone voted (counting this vote we just wrote) → resolve now instead of waiting the deadline.
-    const allVoted = lobby.members.every((m) => m.playerId === playerId || m.votedMapId !== null);
+    // Re-read AFTER the write (so concurrent final votes don't each miss the other and stall to the
+    // deadline) and ignore spectators — matching onMapPhaseDeadline, which only requires players.
+    const updated = await this.db.lobby.findUnique({
+      where: { id: lobbyId },
+      include: LOBBY_MEMBERS,
+    });
+    const allVoted =
+      updated?.members.filter((m) => !m.isSpectator).every((m) => m.votedMapId !== null) ?? false;
 
     if (allVoted) {
       await this.resolveMapBan(lobbyId);
