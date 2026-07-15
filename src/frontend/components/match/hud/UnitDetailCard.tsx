@@ -1,11 +1,11 @@
 "use client";
 import type { BoardPosition } from "frontend/components/match/match-view";
-import type { inferTRPCOutput } from "frontend/utils/trpc-client";
+import type { RouterOutput } from "frontend/utils/trpc-client";
 import { spriteNameForUnit, unitSpriteUrl, type Army } from "frontend/utils/sprites";
 import { tileSizeCss, tileTopLeftCss } from "./board-overlay-geometry";
 
 /** BE-computed stat readout for one unit (see the `unitDetails` preview). Typed by tRPC inference. */
-export type UnitDetails = NonNullable<inferTRPCOutput<"matchPreview", "unitDetails">>;
+export type UnitDetails = NonNullable<RouterOutput["match"]["previews"]["unitDetails"]>;
 
 /**
  * Unit-detail card opened by right-clicking a visible unit — its ammo, fuel, movement, HP, vision and

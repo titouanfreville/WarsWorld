@@ -1,9 +1,9 @@
-import type { inferTRPCOutput } from "frontend/utils/trpc-client";
+import type { RouterOutput } from "frontend/utils/trpc-client";
 import type { BoardPosition } from "./match-view";
 import { posKey } from "./match-view";
 
 /** The BE unit-inspection payload (stats + the tile sets the overlay colours). tRPC-inferred. */
-export type UnitInspection = NonNullable<inferTRPCOutput<"matchPreview", "unitDetails">>;
+export type UnitInspection = NonNullable<RouterOutput["match"]["previews"]["unitDetails"]>;
 
 /** `full` = movement + reach on first right-click; `direct` = in-place attack only on the second. */
 export type InspectMode = "full" | "direct";

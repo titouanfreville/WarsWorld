@@ -2,7 +2,7 @@ import { httpBatchLink } from "@trpc/client/links/httpBatchLink";
 import { loggerLink } from "@trpc/client/links/loggerLink";
 import { createWSClient, wsLink } from "@trpc/client/links/wsLink";
 import { createTRPCNext } from "@trpc/next";
-import type { inferProcedureOutput } from "@trpc/server";
+import type { inferProcedureOutput, inferRouterOutputs } from "@trpc/server";
 import type { NextPageContext } from "next";
 import type { AppRouter } from "server/routers/app";
 import superjson from "superjson";
@@ -84,6 +84,9 @@ export const trpc = createTRPCNext<AppRouter>({
    */
   ssr: true,
 });
+
+/** All router outputs, keyed by the full namespace path (handles nested routers, e.g. match.previews). */
+export type RouterOutput = inferRouterOutputs<AppRouter>;
 
 export type inferTRPCOutput<
   TopLevelProcedureKeys extends keyof AppRouter["_def"]["procedures"],

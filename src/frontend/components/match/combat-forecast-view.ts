@@ -1,11 +1,11 @@
-import type { inferTRPCOutput } from "frontend/utils/trpc-client";
+import type { RouterOutput } from "frontend/utils/trpc-client";
 
 /**
  * The BE combat forecast for an engagement — min/max HP each side would lose, plus the context the
  * floating combat box renders (each side's current HP + type, and the target tile's terrain defense
  * stars). Typed by tRPC inference; the client only renders it (it never runs the damage math).
  */
-export type CombatForecast = NonNullable<inferTRPCOutput<"matchPreview", "combatForecast">>;
+export type CombatForecast = NonNullable<RouterOutput["match"]["previews"]["combatForecast"]>;
 
 /**
  * The range of damage an attack does, as a PERCENTAGE label (e.g. `70-80%`, or `75%` when exact).

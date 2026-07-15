@@ -24,8 +24,8 @@ import {
   playerInMatchBaseProcedure,
   publicBaseProcedure,
   router,
-} from "../trpc/trpc-setup";
-import { createMatchProcedure } from "./match/create";
+} from "server/trpc/trpc-setup";
+import { createMatchProcedure } from "./create";
 import { fogViewChangeableTiles } from "server/engine/previews/fog-view";
 import { deriveGameOver } from "server/engine/previews/game-over";
 import { buildPublicPowerSummary } from "server/engine/previews/turn-snapshot";
@@ -34,7 +34,7 @@ import {
   finishedRowToFrontend,
   matchToFrontend,
   throwIfMatchNotInSetupState,
-} from "./match/util";
+} from "./util";
 
 /**
  * Reject a CO that isn't implemented for its game version (e.g. von-bolt only exists in AWDS). If it
@@ -59,7 +59,7 @@ const throwIfCOUnavailable = (selectedCO: z.infer<typeof coIdSchema>) => {
   }
 };
 
-export const matchRouter = router({
+export const lifecycleRouter = router({
   create: createMatchProcedure,
 
   getAll: publicBaseProcedure

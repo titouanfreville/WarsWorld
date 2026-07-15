@@ -138,7 +138,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
   // BE combat forecast for the focused engagement — min/max damage both ways + defense stars. Only
   // runs while a target is focused; the disabled-state input is a harmless placeholder.
-  const forecastQuery = trpc.matchPreview.combatForecast.useQuery(
+  const forecastQuery = trpc.match.previews.combatForecast.useQuery(
     {
       matchId,
       playerId,
@@ -150,7 +150,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   );
 
   // BE stat readout for the inspected unit. Enabled only while a unit is being inspected.
-  const detailsQuery = trpc.matchPreview.unitDetails.useQuery(
+  const detailsQuery = trpc.match.previews.unitDetails.useQuery(
     { matchId, playerId, unitPosition: inspectPos === null ? [0, 0] : toTuple(inspectPos) },
     { enabled: inspectPos !== null },
   );

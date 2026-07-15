@@ -5,7 +5,7 @@ import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/tr
 import { buildCoCodex } from "server/matches/co-codex";
 import { lockCoSchema, pickViewSchema } from "server/matches/schemas";
 
-export const matchesRouter = router({
+export const pickRouter = router({
   // General reference data for the champ-select dossier (AW2 rules for now), read from DB game data.
   coCodex: publicBaseProcedure.query(async () => buildCoCodex("AW2", await getCoProfiles(prisma))),
   pickView: playerBaseProcedure

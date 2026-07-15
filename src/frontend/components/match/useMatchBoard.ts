@@ -54,7 +54,7 @@ export function useMatchBoard({ matchId, playerId }: Params) {
 
   const isMyTurn = match !== undefined && getCurrentTurnPlayer(match)?.id === playerId;
 
-  const snapshotQuery = trpc.matchPreview.turnSnapshot.useQuery(
+  const snapshotQuery = trpc.match.previews.turnSnapshot.useQuery(
     { matchId, playerId },
     { enabled: isMyTurn },
   );
@@ -82,7 +82,7 @@ export function useMatchBoard({ matchId, playerId }: Params) {
     {
       onData() {
         void utils.match.full.invalidate({ matchId, playerId });
-        void utils.matchPreview.turnSnapshot.invalidate({ matchId, playerId });
+        void utils.match.previews.turnSnapshot.invalidate({ matchId, playerId });
       },
     },
   );
@@ -119,7 +119,7 @@ export function useMatchBoard({ matchId, playerId }: Params) {
           // with this id present. Without it, a subscription-driven refetch that landed BEFORE this
           // callback would leave the action stuck at "sent" (no further match change to confirm it).
           void utils.match.full.invalidate({ matchId, playerId });
-          void utils.matchPreview.turnSnapshot.invalidate({ matchId, playerId });
+          void utils.match.previews.turnSnapshot.invalidate({ matchId, playerId });
         },
         onError(error) {
           onActionError(pending.kind)(error);

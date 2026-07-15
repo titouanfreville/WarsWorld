@@ -33,14 +33,14 @@ export default function PickPhase({ matchId }: Props) {
   const [tab, setTab] = useState<DossierTab>("overview");
   const [now, setNow] = useState(() => Date.now());
 
-  const { data: view, error } = trpc.matches.pickView.useQuery(
+  const { data: view, error } = trpc.match.pick.pickView.useQuery(
     { matchId, playerId },
     { enabled: playerId !== "", refetchInterval: 15000 },
   );
-  const { data: codex } = trpc.matches.coCodex.useQuery();
+  const { data: codex } = trpc.match.pick.coCodex.useQuery();
 
-  const invalidateView = () => void utils.matches.pickView.invalidate({ matchId });
-  const lockCo = trpc.matches.lockCo.useMutation({ onSuccess: invalidateView });
+  const invalidateView = () => void utils.match.pick.pickView.invalidate({ matchId });
+  const lockCo = trpc.match.pick.lockCo.useMutation({ onSuccess: invalidateView });
 
   trpc.action.onEvent.useSubscription(
     { matchId, playerId },

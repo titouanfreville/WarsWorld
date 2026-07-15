@@ -4,7 +4,7 @@ import { playerMiddleware, withPlayerIdSchema } from "./middleware/player";
 import { t } from "./trpc-init";
 import { DispatchableError } from "server/engine/dispatchable-error";
 
-export const { router } = t;
+export const { router, mergeRouters } = t;
 export const publicBaseProcedure = t.procedure;
 
 export const playerBaseProcedure = t.procedure
