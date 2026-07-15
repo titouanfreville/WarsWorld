@@ -13,7 +13,7 @@ type Props = {
 };
 
 const LINKS: { label: string; href: string }[] = [
-  { label: "Your Matches", href: "/your-matches" },
+  { label: "Your Games", href: "/your-games" },
   { label: "Home", href: "/" },
   { label: "News", href: "/news" },
   { label: "How to Play", href: "/howtoplay" },
@@ -60,7 +60,7 @@ export function GameMenu({ open, onClose }: Props) {
         ))}
 
         <Link
-          href="/your-matches"
+          href="/your-games"
           className="@mt-auto @rounded-lg @border @border-white/15 @px-3 @py-2 @text-center @text-xs @font-semibold @uppercase @tracking-wide @text-slate-300 @transition hover:@border-red-500/60 hover:@text-red-300"
           onClick={onClose}
         >

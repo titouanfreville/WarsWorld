@@ -28,13 +28,22 @@ export const matchToFrontend = (match: MatchWrapper) => ({
   // Authoritative now: finalizeIfGameOver flips status="finished" both on the deciding action and on
   // rebuild, so the outcome no longer needs re-deriving on every read.
   finished: match.status === "finished",
+  // Same label the history list keys off, so a match that finished THIS session (still in the
+  // in-memory list) tags identically to its archived row. `isRanked` has no counterpart here — it's
+  // ranking metadata, not match state, so it isn't on `MatchWrapper` and stays DB-only; the history
+  // dedupe prefers the DB row, which carries it.
+  leagueType: match.leagueType,
 });
 
 /**
  * Map a persisted DB row to the same shape as `matchToFrontend`. Used for finished matches, which are
  * archived out of the in-memory store (`match-store.rebuild` skips `finished`) and so must be read
  * straight from the DB. `turn` isn't persisted for archived matches — the history UI keys off the
- * result, not the day count.
+ * result, not the day count (the real day count comes from `endgame.summary`, which replays the log).
+ *
+ * `leagueType`/`isRanked`/`finishedAt` ride along so the history list can label and filter a row
+ * without a per-row `endgame.summary` call — that one replays the whole event log, so it stays
+ * lazy behind the row's expand.
  */
 export const finishedRowToFrontend = (row: Match & { map: WWMap }) => ({
   id: row.id,
@@ -43,6 +52,9 @@ export const finishedRowToFrontend = (row: Match & { map: WWMap }) => ({
   state: row.status,
   turn: 0,
   finished: true,
+  leagueType: row.leagueType,
+  isRanked: row.isRanked,
+  finishedAt: row.finishedAt,
 });
 
 export function allMatchSlotsReady(match: MatchWrapper) {

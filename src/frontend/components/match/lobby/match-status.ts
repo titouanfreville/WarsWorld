@@ -18,8 +18,6 @@ export type LobbyStatusKind =
   | "open"
   | "completed";
 
-export type LobbyView = "needs" | "mine" | "find" | "watch" | "history";
-
 type LobbyPlayer = {
   id: string;
   ready?: boolean;
@@ -89,52 +87,6 @@ export function deriveLobbyStatus(
   return "live";
 }
 
-/** Split the raw match lists into the five lobby views (preserving the caller's match type). */
-export function categorizeMatches<T extends LobbyMatch>(
-  playerMatches: T[],
-  allMatches: T[],
-  playerId: string | undefined,
-): Record<LobbyView, T[]> {
-  const needs: T[] = [];
-  const mine: T[] = [];
-  const history: T[] = [];
-
-  for (const match of playerMatches) {
-    if (isFinished(match)) {
-      history.push(match);
-      continue;
-    }
-
-    mine.push(match);
-
-    const viewer = viewerOf(match, playerId);
-    const awaitingMove = match.state !== "setup" && viewer?.hasCurrentTurn === true;
-    const awaitingReady = match.state === "setup" && viewer?.ready !== true;
-
-    if (awaitingMove || awaitingReady) {
-      needs.push(match);
-    }
-  }
-
-  const ownIds = new Set(playerMatches.map((match) => match.id));
-  const find: T[] = [];
-  const watch: T[] = [];
-
-  for (const match of allMatches) {
-    if (ownIds.has(match.id) || isFinished(match)) {
-      continue;
-    }
-
-    if (match.state === "setup" && openSlots(match) > 0) {
-      find.push(match);
-    } else if (isFull(match)) {
-      watch.push(match);
-    }
-  }
-
-  return { needs, mine, find, watch, history };
-}
-
 /**
  * Presentation for each status: a headline pill and the matching left stripe. Classes are spelled
  * literally so Tailwind's JIT keeps them (the `@` prefix is this project's Tailwind prefix).
@@ -170,27 +122,6 @@ export const STATUS_META: Record<
   },
   open: { label: "Open slot", pill: "@bg-primary @text-black", stripe: "@bg-primary" },
   completed: { label: "Completed", pill: "@bg-slate-600 @text-slate-100", stripe: "@bg-slate-500" },
-};
-
-/** In-view filter chips. Each chip keeps only the matches whose derived status it accepts. */
-export type LobbyFilter = {
-  key: string;
-  label: string;
-  accepts: (kind: LobbyStatusKind) => boolean;
-};
-
-export const VIEW_FILTERS: Partial<Record<LobbyView, LobbyFilter[]>> = {
-  mine: [
-    { key: "all", label: "All", accepts: () => true },
-    { key: "your-turn", label: "Your turn", accepts: (kind) => kind === "your-turn" },
-    { key: "waiting", label: "Waiting", accepts: (kind) => kind === "their-turn" },
-    { key: "setup", label: "Setup", accepts: (kind) => kind === "setup" },
-  ],
-  history: [
-    { key: "all", label: "All", accepts: () => true },
-    { key: "wins", label: "Wins", accepts: (kind) => kind === "victory" },
-    { key: "losses", label: "Losses", accepts: (kind) => kind === "defeat" },
-  ],
 };
 
 export type MatchActionVariant = "turn" | "primary" | "ghost";

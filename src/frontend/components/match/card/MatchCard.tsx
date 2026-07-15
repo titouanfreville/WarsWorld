@@ -15,7 +15,7 @@ import MatchPlayer from "./MatchPlayer";
 /**
  * FE-owned mirror of the match-list contract (the server's `matchToFrontend` /
  * `finishedRowToFrontend`) — redeclared, not imported from `shared/types/component-data`, so drift
- * surfaces as a tsc error at the tRPC call sites feeding this prop (`your-matches.tsx`), not
+ * surfaces as a tsc error at the tRPC call sites feeding this prop (`your-games.tsx`), not
  * silently at runtime. `army`/`coId` keep the server's literal-union shape (`Army`/`COID`) because
  * they flow straight into `MatchPlayer`'s strict props below — this file already imports those same
  * schemas for the random-opponent placeholder.

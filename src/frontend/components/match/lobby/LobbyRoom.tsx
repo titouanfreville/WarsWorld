@@ -75,7 +75,7 @@ export default function LobbyRoom({ lobbyId }: Props) {
   const invite = trpc.lobby.invite.useMutation({ onSuccess: refresh });
   const kick = trpc.lobby.kick.useMutation({ onSuccess: refresh });
   const leave = trpc.lobby.leave.useMutation({
-    onSuccess: () => void router.push("/your-matches"),
+    onSuccess: () => void router.push("/your-games"),
   });
   const start = trpc.lobby.start.useMutation({
     onSuccess: ({ matchId }) => void router.push(`/pick/${matchId}`),

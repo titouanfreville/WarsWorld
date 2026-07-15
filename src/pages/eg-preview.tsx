@@ -47,7 +47,7 @@ export default function EgPreviewPage() {
       matchId={matchId}
       outcome={outcome}
       players={players}
-      onBackToLobby={() => void router.push("/your-matches")}
+      onBackToLobby={() => void router.push("/your-games")}
     />
   );
 }

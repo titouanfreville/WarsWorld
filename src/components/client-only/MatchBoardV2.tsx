@@ -423,7 +423,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           matchId={matchId}
           outcome={outcome}
           players={endGamePlayers}
-          onBackToLobby={() => void router.push("/your-matches")}
+          onBackToLobby={() => void router.push("/your-games")}
         />
       )}
     </>

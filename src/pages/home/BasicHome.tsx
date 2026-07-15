@@ -49,7 +49,7 @@ export default function BasicHome() {
               </div>
               <PlayButton
                 onClick={() => {
-                  void router.push("/your-matches");
+                  void router.push("/your-games");
                 }}
               >
                 PLAY NOW
@@ -83,7 +83,7 @@ export default function BasicHome() {
           title="There is a Space for You"
           text="Whether you want to be hardcore or play fun crazy maps"
           button={[
-            { text: "Play Now", link: "/your-matches" },
+            { text: "Play Now", link: "/your-games" },
             { text: "Learn to Play", link: "/howtoplay" },
           ]}
         />
