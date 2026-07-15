@@ -27,15 +27,18 @@ prettier · 463 tests · `next build`.**
 - **`refactor(engine)`** — moved `buildTurnSnapshot`/`buildPublicPowerSummary` out of
   `routers/match/` into `engine/previews/turn-snapshot.ts` (#10 resolved).
 
-## ⬜ Deferred to your review (with reasons)
-1. **#4 — `social/router.ts` usecase extraction + 5 embedded bugs.** Large (689 lines) and
-   security-sensitive. The 5 bugs: (#10) ownership check on `assignFriendToCategory`/
-   `removeFriendFromCategory`; (#9) `getConversationHistory` writes in a query → move to a mutation
-   (**API change, FE coordination**); (#17) duplicate match conversations → needs a Prisma unique
-   `(matchId, teamIndex)` + `db push` (**schema change**); (#19) `sendMessage` gate ignores
-   `cancelled` + null conversation; (#20) `block`/`mutePlayer` don't validate target/self. Plan in
-   `.ai/plans/social-usecase-refactor-plan.md`. Not safe to land unreviewed overnight.
-2. **#12 — engine doesn't own its router / three coexisting match routers.** Large transport reorg.
+## ✅ DONE 2026-07-14 (attended) — #4 social feature
+Extracted `social/schemas.ts` + `social.usecase.ts` (prisma injected via the composition root);
+`router.ts` is now thin bindings. All 5 bugs fixed with pure usecase tests (12 new, vi.fn Prisma):
+#10 ownership on category/friendship mutations; #9 read-cursor moved to a `markConversationRead`
+mutation (FE calls it on open/new-message, not per refetch) — `getConversationHistory` is read-only;
+#17 `getOrCreateMatchChannels` upserts on the existing `(matchId, teamIndex)` unique (no schema
+change needed — the constraint was already there); #19 `sendMessage` closes cancelled-match chat +
+throws on a vanished conversation; #20 block/mute reject self + non-existent targets. Green: tsc ·
+eslint · prettier · 475 tests.
+
+## ⬜ Still deferred to your review (with reasons)
+1. **#12 — engine doesn't own its router / three coexisting match routers.** Large transport reorg.
 3. **#13 — CO data three sources (`CO_PROFILES` vs `co-repo`).** Deleting `CO_PROFILES` would break
    the engine (it reads it directly); this is a cutover gated on the game-data-in-DB path becoming
    authoritative.
