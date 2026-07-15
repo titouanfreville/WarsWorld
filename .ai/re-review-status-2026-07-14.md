@@ -37,8 +37,20 @@ change needed — the constraint was already there); #19 `sendMessage` closes ca
 throws on a vanished conversation; #20 block/mute reject self + non-existent targets. Green: tsc ·
 eslint · prettier · 475 tests.
 
+## ✅ DONE 2026-07-14 (attended) — transport reorg + #12
+- **Transport out of domain:** all 8 feature routers moved `src/server/<feature>/router.ts` →
+  `src/server/routers/<feature>.ts`; domain folders hold only schemas + usecase. Root + server
+  CLAUDE.md updated (transport ≠ domain).
+- **#12 converged:** the three match routers (match/matches/matchPreview) unified under one `match`
+  namespace in `routers/match/` (lifecycle + `match.previews.*` + `match.pick.*` via mergeRouters);
+  `action` moved into the folder but kept as its own namespace. FE call-sites + the 4 inferred
+  read-models (now on a `RouterOutput` type) updated.
+- **Declutter:** 5 Prisma-free match derivation helpers (fog-view, game-over, finalize, match-stats,
+  match-grade) moved out of `routers/match/` into `engine/previews/`. Green: tsc · eslint · 475
+  tests · `next build`.
+
 ## ⬜ Still deferred to your review (with reasons)
-1. **#12 — engine doesn't own its router / three coexisting match routers.** Large transport reorg.
+1. (#12 done — see above.)
 3. **#13 — CO data three sources (`CO_PROFILES` vs `co-repo`).** Deleting `CO_PROFILES` would break
    the engine (it reads it directly); this is a cutover gated on the game-data-in-DB path becoming
    authoritative.
