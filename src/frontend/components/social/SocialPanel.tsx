@@ -104,6 +104,8 @@ export default function SocialPanel() {
     },
   });
 
+  const markRead = trpc.social.markConversationRead.useMutation();
+
   // Real-time Event Subscription
   trpc.social.onSocialEvent.useSubscription(
     { playerId: pId },
@@ -127,6 +129,17 @@ export default function SocialPanel() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeConvHistory?.messages]);
+
+  // Advance the read cursor (and notify the others) once per open / new message — via an explicit
+  // mutation, so it doesn't fire on every history refetch the way the old query side effect did.
+  const lastMessageId = activeConvHistory?.messages.at(-1)?.id;
+  useEffect(() => {
+    if (activeConvId !== null && lastMessageId !== undefined) {
+      markRead.mutate({ playerId: pId, conversationId: activeConvId });
+    }
+    // Only re-mark on open / new message; markRead + pId are stable for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConvId, lastMessageId]);
 
   if (!currentPlayer) {
     return (

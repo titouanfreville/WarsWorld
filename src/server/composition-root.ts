@@ -6,6 +6,7 @@ import { LobbyUsecase } from "server/lobby/lobby.usecase";
 import { MatchesUsecase } from "server/matches/matches.usecase";
 import { MatchmakingUsecase } from "server/matchmaking/matchmaking.usecase";
 import { RankingUsecase } from "server/ranking/ranking.usecase";
+import { SocialUsecase } from "server/social/social.usecase";
 
 /**
  * The single startup composition root: construct every feature usecase once, in explicit
@@ -20,3 +21,4 @@ export const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase,
 export const lobbyUsecase = new LobbyUsecase(prisma, matchesUsecase);
 export const endgameUsecase = new EndgameUsecase(prisma);
 export const honorUsecase = new HonorUsecase(prisma);
+export const socialUsecase = new SocialUsecase(prisma);

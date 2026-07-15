@@ -58,6 +58,8 @@ export default function QuickChatWidget() {
     },
   });
 
+  const markRead = trpc.social.markConversationRead.useMutation();
+
   // Subscription
   trpc.social.onSocialEvent.useSubscription(
     { playerId: pId },
@@ -84,6 +86,17 @@ export default function QuickChatWidget() {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [activeConvHistory?.messages, isOpen, activeConvId]);
+
+  // Mark the open conversation read once per open / new message (explicit mutation, not a query
+  // side effect) so refetches don't spam read-receipts.
+  const lastMessageId = activeConvHistory?.messages.at(-1)?.id;
+  useEffect(() => {
+    if (isOpen && activeConvId !== null && lastMessageId !== undefined) {
+      markRead.mutate({ playerId: pId, conversationId: activeConvId });
+    }
+    // Only re-mark on open / new message; markRead + pId are stable for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeConvId, lastMessageId]);
 
   if (!currentPlayer) {
     return null;
