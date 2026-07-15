@@ -1,0 +1,141 @@
+// Animated particle layer for the end-of-match screen (see ParticleField.tsx). A generic, reusable
+// CSS field composited over the CO poses: confetti / gold-burst / petals on a win, ash / embers /
+// red droplets on a loss. Positions + per-particle drift/spin/delay come as inline styles from the
+// component; this file owns the shapes and the motion. Honors prefers-reduced-motion at the bottom.
+
+.ww-pf {
+  z-index: 3; // above the CO cast (z 1), below the stamped banner (z 2 sits higher via its own layer)
+}
+
+.ww-pf__p {
+  position: absolute;
+  top: -8%;
+  display: block;
+  border-radius: 1px;
+  will-change: transform, opacity;
+  // fallbacks; overridden per particle inline
+  --pf-drift: 0px;
+  --pf-spin: 180deg;
+}
+
+// ── Victory ────────────────────────────────────────────────────────────────
+.ww-pf__p.is-confetti {
+  animation-name: ww-pf-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.ww-pf__p.is-petal {
+  border-radius: 50% 50% 50% 0;
+  animation-name: ww-pf-sway;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.ww-pf__p.is-gold {
+  top: auto;
+  bottom: 20%;
+  border-radius: 50%;
+  box-shadow: 0 0 6px 1px rgba(251, 191, 36, 0.8);
+  animation-name: ww-pf-twinkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+// ── Defeat ─────────────────────────────────────────────────────────────────
+.ww-pf__p.is-ash {
+  border-radius: 50%;
+  opacity: 0.55;
+  animation-name: ww-pf-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.ww-pf__p.is-ember {
+  top: auto;
+  bottom: -6%;
+  border-radius: 50%;
+  box-shadow: 0 0 7px 1px rgba(249, 115, 22, 0.75);
+  animation-name: ww-pf-rise;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+
+.ww-pf__p.is-droplet {
+  border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%;
+  animation-name: ww-pf-fall;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  animation-iteration-count: infinite;
+}
+
+// ── Keyframes ──────────────────────────────────────────────────────────────
+@keyframes ww-pf-fall {
+  0% {
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--pf-drift), 112vh, 0) rotate(var(--pf-spin));
+    opacity: 0;
+  }
+}
+
+@keyframes ww-pf-sway {
+  0% {
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  50% {
+    transform: translate3d(var(--pf-drift), 55vh, 0) rotate(var(--pf-spin));
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(var(--pf-drift) * -1), 112vh, 0) rotate(calc(var(--pf-spin) * 1.5));
+    opacity: 0;
+  }
+}
+
+@keyframes ww-pf-rise {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--pf-drift), -75vh, 0) scale(0.3);
+    opacity: 0;
+  }
+}
+
+@keyframes ww-pf-twinkle {
+  0%,
+  100% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+// Motion-sensitive users: keep a faint static sprinkle, no falling/rising/twinkling.
+@media (prefers-reduced-motion: reduce) {
+  .ww-pf__p {
+    animation: none !important;
+    opacity: 0.3;
+  }
+}

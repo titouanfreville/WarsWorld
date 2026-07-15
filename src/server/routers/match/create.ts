@@ -5,7 +5,7 @@ import { playerBaseProcedure } from "server/trpc/trpc-setup";
 import { INITIAL_FUNDS } from "server/engine/constants/funds";
 import { matchRulesSchema } from "server/core/schemas/match-rules";
 import { z } from "zod";
-import { matchToFrontend } from "./util";
+import { matchToFrontend } from "server/matches/lifecycle-helpers";
 
 export const createMatchProcedure = playerBaseProcedure
   .input(

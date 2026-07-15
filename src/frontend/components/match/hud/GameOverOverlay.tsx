@@ -2,6 +2,7 @@
 
 import { coArtUrl, coPortraitUrl, coPoseUrl } from "frontend/utils/sprites";
 import { useState } from "react";
+import { ParticleField } from "./ParticleField";
 
 /**
  * FE-local shape of the BE-derived game-over flag (from `match.full`'s `gameOver`). Redeclared here
@@ -97,6 +98,7 @@ export function GameOverOverlay({
   cos,
   secondsLeft,
   onContinue,
+  particles = true,
 }: {
   gameOver: GameOverInfo;
   cos: CoResult[];
@@ -104,6 +106,8 @@ export function GameOverOverlay({
   secondsLeft?: number;
   /** Skip the remaining hold and open the End-Game screen now. Omit to hide the control. */
   onContinue?: () => void;
+  /** Show the animated particle layer (confetti/gold on a win, ash/embers on a loss). */
+  particles?: boolean;
 }) {
   const outcome = outcomeOf(gameOver);
   const lineup = [...cos].sort((a, b) => rankOf(a.result) - rankOf(b.result));
@@ -123,6 +127,7 @@ export function GameOverOverlay({
         </div>
       )}
       <div className="ww-go__sweep @absolute @inset-0 @pointer-events-none" />
+      {particles && <ParticleField outcome={outcome} />}
       <div className="ww-go__banner">
         <div className="ww-go__stampWrap @relative @flex @flex-col @items-center">
           <div className="ww-go__word @relative @select-none">{WORD[outcome]}</div>

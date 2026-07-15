@@ -4,6 +4,7 @@ import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
 import { LobbyUsecase } from "server/lobby/lobby.usecase";
 import { MatchesUsecase } from "server/matches/matches.usecase";
+import { MatchLifecycleUsecase } from "server/matches/match-lifecycle.usecase";
 import { MatchmakingUsecase } from "server/matchmaking/matchmaking.usecase";
 import { RankingUsecase } from "server/ranking/ranking.usecase";
 import { SocialUsecase } from "server/social/social.usecase";
@@ -17,6 +18,7 @@ import { SocialUsecase } from "server/social/social.usecase";
  */
 export const rankingUsecase = new RankingUsecase(prisma);
 export const matchesUsecase = new MatchesUsecase(prisma, matchStore);
+export const matchLifecycleUsecase = new MatchLifecycleUsecase(prisma, matchStore);
 export const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase, matchesUsecase);
 export const lobbyUsecase = new LobbyUsecase(prisma, matchesUsecase);
 export const endgameUsecase = new EndgameUsecase(prisma);

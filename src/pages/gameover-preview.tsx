@@ -68,12 +68,14 @@ function Stage({
   showCountdown,
   holdSeconds,
   onContinue,
+  particles,
 }: {
   gameOver: { viewerWon: boolean; winnerTeamIndex: number | null };
   cos: CoResult[];
   showCountdown: boolean;
   holdSeconds: number;
   onContinue: () => void;
+  particles: boolean;
 }) {
   const [secondsLeft, setSecondsLeft] = useState(holdSeconds);
 
@@ -101,6 +103,7 @@ function Stage({
     <GameOverOverlay
       gameOver={gameOver}
       cos={cos}
+      particles={particles}
       secondsLeft={showCountdown ? Math.max(0, secondsLeft) : undefined}
       onContinue={showCountdown ? onContinue : undefined}
     />
@@ -143,6 +146,7 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
   const [showCountdown, setShowCountdown] = useState(true);
   const [holdSeconds, setHoldSeconds] = useState(20);
   const [backdrop, setBackdrop] = useState("Board navy");
+  const [showParticles, setShowParticles] = useState(true);
   const [nonce, setNonce] = useState(0);
 
   const replay = () => setNonce((n) => n + 1);
@@ -160,8 +164,8 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
 
   // Remount the stage whenever the config or the replay nonce changes → animation restarts.
   const stageKey = useMemo(
-    () => `${JSON.stringify(players)}|${showCountdown}|${holdSeconds}|${nonce}`,
-    [players, showCountdown, holdSeconds, nonce],
+    () => `${JSON.stringify(players)}|${showCountdown}|${holdSeconds}|${showParticles}|${nonce}`,
+    [players, showCountdown, holdSeconds, showParticles, nonce],
   );
 
   const setPlayer = (index: number, patch: Partial<PreviewPlayer>) =>
@@ -300,6 +304,16 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
           </div>
         )}
 
+        <label style={label}>Particles</label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={showParticles}
+            onChange={(event) => setShowParticles(event.target.checked)}
+          />
+          Animated FX (confetti/gold on win, ash/embers on lose)
+        </label>
+
         <label style={label}>Backdrop</label>
         <div>
           {Object.keys(BACKDROPS).map((name) => (
@@ -357,6 +371,7 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
             showCountdown={showCountdown}
             holdSeconds={holdSeconds}
             onContinue={replay}
+            particles={showParticles}
           />
         </div>
       </div>
