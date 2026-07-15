@@ -14,8 +14,11 @@ src/server/core       KERNEL    game vocabulary (position, tile, unit, army, co,
                                 cross-domain utils. Framework-free, Prisma-free. Imports nothing.
 src/server/engine     FEATURE   THE GAME ENGINE: entities, rules, constants, event sourcing, and
                                 preview/snapshot usecases. Rich, Prisma-free. Owns all game logic.
-src/server/<feature>  FEATURE   router + schemas + usecase per feature: auth, articles, players,
-                                ranking, maps. Thin vertical slices; import `core`, never `engine`.
+src/server/<feature>  FEATURE   schemas + usecase per feature: auth, articles, players, ranking,
+                                maps. Thin vertical slices; import `core`, never `engine`. NO router
+                                here — transport is kept out of the domain (see src/server/routers).
+src/server/routers    TRANSPORT one file per feature (`<feature>.ts`): the tRPC binding, held
+                                OUTSIDE the domain folders. Mounted in `app.ts`.
 src/server/trpc       TRANSPORT procedures, middleware (auth/player/match), context
 src/server/adapters   INFRA     Prisma access + row↔domain mappers, WS emitter, live-match store
 src/server/prisma     INFRA     Prisma client
@@ -28,8 +31,9 @@ tile/terrain _vocabulary_ from `core` — not from `engine`.) Keep the engine **
 internal modules (`entities/`, `rules/`, `constants/`, `events/`, `previews/`) rather than into
 sibling features that would import one another.
 
-**Feature modules** are thin: a router, its `zod` schemas, and its usecase. Only the game engine is
-rich. Every feature may import `core` and `adapters`, but **features never import each other**, and
+**Feature modules** are thin: their `zod` schemas and their usecase — the transport router lives in
+`src/server/routers/`, not the domain folder (transport ≠ domain). Only the game engine is rich.
+Every feature may import `core` and `adapters`, but **features never import each other**, and
 **only `engine` owns game logic** — cross-feature needs go through a narrow usecase interface.
 
 > Today the engine + every feature's schema still live in `src/shared`, and engine entities import
@@ -51,12 +55,15 @@ src/server/<module>/
                         persist → return. Dependencies (dbo, engine, logger) arrive via the
                         constructor.
   schemas.ts            the module's zod schemas (input/validation contracts).
-  router.ts             TRANSPORT. Binds tRPC procedures to usecase methods. No logic of its own.
   dbo.ts                OPTIONAL. Abstracts non-trivial Prisma access. Add only when the usecase's
                         DB work stops being a one-liner; trivial CRUD stays inline.
   validators.ts         OPTIONAL. Validation / FK checks, extracted when the usecase grows.
   build.ts              OPTIONAL. Entity construction / normalization / stamping.
 ```
+
+The **transport router lives OUTSIDE the module**, at `src/server/routers/<module>.ts` — one file
+per feature that binds tRPC procedures to the usecase and nothing else. Transport is not a domain
+concept, so it does not sit in the domain folder.
 
 Rules (ported from the Python/Go skeletons):
 
@@ -112,8 +119,10 @@ The backend is the single source of truth. The frontend renders previews but dec
 
 ## Routers (transport)
 
-A module's `router.ts` is the `register(usecase)` equivalent: it binds tRPC procedures to usecase
-methods and does **nothing else** — validate input, call the usecase, map errors, return.
+Routers live in `src/server/routers/<feature>.ts` — the transport layer, **outside** the domain
+folders. A feature's router is the `register(usecase)` equivalent: it imports the usecase from the
+composition root, binds tRPC procedures to it, and does **nothing else** — validate input, call the
+usecase, map errors, return.
 
 - **No business logic in a router.** If a procedure grows past input → usecase call → error mapping,
   the logic belongs in the usecase (or its `dbo`/`validators`).
@@ -124,8 +133,8 @@ methods and does **nothing else** — validate input, call the usecase, map erro
   merely documented.
 - Input is **always** a `zod` schema on `.input(...)`. The client's types come from inferring the
   router — keep inputs/outputs typed so inference stays accurate; never hand-parse `unknown`.
-- One router per module; mount them once at the composition root (version/prefix applied there,
-  not per-router).
+- One router file per feature under `src/server/routers/`; mount them once in `app.ts` (version/
+  prefix applied there, not per-router). The domain folder holds no transport.
 
 ## Event sourcing (the match core)
 
@@ -183,7 +192,8 @@ Match state is **derived from an ordered event log**, never mutated directly.
    intent.
 4. Only if needed: add `dbo.ts` for non-trivial Prisma access, `validators.ts` for heavy
    validation, `build.ts` for entity construction.
-5. Bind transport in `router.ts` (thin: validate → call usecase → map errors → return).
+5. Bind transport in `src/server/routers/<feature>.ts` (thin: validate → call usecase → map errors →
+   return) — outside the domain folder — and mount it in `app.ts`.
 6. Wire the usecase and mount the router at the composition root.
 7. Add tests — usecase logic where it carries weight, engine logic pure (no DB/network).
 

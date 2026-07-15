@@ -1,6 +1,6 @@
 import { endgameUsecase } from "server/composition-root";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { endgameChatHeartbeatSchema, endgameSummarySchema } from "./schemas";
+import { endgameChatHeartbeatSchema, endgameSummarySchema } from "server/endgame/schemas";
 
 export const endgameRouter = router({
   // Read-only battle report — usable for a finished match's End-Game screen or its history entry.

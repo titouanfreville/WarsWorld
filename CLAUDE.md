@@ -58,8 +58,11 @@ BACKEND   src/server/
    │               Any feature may import it; it imports nothing outward.
    ├─ engine/      THE GAME FEATURE (rich): entities, rules, constants, event sourcing, and the
    │               preview/snapshot usecases. Prisma-free. The ONLY feature that owns game logic.
-   ├─ <feature>/   auth · articles · players · ranking · maps — thin slices: router + schemas +
-   │               usecase. Import `core` (and `adapters`); never `engine`, never each other.
+   ├─ <feature>/   auth · articles · players · ranking · maps — thin slices: schemas + usecase
+   │               (NO router — transport lives in `routers/`). Import `core` (and `adapters`);
+   │               never `engine`, never each other.
+   ├─ routers/     TRANSPORT — one `<feature>.ts` per feature (the tRPC binding), kept outside the
+   │               domain folders. Mounted in `app.ts`.
    ├─ adapters/    Prisma access + row↔domain mappers, WS emitter, live-match store
    └─ trpc/        procedures, middleware, context
 ```

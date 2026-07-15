@@ -9,7 +9,7 @@ import {
   kickSchema,
   respondInviteSchema,
   withLobbyIdSchema,
-} from "./schemas";
+} from "server/lobby/schemas";
 
 export const lobbyRouter = router({
   create: playerBaseProcedure

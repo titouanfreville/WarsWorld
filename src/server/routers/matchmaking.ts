@@ -2,7 +2,7 @@ import { observable } from "@trpc/server/observable";
 import { matchmakingUsecase } from "server/composition-root";
 import { subscribeQueue, type QueueEvent } from "server/emitter/matchmaking-emitter";
 import { playerBaseProcedure, router } from "server/trpc/trpc-setup";
-import { joinQueueSchema, mapActionSchema, withLobbyIdSchema } from "./schemas";
+import { joinQueueSchema, mapActionSchema, withLobbyIdSchema } from "server/matchmaking/schemas";
 
 export const matchmakingRouter = router({
   join: playerBaseProcedure

@@ -13,8 +13,8 @@ import {
   sendMessageSchema,
   targetPlayerIdSchema,
   targetPlayerNameSchema,
-} from "./schemas";
-import { subscribeSocial, type SocialEvent } from "./social-emitter";
+} from "server/social/schemas";
+import { subscribeSocial, type SocialEvent } from "server/social/social-emitter";
 
 export const socialRouter = router({
   // ─── Notifications ───

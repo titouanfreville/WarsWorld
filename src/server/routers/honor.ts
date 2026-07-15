@@ -1,6 +1,6 @@
 import { honorUsecase } from "server/composition-root";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { awardMedalSchema, honorStandingSchema } from "./schemas";
+import { awardMedalSchema, honorStandingSchema } from "server/honor/schemas";
 
 export const honorRouter = router({
   // A player's medals + prestige — public (standings appear on profiles / lobby / champ-select).

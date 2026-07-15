@@ -2,8 +2,8 @@ import { getCoProfiles } from "server/adapters/game-data/game-data-cache";
 import { matchesUsecase } from "server/composition-root";
 import { prisma } from "server/prisma/prisma-client";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { buildCoCodex } from "./co-codex";
-import { lockCoSchema, pickViewSchema } from "./schemas";
+import { buildCoCodex } from "server/matches/co-codex";
+import { lockCoSchema, pickViewSchema } from "server/matches/schemas";
 
 export const matchesRouter = router({
   // General reference data for the champ-select dossier (AW2 rules for now), read from DB game data.

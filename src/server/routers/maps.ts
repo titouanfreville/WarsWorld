@@ -1,7 +1,7 @@
 import { prisma } from "server/prisma/prisma-client";
 import { publicBaseProcedure, router } from "server/trpc/trpc-setup";
-import { MapsUsecase } from "./maps.usecase";
-import { mapSchema } from "./schemas";
+import { MapsUsecase } from "server/maps/maps.usecase";
+import { mapSchema } from "server/maps/schemas";
 
 const maps = new MapsUsecase(prisma);
 
