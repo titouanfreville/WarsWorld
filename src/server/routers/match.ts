@@ -26,8 +26,8 @@ import {
   router,
 } from "../trpc/trpc-setup";
 import { createMatchProcedure } from "./match/create";
-import { fogViewChangeableTiles } from "./match/fog-view";
-import { deriveGameOver } from "./match/game-over";
+import { fogViewChangeableTiles } from "server/engine/previews/fog-view";
+import { deriveGameOver } from "server/engine/previews/game-over";
 import { buildPublicPowerSummary } from "server/engine/previews/turn-snapshot";
 import {
   allMatchSlotsReady,

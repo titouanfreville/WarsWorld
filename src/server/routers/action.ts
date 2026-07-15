@@ -25,7 +25,7 @@ import { updateMoveVision } from "server/engine/events/handlers/move";
 import { fillDiscoveredUnitsAndProperties } from "server/engine/events/vision-update";
 import { rankingUsecase } from "../composition-root";
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "../trpc/trpc-setup";
-import { finalizeIfGameOver } from "./match/finalize";
+import { finalizeIfGameOver } from "server/engine/previews/finalize";
 
 const attachSubEvent = (
   mainEventWithoutSubEvent: MainEventsWithoutSubEvents,

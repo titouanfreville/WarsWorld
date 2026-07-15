@@ -3,7 +3,7 @@ import { createMatchStartEvent } from "server/engine/events/handlers/match-start
 import type { MainAction } from "shared/schemas/action";
 import type { MainEventWithSubEvents } from "server/engine/types/events";
 import { describe, expect, it } from "vitest";
-import { buildMatchStats } from "server/routers/match/match-stats";
+import { buildMatchStats } from "server/engine/previews/match-stats";
 import { addUnit, createTestMatch, dispatchMainAction, property, tiles } from "../helpers/scenario";
 
 /**

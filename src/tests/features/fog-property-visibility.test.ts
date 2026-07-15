@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fogViewChangeableTiles } from "server/routers/match/fog-view";
+import { fogViewChangeableTiles } from "server/engine/previews/fog-view";
 import type { MainAction } from "shared/schemas/action";
 import type { ChangeableTile } from "server/core/schemas/tile-state";
 import {

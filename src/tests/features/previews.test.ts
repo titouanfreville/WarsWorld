@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveGameOver } from "server/routers/match/game-over";
+import { deriveGameOver } from "server/engine/previews/game-over";
 import { buildInspectionRanges, buildUnitDetails } from "server/routers/match/previews";
 import { buildTurnSnapshot } from "server/engine/previews/turn-snapshot";
 import { getBattleForecast } from "server/engine/previews/combat-forecast";

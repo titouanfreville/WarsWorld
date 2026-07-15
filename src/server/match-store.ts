@@ -11,7 +11,7 @@ import {
   applySubEventToMatch,
 } from "server/engine/events/apply-event-to-match";
 import { UnitWrapper } from "server/engine/entities/unit";
-import { finalizeIfGameOver } from "./routers/match/finalize";
+import { finalizeIfGameOver } from "server/engine/previews/finalize";
 import { matchPlayerToRuntime, type MatchPlayerRow } from "./matches/match-player";
 
 const getChangeableTilesFromMap = (map: WWMap): ChangeableTile[] => {

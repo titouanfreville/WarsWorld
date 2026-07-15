@@ -1,6 +1,6 @@
 import { matchStore } from "server/match-store";
 import { prisma } from "server/prisma/prisma-client";
-import { deriveGameOver } from "server/routers/match/game-over";
+import { deriveGameOver } from "server/engine/previews/game-over";
 import { logger } from "shared/utils/logger";
 
 /**

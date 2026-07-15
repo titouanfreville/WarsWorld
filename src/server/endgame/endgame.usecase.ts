@@ -2,8 +2,8 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { egPresentPlayers, markEgPresent } from "server/adapters/eg-presence";
 import { buildMatchWrapper } from "server/match-store";
-import { computeGrades } from "server/routers/match/match-grade";
-import { buildMatchStats } from "server/routers/match/match-stats";
+import { computeGrades } from "server/engine/previews/match-grade";
+import { buildMatchStats } from "server/engine/previews/match-stats";
 
 /**
  * End-game feature usecase (see .ai/plans/end-game-screen-plan.md, Epic 3.2). Its one job: given a

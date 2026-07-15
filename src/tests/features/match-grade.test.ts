@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeGrades } from "server/routers/match/match-grade";
-import type { MatchStats, PlayerMatchStats } from "server/routers/match/match-stats";
+import { computeGrades } from "server/engine/previews/match-grade";
+import type { MatchStats, PlayerMatchStats } from "server/engine/previews/match-stats";
 
 /** A zeroed player-stats row with the fields a test cares about overridden. */
 const player = (playerId: string, over: Partial<PlayerMatchStats>): PlayerMatchStats => ({

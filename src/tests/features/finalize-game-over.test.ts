@@ -1,4 +1,4 @@
-import { finalizeIfGameOver } from "server/routers/match/finalize";
+import { finalizeIfGameOver } from "server/engine/previews/finalize";
 import { describe, expect, it } from "vitest";
 import { createTestMatch, tiles } from "../helpers/scenario";
 
