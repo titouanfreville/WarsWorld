@@ -1,15 +1,40 @@
 /**
- * Every matchmaking tunable in one place (per the plan). Times are seconds unless the name ends in
- * `_MS`. Kept framework-free so `queue.ts` / `map-ban.ts` stay pure and testable.
+ * Every matchmaking tunable in one place. Times are seconds unless the name ends in `_MS`. Kept
+ * framework-free so `queue.ts` / `map-ban.ts` stay pure and testable.
  */
 
-// --- MMR tolerance (grows with wait) ---
-export const BASE_TOLERANCE = 100; // acceptable |ΔMMR| at 0s waited
-export const TOLERANCE_RATE = 15; // extra acceptable |ΔMMR| per second waited
-export const MAX_TOLERANCE = 2000; // cap so a lonely extreme-rating player still eventually matches
+// --- Fairness tolerance (widens with wait) ---
+//
+// Measured in P(win) DISTANCE FROM 0.5, not rating points. These used to be 400-scale Elo gaps; the
+// port to OpenSkill couldn't convert them, because win probability depends on σ as well as Δμ:
+//
+//   +8.7 μ -> P(win) 0.745 at a starting σ (8.33)
+//   +8.7 μ -> P(win) ~0.91 at a converged σ (~2)
+//
+// ...so ANY fixed μ tolerance is right at exactly one σ and wrong at every other — worst precisely
+// for the wide-σ newcomers a tolerance exists to protect. Gating on `predictWin` reads σ natively:
+// a provisional player matches loosely, a settled one tightly, with no conversion anywhere.
+//
+// Calibrated to roughly reproduce the old Elo feel (100 Elo ≈ P 0.64), NOT measured. Revisit with
+// queue data — see .ai/plans/ranked-ladder-plan.md §4.1.
+
+/** Acceptable |P(win) − 0.5| at 0s waited. 0.12 ⇒ accept a 0.38..0.62 matchup immediately. */
+export const BASE_TOLERANCE = 0.12;
+
+/** Extra tolerance per second waited (~1.2 percentage points/s). */
+export const TOLERANCE_RATE = 0.012;
+
+/**
+ * Cap, so a lonely extreme-rating player still eventually matches with ANYONE. Must be 0.5 (the
+ * maximum possible unfairness) for that to be literally true — at 0.49 a 99%-certain matchup never
+ * pairs and its player waits forever, which is the one thing this cap exists to prevent.
+ */
+export const MAX_TOLERANCE = 0.5;
 
 // --- Ready-check (AFK accept window) ---
-export const LENIENT_GAP = 400; // |ΔMMR| above this → wide-gap match: longer window, no sanction
+
+/** |P(win) − 0.5| above this ⇒ wide-gap match: longer window, no sanction for declining. */
+export const LENIENT_GAP = 0.25;
 export const READY_SECONDS = 20;
 export const READY_SECONDS_LENIENT = 40;
 

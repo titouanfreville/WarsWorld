@@ -27,14 +27,17 @@ export const MODE_LABEL: Record<GameMode, string> = {
 
 export type GameMode = "duel" | "teams" | "ffa";
 
-/** What the player queued for: a queue is (mode × ruleset), not a single league. */
-export type QueueChoice = { mode: GameMode; ruleset: Ruleset };
+/**
+ * What the player queued for. A queue is (mode × ruleset × ranked) — all three, not a single league:
+ * Ranked Standard and casual Standard are different queues that happen to share a ruleset.
+ */
+export type QueueChoice = { mode: GameMode; ruleset: Ruleset; ranked: boolean };
 
 /** The client-side view of where this player is in the matchmaking flow. */
 type QueueState =
   | { phase: "idle" }
   | ({ phase: "searching"; since: number } & QueueChoice)
-  | { phase: "ready"; lobbyId: string; readyEndsAt: string; lenient: boolean; mmrDiff: number }
+  | { phase: "ready"; lobbyId: string; readyEndsAt: string; lenient: boolean; fairnessGap: number }
   | { phase: "map"; lobbyId: string };
 
 type QueueContextValue = {
@@ -70,7 +73,12 @@ export function ProvideQueue({ children }: { children: ReactNode }) {
 
   const joinM = trpc.matchmaking.join.useMutation({
     onSuccess: (_data, vars) => {
-      searchRef.current = { since: Date.now(), mode: vars.mode, ruleset: vars.ruleset };
+      searchRef.current = {
+        since: Date.now(),
+        mode: vars.mode,
+        ruleset: vars.ruleset,
+        ranked: vars.ranked,
+      };
       beginSearching();
     },
   });
@@ -93,7 +101,7 @@ export function ProvideQueue({ children }: { children: ReactNode }) {
               lobbyId: event.lobbyId,
               readyEndsAt: event.readyEndsAt,
               lenient: event.lenient,
-              mmrDiff: event.mmrDiff,
+              fairnessGap: event.fairnessGap,
             });
             break;
           case "map-phase-started":

@@ -44,7 +44,7 @@ export default function PlayButton() {
             key={ruleset}
             disabled={joining}
             onClick={() => {
-              join({ mode: "duel", ruleset });
+              join({ mode: "duel", ruleset, ranked: true });
               setPickerOpen(false);
             }}
             className="@rounded-md @px-2.5 @py-1.5 @text-xs @font-semibold @uppercase @tracking-wide @text-slate-300 @transition hover:@bg-primary hover:@text-black disabled:@opacity-50"

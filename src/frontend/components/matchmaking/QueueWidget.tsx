@@ -118,8 +118,20 @@ export default function QueueWidget() {
           >
             {Math.max(0, Math.ceil(remaining / 1000))}
           </span>
+          {/* A win-probability gap, not a rating: the hidden rating never reaches the client, and
+              "68/32" says more to a player than any rating distance would. */}
           <p className="@py-0 @text-[11px] @leading-snug @text-slate-400">
-            Skill gap <span className="@font-semibold @text-white">Δ{state.mmrDiff}</span> MMR.
+            {state.fairnessGap <= 5 ? (
+              <>Evenly matched.</>
+            ) : (
+              <>
+                Odds{" "}
+                <span className="@font-semibold @text-white">
+                  {50 + state.fairnessGap}/{50 - state.fairnessGap}
+                </span>
+                .
+              </>
+            )}
             <br />
             Both players must accept to launch.
           </p>

@@ -4,7 +4,7 @@ import { emitLobby } from "server/emitter/lobby-emitter";
 import { emitQueue } from "server/emitter/matchmaking-emitter";
 import { DEFAULT_PICK_SECONDS } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
-import { DEFAULT_MMR } from "server/ranking/elo";
+import { defaultSkill, type Skill } from "server/ranking/skill";
 import { armySchema, type Army } from "server/core/schemas/army";
 import type { MatchRules } from "server/core/schemas/match-rules";
 import { logger } from "shared/utils/logger";
@@ -21,14 +21,14 @@ import {
 import { canBan, canVote, defaultRandomInt, rollMap, type PlayerBanVote } from "./map-ban";
 import type { Tile, TileType } from "server/core/schemas/tile";
 import { cancelLobbyPhase, scheduleLobbyPhase } from "./lobby-phase-timer";
-import { MatchQueue, toleranceAt, type Ticket } from "./queue";
+import { MatchQueue, toleranceAt, unfairnessOf, type Ticket } from "./queue";
 import type { JoinQueueInput } from "./schemas";
 
 /** The narrow cross-feature contracts matchmaking needs (no direct feature-to-feature imports). */
 type MatchSpawner = { spawnFromLobby(req: SpawnRequest): Promise<{ matchId: string }> };
 type Rater = {
-  /** Ratings pool by MODE — a fog duel and a standard duel move the same number. */
-  getRatings(playerIds: string[], mode: GameMode): Promise<Map<string, number>>;
+  /** Skill pools by MODE — a fog duel and a standard duel move the same rating. */
+  getSkills(playerIds: string[], mode: GameMode): Promise<Map<string, Skill>>;
 };
 
 /** Fisher–Yates over a copy. */
@@ -154,14 +154,15 @@ export class MatchmakingUsecase {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Finish your current match first" });
     }
 
-    // Rating is per MODE — the ruleset the player queued for doesn't split it.
-    const ratings = await this.ranking.getRatings([playerId], input.mode);
+    // Skill is per MODE — the ruleset the player queued for doesn't split it.
+    const skills = await this.ranking.getSkills([playerId], input.mode);
 
     this.queue.add({
       playerId,
       mode: input.mode,
       ruleset: input.ruleset,
-      mmr: ratings.get(playerId) ?? DEFAULT_MMR,
+      ranked: input.ranked,
+      skill: skills.get(playerId) ?? defaultSkill(),
       enqueuedAt: Date.now(),
     });
 
@@ -185,13 +186,17 @@ export class MatchmakingUsecase {
     }
 
     const now = Date.now();
+
+    // The hidden rating is deliberately NOT here: it never leaves the server (plan §1). `tolerance`
+    // is how lopsided a matchup this ticket will currently accept, in percentage points away from an
+    // even 50/50 — a property of the search, not of the player.
     return {
       inQueue: true as const,
       mode: ticket.mode,
       ruleset: ticket.ruleset,
-      mmr: ticket.mmr,
+      ranked: ticket.ranked,
       waitedMs: now - ticket.enqueuedAt,
-      tolerance: Math.round(toleranceAt(ticket, now)),
+      tolerance: Math.round(toleranceAt(ticket, now) * 100),
       queueSize: this.queue.size(),
     };
   }
@@ -256,23 +261,26 @@ export class MatchmakingUsecase {
       );
     }
 
-    const mmrDiff = Math.abs(a.mmr - b.mmr);
-    const lenient = mmrDiff > LENIENT_GAP;
+    // How lopsided this pairing is, as |P(win) − 0.5|. Accounts for both players' uncertainty, so a
+    // "wide gap" means genuinely one-sided rather than merely distant on some rating scale.
+    const unfairness = unfairnessOf(a, b);
+    const fairnessGap = Math.round(unfairness * 100);
+    const lenient = unfairness > LENIENT_GAP;
     const readySeconds = lenient ? READY_SECONDS_LENIENT : READY_SECONDS;
     const readyEndsAt = new Date(Date.now() + readySeconds * 1000);
 
     const lobby = await this.db.lobby.create({
       data: {
         hostPlayerId: null,
-        // Both tickets share a bucket keyed by (mode, ruleset), so a's values are b's too.
+        // Both tickets share a bucket keyed by (mode, ruleset, ranked), so a's values are b's too.
         mode: a.mode,
-        isRanked: true,
+        isRanked: a.ranked,
         ruleset: a.ruleset,
         rules: defaultRulesFor(a.ruleset),
         status: "ready_check",
         readyEndsAt,
         readyCheckLenient: lenient,
-        mmrDiff,
+        fairnessGap,
         mapPool,
         teamFactions: rollTeamFactions(2),
         members: {
@@ -293,12 +301,13 @@ export class MatchmakingUsecase {
         lobbyId: lobby.id,
         readyEndsAt: readyEndsAt.toISOString(),
         lenient,
-        mmrDiff,
+        fairnessGap,
       });
     }
 
     logger.info(
-      `[matchmaking] ready-check ${lobby.id}: ${a.playerId} vs ${b.playerId} (Δ${mmrDiff}${lenient ? ", lenient" : ""})`,
+      `[matchmaking] ready-check ${lobby.id}: ${a.playerId} vs ${b.playerId} ` +
+        `(${50 + fairnessGap}/${50 - fairnessGap}${lenient ? ", lenient" : ""})`,
     );
   }
 

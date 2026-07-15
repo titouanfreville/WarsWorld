@@ -7,15 +7,11 @@ type Props = {
   isOpen: boolean;
 };
 
+// The old single GAME link split in two: PLAY is how you start a game, YOUR GAMES is what you're
+// already in. PLAY takes the slot COMPETITION held — that pointed at "/" and went nowhere.
 const navItemObject = [
+  { text: "PLAY", location: "/play" },
   { text: "YOUR GAMES", location: "/your-games" },
-  {
-    text: "COMPETITION",
-    location: "/",
-    iconPath: "/img/layout/NeoTank_MSide-0.png",
-    iconAlt: "Teal Galaxy Neo Tank",
-    flip: true,
-  },
   {
     text: "NEWS",
     location: "/news",

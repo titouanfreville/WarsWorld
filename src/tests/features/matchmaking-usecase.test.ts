@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { subscribeQueue, type QueueEvent } from "server/emitter/matchmaking-emitter";
 import { MatchmakingUsecase } from "server/matchmaking/matchmaking.usecase";
 import { MatchQueue, type Ticket } from "server/matchmaking/queue";
+import { defaultSkill } from "server/ranking/skill";
 
 /**
  * The matchmaking lifecycle against an in-memory fake Prisma + fake spawner/rater — no real DB. Drives
@@ -118,11 +119,13 @@ class FakeDb {
 }
 
 const NOW = 2_000_000;
-const ticket = (playerId: string, mmr: number): Ticket => ({
+const ticket = (playerId: string, mu = 25): Ticket => ({
   playerId,
-  mmr,
+  // Settled ratings: a mu gap then means a decisive matchup, which is what these tests set up.
+  skill: { mu, sigma: 1.5 },
   ruleset: "standard",
   mode: "duel",
+  ranked: true,
   enqueuedAt: NOW,
 });
 
@@ -137,7 +140,9 @@ const spawner = () => {
   };
 };
 
-const rater = { getRatings: async (ids: string[]) => new Map(ids.map((id) => [id, 1000])) };
+const rater = {
+  getSkills: async (ids: string[]) => new Map(ids.map((id) => [id, defaultSkill()])),
+};
 
 /** Capture queue events for a player over the test's lifetime. */
 const listen = (playerId: string, sink: QueueEvent[]) =>
@@ -172,8 +177,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("runs the full happy path: pair → both accept → both vote → reveal → spawn", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1010));
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
 
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
@@ -211,8 +216,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("bans then a vote must dodge the banned maps", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1010));
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
     await usecase.acceptReadyCheck(lobbyId, "A");
@@ -230,8 +235,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("ready-check timeout flags the non-acceptor and requeues the acceptor", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1010));
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
 
@@ -248,8 +253,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("forbids declining a normal (non-lenient) ranked ready-check", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1010)); // Δ10 → not lenient
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3)); // near-even → not lenient
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
 
@@ -259,8 +264,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("lenient (wide-gap) decline is allowed, writes no infraction, and requeues the other player", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1700)); // Δ700 > LENIENT_GAP
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 35)); // ~95% favourite → past LENIENT_GAP
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
     expect(db.lobbies.get(lobbyId)!.readyCheckLenient).toBe(true);
@@ -273,8 +278,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("forbids declining once you've accepted", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1700)); // lenient, so decline would otherwise be allowed
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 35)); // lenient, so decline would otherwise be allowed
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
 
@@ -283,8 +288,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("map-ban deadline cancels + flags whoever didn't pick, requeuing the other", async () => {
-    queue.add(ticket("A", 1000));
-    queue.add(ticket("B", 1010));
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
     await usecase.acceptReadyCheck(lobbyId, "A");
@@ -301,8 +306,10 @@ describe("matchmaking usecase", () => {
   });
 
   it("rejects joining the queue twice", async () => {
-    await usecase.joinQueue("A", { mode: "duel", ruleset: "standard" });
-    await expect(usecase.joinQueue("A", { mode: "duel", ruleset: "standard" })).rejects.toThrow();
-    expect(usecase.status("A")).toMatchObject({ inQueue: true, mmr: 1000 });
+    await usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: true });
+    await expect(
+      usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: true }),
+    ).rejects.toThrow();
+    expect(usecase.status("A")).toMatchObject({ inQueue: true, mode: "duel", ranked: true });
   });
 });

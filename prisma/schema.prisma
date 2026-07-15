@@ -142,7 +142,6 @@ model Clan {
 
 model Player {
   id          String        @id @default(cuid())
-  MMR         MMR[]
   name        String        @unique
   displayName String
   secret      Boolean       @default(false) // secret = true means that parent user is hidden on profile
@@ -169,6 +168,11 @@ model Player {
   matchPlayers     MatchPlayer[]
   matchStats       MatchPlayerStats[]
   lobbyMemberships PlayerInLobby[]
+
+  // Ranked: hidden skill (never leaves the server) + the ladder the player actually sees.
+  skills      PlayerSkill[]
+  ranks       PlayerRank[]
+  meritEvents MeritEvent[]
   hostedLobbies    Lobby[]            @relation(name: "lobbyHost")
   infractions      PlayerInfraction[]
 
@@ -259,6 +263,28 @@ enum Ruleset {
   broken // no unit/CO bans
 }
 
+/// The military-rank ladder (plan §5.1). ORDER MATTERS — merit.ts indexes RANK_ORDER against this.
+///
+/// The whole ladder ships; `merit.ts ACTIVE_RANKS` gates which are reachable, and more switch on as
+/// the playerbase grows — at a season rollover only, never mid-season. Sergeant/major/colonel are
+/// dormant today, which is why this is a set rather than a ceiling: the ladder grows in the MIDDLE.
+///
+/// `general` is NOT here and never can be: it means Commanding Officer throughout this codebase
+/// (schema.prisma:225 "general-picker round", :296 "enemy generals are hidden", :428 "chosen
+/// general"). The apex is `marechal` — French, matching the MEDAILLE_MILITAIRE / CROIX_DE_GUERRE
+/// decorations, ASCII in the enum and rendered "Maréchal". `cadet` rather than `recruit`, which is
+/// honor's pre-Bronze tier.
+enum Rank {
+  cadet // placements — no divisions, no rank shown
+  private
+  sergeant //   dormant
+  lieutenant
+  captain
+  major //   dormant
+  colonel //   dormant
+  marechal // apex — no divisions, merit unbounded
+}
+
 model Notes {
   content String
   public  Boolean @default(false)
@@ -305,20 +331,63 @@ model MatchPlayerStats {
   @@index([playerId])
 }
 
-/// Hidden matchmaking rating. Keyed per MODE, POOLED across rulesets — fog/std/high-funds share one
-/// rating, because the playerbase is too small to shard it (plan §1.3). Revisit with data (per-
-/// ruleset residuals vs predicted score), not opinion.
+/// The HIDDEN skill rating — OpenSkill μ/σ. Keyed per MODE and POOLED across rulesets: fog / std /
+/// high-funds duels all move one `duel` rating, because the playerbase is too small to shard it
+/// (plan §1.3). Revisit with data (per-ruleset residuals vs predicted score), not opinion.
 ///
-/// Phase 4 replaces `mmr`/`topMmr` with OpenSkill μ/σ and renames this to PlayerSkill; the ladder a
-/// player actually SEES is rank + Military Merit, never this number.
-model MMR {
+/// NEVER leaves the server. No router selects from this table: what a player sees is their rank +
+/// Military Merit (`PlayerRank`). A number players can see is a number they play instead of the game.
+///
+/// Replaced the Elo `MMR` model — Elo had no uncertainty (so newcomers took ~25 games to place, and
+/// stale ratings couldn't be told from fresh ones) and no way to rate teams or FFA.
+model PlayerSkill {
   Player   Player   @relation(fields: [playerId], references: [id])
   playerId String
   mode     GameMode
-  mmr      Int      @default(800)
-  topMmr   Int      @default(800)
+  /// OpenSkill defaults. `ordinal()` (μ−3σ) of a fresh rating is exactly 0.
+  mu       Float    @default(25.0)
+  sigma    Float    @default(8.333333333333334)
+  /// Rated games in this mode — for display ("4/10 placements"); the placement GATE is sigma.
+  games    Int      @default(0)
 
   @@id([playerId, mode])
+}
+
+/// The military-rank ladder — the half a player actually sees. Cadet → Private → Lieutenant →
+/// Captain → Maréchal (the full enum ships; ACTIVE_RANKS in merit.ts gates which are reachable).
+///
+/// Merit is STORED, not derived from skill: a rank that's a pure function of μ yo-yos and reads as
+/// noise. It's nudged toward skill instead (merit.ts `convergence`).
+///
+/// Phase 6 (seasons) adds `seasonId` to this key and resets these rows at a rollover.
+model PlayerRank {
+  Player   Player   @relation(fields: [playerId], references: [id])
+  playerId String
+  mode     GameMode
+  rank     Rank     @default(cadet)
+  /// 5..1, 5 being the lowest. Meaningless for cadet (placements) and marechal (apex).
+  division Int      @default(5)
+  /// 0..99 within a division. Unbounded at marechal, so the top of the ladder still sorts.
+  merit    Int      @default(0)
+  peakRank Rank?
+
+  @@id([playerId, mode])
+}
+
+/// One match's Merit movement — the history list's Merit column, and an audit trail for the ladder.
+/// Absent for casual matches (no row, not a zero).
+model MeritEvent {
+  match         Match    @relation(fields: [matchId], references: [id])
+  matchId       String
+  Player        Player   @relation(fields: [playerId], references: [id])
+  playerId      String
+  delta         Int
+  rankAfter     Rank
+  divisionAfter Int
+  createdAt     DateTime @default(now())
+
+  @@id([matchId, playerId])
+  @@index([playerId, createdAt])
 }
 
 model Match {
@@ -378,6 +447,9 @@ model Match {
 
   /// Per-player battle-report headline, written once at finalize (see MatchPlayerStats).
   playerStats MatchPlayerStats[]
+
+  /// Merit movement this match caused — ranked matches only.
+  meritEvents MeritEvent[]
 
   chatMessages ChatMessage[]
   chatIsPublic Boolean       @default(false)
@@ -445,7 +517,14 @@ model Lobby {
 
   // --- matchmaking map pick & ban (status = map_ban) ---
   readyCheckLenient Boolean @default(false) // wide MMR gap: longer window + no sanction on decline
-  mmrDiff           Int? // the rating gap that produced this match (audit/display)
+  /// How lopsided the pairing was, in percentage points away from an even 50/50 (0..50) — e.g. 18
+  /// means the favourite had ~68% odds. Audit/display only.
+  ///
+  /// A GAP, not a rating: the hidden μ/σ never leaves the server, and a relative gap doesn't
+  /// reconstruct it. Replaced `mmrDiff`, which was an Elo distance and became meaningless when
+  /// fairness stopped being expressible as one (a fixed μ gap means different things at different σ
+  /// — see .ai/plans/ranked-ladder-plan.md §4.1).
+  fairnessGap       Int?
   /// [PrismaMapPool] candidate WWMap ids for the ban phase (mapId stays null until the roll)
   mapPool           Json?
   mapPhaseEndsAt    DateTime? // map pick & ban deadline (mirrors readyEndsAt)

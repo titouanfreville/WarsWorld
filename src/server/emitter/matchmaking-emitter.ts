@@ -11,7 +11,7 @@ export type QueueEvent =
       lobbyId: string;
       readyEndsAt: string;
       lenient: boolean;
-      mmrDiff: number;
+      fairnessGap: number;
     }
   | { type: "map-phase-started"; lobbyId: string }
   | { type: "match-found"; matchId: string }

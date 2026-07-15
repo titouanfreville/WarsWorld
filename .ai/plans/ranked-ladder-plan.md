@@ -289,21 +289,49 @@ rate([[a], [b]], { score: [1, 1] }); // draw: equal score
 
 Replaces `ranking.usecase.applyMatchResult`'s team-average block wholesale.
 
-### 4.1 Scale — the matchmaker constants do NOT survive
+### 4.1 Scale — the constants can't be converted at all; the GATE changes
 
-`matchmaking/constants.ts` is in **400-scale Elo points**; OpenSkill μ is on a **25-scale**. Roughly
-**8.7 μ ≈ 400 Elo**, so ~46 Elo per μ point.
+An earlier draft said "8.7 μ ≈ 400 Elo, so ~46 Elo per μ — convert the constants, switch the gate to
+`predictWin` later". **Both halves were wrong.** Measured against `openskill@5.0.1` (μ=25, σ=25/3):
 
-| Constant         | Elo  | → μ-space |
-| ---------------- | ---- | --------- |
-| `BASE_TOLERANCE` | 100  | ~2.2      |
-| `TOLERANCE_RATE` | 15/s | ~0.33/s   |
-| `LENIENT_GAP`    | 400  | ~8.7      |
-| `MAX_TOLERANCE`  | 2000 | ~43.6     |
+```
++2.0 μ -> P(win) 0.560     +8.0 μ -> P(win) 0.728
++4.0 μ -> P(win) 0.619     +8.7 μ -> P(win) 0.745   <- NOT 0.909
++6.0 μ -> P(win) 0.676    +10.0 μ -> P(win) 0.776
+```
 
-Convert for the port (keeps `queue.ts` and its tests structurally intact). **Then** switch the gate
-to `predictWin ≈ 0.5`, which is more principled because it accounts for σ — a wide-σ newcomer should
-match more loosely than a settled veteran at the same μ. Two steps, not one; don't do both at once.
+400 Elo means P(win)=0.909. That needs **~17.6 μ at starting σ**, but **~8.7 μ at converged σ≈2** —
+because win probability is `Φ(Δμ / √(2β² + σa² + σb²))`, i.e. a function of **σ as well as Δμ**.
+
+**So there is no single Elo→μ constant.** Any converted tolerance is correct at exactly one σ and
+wrong at every other — worst precisely where it matters, for the wide-σ newcomers the tolerance
+exists to protect. Converting is not a cheaper first step; it's a broken one.
+
+The gate therefore moves to **`predictWin`** in this phase, not a later one. It reads σ natively, so a
+provisional player matches loosely and a settled one tightly, with no conversion anywhere:
+
+| Constant         | Was (Elo) | Now (P(win) distance from 0.5) | Meaning                    |
+| ---------------- | --------- | ------------------------------ | -------------------------- |
+| `BASE_TOLERANCE` | 100       | `0.12`                         | accept 0.38..0.62 at 0s    |
+| `TOLERANCE_RATE` | 15/s      | `0.012`/s                      | widens ~1.2 pp per second  |
+| `MAX_TOLERANCE`  | 2000      | `0.49`                         | eventually accept anyone   |
+| `LENIENT_GAP`    | 400       | `0.25`                         | ≥0.75/0.25 ⇒ wide-gap pair |
+
+These are re-tuned guesses calibrated to roughly match the old Elo behaviour (100 Elo ≈ P 0.64), not
+measurements. Revisit with queue data.
+
+### 4.2 `predictRank` exists — but not the one we wanted
+
+The README omits it; the `.d.ts` exports it. It is **not** a distribution over places:
+
+```
+predictRank([[a],[b],[c],[d]])  // 4 equal teams
+  -> [[1, 0.25], [1, 0.25], [1, 0.25], [1, 0.25]]     // [mostLikelyRank, itsProbability]
+```
+
+So `E = Σ_p P(place=p)·score(p)` is **not** computable from it, and §5's FFA caveat stands: for N>2
+we use `predictWin` (P of winning outright), which is not the expectation of a placement score. It
+biases Merit toward outright wins — arguably right for FFA. Bounded, and unit-testable either way.
 
 `mmrDiff` in the queue event payload (`matchmaking-emitter`, consumed by `matchmaking.tsx`) is
 μ-space after this. It is a _gap_, not a rating — it may stay on the wire.

@@ -2,13 +2,14 @@ import { z } from "zod";
 import { gameModeSchema, rulesetSchema } from "server/core/schemas/game-mode";
 
 /**
- * A queue is (mode × ruleset × ranked). `ranked` isn't on the wire yet — every queue game is ranked
- * today — so "Ranked Std" and "Std" would still be the same queue; that axis lands with the Play
- * page (plan phase 7). `mode` is no longer pinned to a literal, so FFA/teams queues are expressible.
+ * A queue is (mode × ruleset × ranked) — all three axes, each independent. Ranked Standard and casual
+ * Standard are DIFFERENT queues that share a ruleset, so a casual player can never be paired into a
+ * game that moves someone's ladder.
  */
 export const joinQueueSchema = z.object({
   mode: gameModeSchema,
   ruleset: rulesetSchema,
+  ranked: z.boolean(),
 });
 export type JoinQueueInput = z.infer<typeof joinQueueSchema>;
 
