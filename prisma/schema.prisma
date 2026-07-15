@@ -167,6 +167,7 @@ model Player {
 
   // v2 lobby/match path (coexists with the v1 `matches` implicit relation above)
   matchPlayers     MatchPlayer[]
+  matchStats       MatchPlayerStats[]
   lobbyMemberships PlayerInLobby[]
   hostedLobbies    Lobby[]            @relation(name: "lobbyHost")
   infractions      PlayerInfraction[]
@@ -242,13 +243,20 @@ enum LobbyMembership {
   active // joined the lobby
 }
 
-enum LeagueType {
+/// How many seats and how they're teamed. Values are identifiers, NOT display labels: Prisma enum
+/// members can't start with a digit, so "1v1" is unspellable. The UI renders 1v1 / 2v2 / FFA.
+enum GameMode {
+  duel // 2 players           (UI: "1v1")
+  teams // 4 players, 2v2      (UI: "2v2")
+  ffa // 4 players, free-for-all (UI: "FFA")
+}
+
+/// The rules a queue plays under. Orthogonal to GameMode, and to `isRanked` — the third axis.
+enum Ruleset {
   standard
   fog
   highFunds
-  dualLeague
-  standardTeams
-  broken
+  broken // no unit/CO bans
 }
 
 model Notes {
@@ -264,19 +272,65 @@ model Notes {
   @@id([playerId, matchId])
 }
 
-model MMR {
-  leagueType LeagueType
-  Player     Player     @relation(fields: [playerId], references: [id])
-  playerId   String
-  mmr        Int        @default(800)
-  topMmr     Int        @default(800)
+/// Per-player battle-report headline, computed ONCE at finalize (buildMatchStats + computeGrades)
+/// and stored so the history list can show a grade without replaying the event log per row.
+///
+/// Deliberately NOT the whole `MatchStats`: the timeline (per-turn funds/army-value/properties) and
+/// captureLog stay out — they're a time series, not a row, and only the full battle report needs
+/// them. `endgame.summary` still replays for that; this table serves the list.
+model MatchPlayerStats {
+  match    Match  @relation(fields: [matchId], references: [id])
+  matchId  String
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
 
-  @@id([leagueType, playerId])
+  /// computeGrades() — the S/A/B/C "match note", plus the three axes behind it (0..100).
+  grade    String
+  tactics  Int
+  strength Int
+  economy  Int
+
+  /// Funds-value of enemy HP destroyed / own HP lost in combat.
+  damageDealt Int
+  damageTaken Int
+  unitsKilled Int
+  unitsLost   Int
+  captures    Int
+  /// Economy: funds spent building, and total income earned across the match.
+  producedFunds Int
+  incomeEarned  Int
+  powersUsed    Int
+
+  @@id([matchId, playerId])
+  @@index([playerId])
+}
+
+/// Hidden matchmaking rating. Keyed per MODE, POOLED across rulesets — fog/std/high-funds share one
+/// rating, because the playerbase is too small to shard it (plan §1.3). Revisit with data (per-
+/// ruleset residuals vs predicted score), not opinion.
+///
+/// Phase 4 replaces `mmr`/`topMmr` with OpenSkill μ/σ and renames this to PlayerSkill; the ladder a
+/// player actually SEES is rank + Military Merit, never this number.
+model MMR {
+  Player   Player   @relation(fields: [playerId], references: [id])
+  playerId String
+  mode     GameMode
+  mmr      Int      @default(800)
+  topMmr   Int      @default(800)
+
+  @@id([playerId, mode])
 }
 
 model Match {
-  id         String     @id @default(cuid())
-  leagueType LeagueType
+  id String @id @default(cuid())
+
+  /// Seat shape + rules, replacing the old flat `leagueType` (plan §3.1). `mode` was previously
+  /// unreachable from a Match at all — it lived only on Lobby, and lobbyId is null for v1 matches,
+  /// which is why the history list couldn't filter by it.
+  ///
+  /// Ranked-ness is the third axis and already exists below as `isRanked`.
+  mode    GameMode
+  ruleset Ruleset
 
   /// [PrismaMatchRules]
   rules  Json
@@ -297,6 +351,15 @@ model Match {
   revealedAt   DateTime?
   /// set when MMR has been applied for this (ranked) match — idempotency guard for finalize
   ratedAt      DateTime?
+  /// set when MatchPlayerStats has been written — the stats half of the finalize guard. Separate
+  /// from `ratedAt` because stats are written for EVERY finished match, ranked or not.
+  statsAt      DateTime?
+
+  /// Day count + wall-clock length at finish, persisted so a history row needn't replay the event
+  /// log to show them. Null while playing, and on finished rows that predate the backfill.
+  /// This is what fixes `finishedRowToFrontend`'s hardcoded `turn: 0`.
+  days       Int?
+  durationMs Int?
 
   /// the Lobby this match was spawned from (v2 provenance; null for v1 matches)
   lobby   Lobby?  @relation(fields: [lobbyId], references: [id])
@@ -312,6 +375,9 @@ model Match {
 
   /// v2 relational membership — the queryable durable store for the new match path
   matchPlayers MatchPlayer[]
+
+  /// Per-player battle-report headline, written once at finalize (see MatchPlayerStats).
+  playerStats MatchPlayerStats[]
 
   chatMessages ChatMessage[]
   chatIsPublic Boolean       @default(false)
@@ -359,8 +425,11 @@ model Lobby {
   host         Player?    @relation(name: "lobbyHost", fields: [hostPlayerId], references: [id])
   hostPlayerId String? // set for custom lobbies; null for matchmaking
   isRanked     Boolean    @default(false)
-  mode         String // "1v1" | "2v2" | "ffa4" — drives team count + slots
-  leagueType   LeagueType
+  /// Drives team count + slots. Cast in place from the old free-text "1v1"/"2v2"/"ffa4" by
+  /// utils/phase1-league-backfill.sql — `db push` can't express the USING clause and would have
+  /// dropped the column instead.
+  mode         GameMode
+  ruleset      Ruleset
 
   /// [PrismaMatchRules] MatchRules draft (fog, funds, pickSeconds, teamMapping…)
   rules Json

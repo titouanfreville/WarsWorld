@@ -1,4 +1,4 @@
-import type { LeagueType, PrismaClient } from "@prisma/client";
+import type { GameMode, PrismaClient, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { emit } from "server/emitter/event-emitter";
 import type { MatchStore } from "server/match-store";
@@ -14,7 +14,7 @@ import type { MatchRules } from "server/core/schemas/match-rules";
 import type { LobbyMatchEvent } from "server/engine/types/events";
 import type { PlayerSkins } from "server/players/schemas";
 import { logger } from "shared/utils/logger";
-import { DEFAULT_PICK_SECONDS, layoutForMode, matchSlotFor, type LobbyMode } from "./layout";
+import { DEFAULT_PICK_SECONDS, layoutForMode, matchSlotFor } from "./layout";
 import { cancelPickDeadline, schedulePickDeadline } from "./pick-timer";
 
 /** A confirmed seat handed over by the lobby when it starts: who sits where. */
@@ -22,8 +22,8 @@ export type SpawnSeat = { playerId: string; team: number; slotWithinTeam: number
 
 export type SpawnRequest = {
   lobbyId: string;
-  mode: LobbyMode;
-  leagueType: LeagueType;
+  mode: GameMode;
+  ruleset: Ruleset;
   isRanked: boolean;
   mapId: string;
   rules: MatchRules;
@@ -85,7 +85,8 @@ export class MatchesUsecase {
     const created = await this.db.match.create({
       data: {
         status: "setup",
-        leagueType: req.leagueType,
+        mode: req.mode,
+        ruleset: req.ruleset,
         isRanked: req.isRanked,
         rules,
         teamFactions,

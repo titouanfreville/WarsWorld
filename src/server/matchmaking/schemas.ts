@@ -1,10 +1,14 @@
 import { z } from "zod";
-import { leagueTypeSchema } from "server/matches/league";
+import { gameModeSchema, rulesetSchema } from "server/core/schemas/game-mode";
 
-/** Solo queue only for now — `mode` is fixed but present so the wire shape is future-proof. */
+/**
+ * A queue is (mode × ruleset × ranked). `ranked` isn't on the wire yet — every queue game is ranked
+ * today — so "Ranked Std" and "Std" would still be the same queue; that axis lands with the Play
+ * page (plan phase 7). `mode` is no longer pinned to a literal, so FFA/teams queues are expressible.
+ */
 export const joinQueueSchema = z.object({
-  leagueType: leagueTypeSchema,
-  mode: z.literal("1v1"),
+  mode: gameModeSchema,
+  ruleset: rulesetSchema,
 });
 export type JoinQueueInput = z.infer<typeof joinQueueSchema>;
 

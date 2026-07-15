@@ -66,7 +66,8 @@ export const buildMatchWrapper = (
 
   return new MatchWrapper(
     rawMatch.id,
-    rawMatch.leagueType,
+    rawMatch.mode,
+    rawMatch.ruleset,
     getChangeableTilesFromMap(rawMap),
     rawMatch.rules,
     rawMatch.status,

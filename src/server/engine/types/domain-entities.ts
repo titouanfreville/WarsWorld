@@ -9,13 +9,8 @@ import type { UnitWithVisibleStats } from "server/core/schemas/unit";
 
 export type MatchStatus = "setup" | "playing" | "finished" | "cancelled";
 
-export type LeagueType =
-  | "standard"
-  | "fog"
-  | "highFunds"
-  | "dualLeague"
-  | "standardTeams"
-  | "broken";
+// `mode`/`ruleset` (which replaced the flat `LeagueType`) are game VOCABULARY, so they live in the
+// kernel — `server/core/schemas/game-mode` — not here. The engine imports them from there.
 
 /** The map data the engine consumes (mirror of the persisted `WWMap` row). */
 export type WWMap = {

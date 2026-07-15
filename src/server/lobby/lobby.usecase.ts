@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { armySchema, type Army } from "server/core/schemas/army";
 import { logger } from "shared/utils/logger";
-import { capacityForMode, isValidSeat, layoutForMode, type LobbyMode } from "server/matches/layout";
+import { capacityForMode, isValidSeat, layoutForMode } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
 import type { CreateLobbyInput } from "./schemas";
 import { lobbyToView, type LobbyRow, type LobbyView } from "./views";
@@ -61,7 +61,7 @@ export class LobbyUsecase {
       data: {
         hostPlayerId,
         mode: input.mode,
-        leagueType: input.leagueType,
+        ruleset: input.ruleset,
         isRanked: input.isRanked,
         mapId: input.mapId,
         rules: input.rules,
@@ -104,7 +104,7 @@ export class LobbyUsecase {
     const activeSeated = lobby.members.filter(
       (m) => m.membership === "active" && !m.isSpectator,
     ).length;
-    const isSpectator = activeSeated >= capacityForMode(lobby.mode as LobbyMode);
+    const isSpectator = activeSeated >= capacityForMode(lobby.mode);
 
     await this.db.playerInLobby.create({
       data: { lobbyId, playerId, membership: "active", isSpectator },
@@ -140,7 +140,7 @@ export class LobbyUsecase {
       return this.getLobby(lobbyId);
     }
 
-    const mode = lobby.mode as LobbyMode;
+    const mode = lobby.mode;
     const { slotsPerTeam } = layoutForMode(mode);
     const takenSlots = lobby.members
       .filter((m) => m.playerId !== playerId && m.team === team && m.slot !== null)
@@ -302,7 +302,7 @@ export class LobbyUsecase {
       throw new TRPCError({ code: "BAD_REQUEST", message: "No map selected" });
     }
 
-    const mode = lobby.mode as LobbyMode;
+    const mode = lobby.mode;
     const { teamCount, slotsPerTeam } = layoutForMode(mode);
     const capacity = capacityForMode(mode);
 
@@ -333,7 +333,7 @@ export class LobbyUsecase {
     const { matchId } = await this.matches.spawnFromLobby({
       lobbyId,
       mode,
-      leagueType: lobby.leagueType,
+      ruleset: lobby.ruleset,
       isRanked: lobby.isRanked,
       mapId: lobby.mapId,
       rules: lobby.rules,

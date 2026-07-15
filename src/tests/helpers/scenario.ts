@@ -182,6 +182,7 @@ export function createTestMatch(options: ScenarioOptions): MatchWrapper {
 
   return new MatchWrapper(
     "test-match",
+    "duel",
     "standard",
     options.changeableTiles ?? [],
     rules,

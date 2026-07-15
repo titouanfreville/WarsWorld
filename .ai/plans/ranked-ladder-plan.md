@@ -22,10 +22,10 @@ finished match ──> denormalise stats (once, at finalize)  ──> history li
 
 Two numbers, two jobs, never confused:
 
-| | Purpose | Visible? | Keyed by |
-|---|---|---|---|
-| **Skill** (μ/σ) | pair opponents, size Merit gains | **never** | `(playerId, mode)` |
-| **Rank + Merit** | progression, identity, leaderboard | yes | `(playerId, mode, seasonId)` |
+|                  | Purpose                            | Visible?  | Keyed by                     |
+| ---------------- | ---------------------------------- | --------- | ---------------------------- |
+| **Skill** (μ/σ)  | pair opponents, size Merit gains   | **never** | `(playerId, mode)`           |
+| **Rank + Merit** | progression, identity, leaderboard | yes       | `(playerId, mode, seasonId)` |
 
 ---
 
@@ -33,8 +33,8 @@ Two numbers, two jobs, never confused:
 
 Settled in design; **do not re-litigate**:
 
-1. **Taxonomy is two axes.** The flat `LeagueType` enum conflates a *ruleset* (`standard`/`fog`/
-   `highFunds`/`broken`) with a *team shape* (`standardTeams`) and a *format* (`dualLeague`). It
+1. **Taxonomy is two axes.** The flat `LeagueType` enum conflates a _ruleset_ (`standard`/`fog`/
+   `highFunds`/`broken`) with a _team shape_ (`standardTeams`) and a _format_ (`dualLeague`). It
    decomposes into **mode × ruleset**, with `isRanked` (already on `Match`) as the third axis.
    `broken` survives as a ruleset. **`dualLeague` is parked** — a format axis nothing uses.
 2. **Rating engine is OpenSkill**, not Elo, not TrueSkill.
@@ -45,7 +45,7 @@ Settled in design; **do not re-litigate**:
 4. **The ladder is military ranks; the currency is Military Merit** (displayed as **"Merit"**).
 5. **Full rank enum ships; only four ranks activate.** Activation changes **only at a season
    rollover**, never mid-season.
-6. **Percentile bands, not absolute thresholds.** Safe *because* of (5): activation coincides with
+6. **Percentile bands, not absolute thresholds.** Safe _because_ of (5): activation coincides with
    re-placement, so the re-sort is expected rather than a silent reshuffle.
 7. **Stats are denormalised at finalize.** Replaying the event log per row does not scale.
 8. **Purpose-built read endpoints** per display, rather than growing one match contract.
@@ -54,33 +54,33 @@ Settled in design; **do not re-litigate**:
 
 These are **not** free. Each was checked against the codebase; four candidates were already taken:
 
-| Word | Status |
-|---|---|
-| `general` | ❌ **means Commanding Officer** — 38 files, incl. `schema.prisma:225,296,428` ("general-picker round", "enemy generals are hidden", "chosen general") |
-| `recruit` | ❌ honor's pre-Bronze tier — `honor.ts:17`, `HonorInsignia.tsx:19` |
-| `commendation` | ❌ a Prisma model (`schema.prisma:796`) |
-| `honor`, `prestige` | ❌ the existing medal/prestige track |
-| bronze/silver/gold/platinum/diamond | ❌ `HonorInsignia.TIER_COLOR` — **including the colours** |
-| S / A / B / C | ❌ the per-match grade (`match-grade.ts`) — and canon AW "ranks" ARE these |
-| `cadet`, `private`, `sergeant`, `lieutenant`, `captain`, `major`, `colonel`, `marechal`, `merit`, `season` | ✅ clean |
+| Word                                                                                                       | Status                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `general`                                                                                                  | ❌ **means Commanding Officer** — 38 files, incl. `schema.prisma:225,296,428` ("general-picker round", "enemy generals are hidden", "chosen general") |
+| `recruit`                                                                                                  | ❌ honor's pre-Bronze tier — `honor.ts:17`, `HonorInsignia.tsx:19`                                                                                    |
+| `commendation`                                                                                             | ❌ a Prisma model (`schema.prisma:796`)                                                                                                               |
+| `honor`, `prestige`                                                                                        | ❌ the existing medal/prestige track                                                                                                                  |
+| bronze/silver/gold/platinum/diamond                                                                        | ❌ `HonorInsignia.TIER_COLOR` — **including the colours**                                                                                             |
+| S / A / B / C                                                                                              | ❌ the per-match grade (`match-grade.ts`) — and canon AW "ranks" ARE these                                                                            |
+| `cadet`, `private`, `sergeant`, `lieutenant`, `captain`, `major`, `colonel`, `marechal`, `merit`, `season` | ✅ clean                                                                                                                                              |
 
 Consequences, each load-bearing:
 
 - **Apex is `marechal`, not `general`.** `general` is unusable. French matches the medals
   (`MEDAILLE_MILITAIRE`, `CROIX_DE_GUERRE`) — proper-noun decorations. Enum is ASCII (`marechal`),
   display is accented (**Maréchal**), exactly as `MEDAL_META` renders "Médaille Militaire".
-  Other ranks stay English: the UI is English, and *Private* is a common noun, not a title.
+  Other ranks stay English: the UI is English, and _Private_ is a common noun, not a title.
 - **Entry rank is `cadet`**, not `recruit`.
 - **Rank palette must avoid metals.** `HonorInsignia` renders on profile · lobby · champ-select ·
   in-game — the same surfaces as a rank badge. A gold "Captain" disc beside a gold medal disc reads
   as one system. Ladder takes a **green → blue → violet → orange** ramp.
-- **Never abbreviate Merit to "MM".** One letter from `MMR`, the *other number in this system*
+- **Never abbreviate Merit to "MM".** One letter from `MMR`, the _other number in this system_
   (12 files; `mmrDiff` ships in the queue event payload). "MM gains scale with MMR" is unreadable,
   and `mm` beside `mmr` in code is a latent bug. Every short code is taken anyway: `CP` (capture
   points AND CO power), `MP` (movement), `HP`, `SP` (star/super power).
 
-> `honor.ts:4` already states the split: *"Honor = a PRESTIGE track (distinct from the military-rank
-> ladder, which is MMR)."* This plan is that sentence's other half. **Honor is given by your
+> `honor.ts:4` already states the split: _"Honor = a PRESTIGE track (distinct from the military-rank
+> ladder, which is MMR)."_ This plan is that sentence's other half. **Honor is given by your
 > opponent for conduct; Merit is earned by winning.** Different source, different meaning, no
 > shared vocabulary and no shared palette.
 
@@ -95,8 +95,8 @@ Consequences, each load-bearing:
 - **No inactivity handling.** A rating from eight months ago is treated as fact. In a game where a
   turn takes days, that is the common case, not the edge case.
 - **Team-average Elo is a known-bad approximation** for 2v2, and for FFA there is no meaningful
-  "opponent average" at all. `ranking.usecase.ts:40` already concedes it: *"Non-1v1 uses team-average
-  ratings; only 1v1 is exercised for now."*
+  "opponent average" at all. `ranking.usecase.ts:40` already concedes it: _"Non-1v1 uses team-average
+  ratings; only 1v1 is exercised for now."_
 - **One number does two jobs** — it is both the pairing input and the displayed rating.
 
 OpenSkill fixes all four with one model.
@@ -105,8 +105,30 @@ OpenSkill fixes all four with one model.
 
 ## 3. Schema
 
-`Prisma migrations are deferred` (dev uses `db push`) — so this is the cheap moment. Dev data is
-disposable; **no backfill of ratings**, everyone re-places.
+`Prisma migrations are deferred` (dev uses `db push`) — so this is the cheap moment.
+
+**Dev data is NOT disposable, and nothing needs to be lost.** Measured 2026-07-15:
+
+```
+match 15 (6 finished · 6 playing · 3 cancelled) · Event 1855 · Lobby 10 · MatchPlayer 16 · MMR 2
+leagueType in use: standard, fog only   (highFunds / dualLeague / standardTeams / broken: 0 rows)
+MMR: both rows "standard", different players → 0 collisions when pooled to duel
+```
+
+Two consequences that contradict an earlier draft of this plan:
+
+- **Ratings survive.** Pooling was assumed to collide (two rulesets → one mode → PK conflict). With
+  this data it maps 1:1, so the two ratings carry over. Re-check before pushing; the argument is
+  data-dependent, not structural.
+- **The 6 finished matches + 1855 events are the ONLY battle-report test data** — they're what makes
+  `/your-games` history and `/report/[matchId]` testable. Do not `--accept-data-loss` them.
+
+`db push` is schema-only, so adding required `mode`/`ruleset` to populated tables would demand a
+wipe. Three steps instead:
+
+1. push `mode`/`ruleset` **optional**, `leagueType` retained → no data loss
+2. backfill from `leagueType` per §3.1 (in practice only `standard` + `fog` exist)
+3. push again: required, drop `leagueType`
 
 ```prisma
 enum GameMode { duel  ffa  teams }
@@ -231,14 +253,14 @@ is why the history mode-filters are blocked, and why `Match.mode` is the first d
 
 ### 3.1 League → taxonomy mapping
 
-| `LeagueType` | → mode | → ruleset |
-|---|---|---|
-| `standard` | `duel` | `standard` |
-| `fog` | `duel` | `fog` |
-| `highFunds` | `duel` | `highFunds` |
-| `broken` | `duel` | `broken` |
-| `standardTeams` | `teams` | `standard` |
-| `dualLeague` | — | — parked, drop the rows |
+| `LeagueType`    | → mode  | → ruleset               |
+| --------------- | ------- | ----------------------- |
+| `standard`      | `duel`  | `standard`              |
+| `fog`           | `duel`  | `fog`                   |
+| `highFunds`     | `duel`  | `highFunds`             |
+| `broken`        | `duel`  | `broken`                |
+| `standardTeams` | `teams` | `standard`              |
+| `dualLeague`    | —       | — parked, drop the rows |
 
 ~24 files touch `leagueType` (`ranking`, `matchmaking`, `lobby`, `matches`, `engine/entities/match`,
 `routers/*`, 4 test files, `player-profile/*`). `MatchWrapper.leagueType` (`match.ts:61`) is on the
@@ -259,10 +281,10 @@ Defaults: Plackett-Luce, μ 25, σ 8.333.
 One call covers all three modes — this is the whole reason for the choice:
 
 ```ts
-rate([[a], [b]])                                       // duel: a beat b
-rate([teamA, teamB], { rank: [2, 1] })                 // teams: B won; credit split by rating
-rate([[p1], [p2], [p3], [p4]], { rank: [1, 2, 3, 4] }) // ffa: finishing order
-rate([[a], [b]], { score: [1, 1] })                    // draw: equal score
+rate([[a], [b]]); // duel: a beat b
+rate([teamA, teamB], { rank: [2, 1] }); // teams: B won; credit split by rating
+rate([[p1], [p2], [p3], [p4]], { rank: [1, 2, 3, 4] }); // ffa: finishing order
+rate([[a], [b]], { score: [1, 1] }); // draw: equal score
 ```
 
 Replaces `ranking.usecase.applyMatchResult`'s team-average block wholesale.
@@ -272,50 +294,49 @@ Replaces `ranking.usecase.applyMatchResult`'s team-average block wholesale.
 `matchmaking/constants.ts` is in **400-scale Elo points**; OpenSkill μ is on a **25-scale**. Roughly
 **8.7 μ ≈ 400 Elo**, so ~46 Elo per μ point.
 
-| Constant | Elo | → μ-space |
-|---|---|---|
-| `BASE_TOLERANCE` | 100 | ~2.2 |
-| `TOLERANCE_RATE` | 15/s | ~0.33/s |
-| `LENIENT_GAP` | 400 | ~8.7 |
-| `MAX_TOLERANCE` | 2000 | ~43.6 |
+| Constant         | Elo  | → μ-space |
+| ---------------- | ---- | --------- |
+| `BASE_TOLERANCE` | 100  | ~2.2      |
+| `TOLERANCE_RATE` | 15/s | ~0.33/s   |
+| `LENIENT_GAP`    | 400  | ~8.7      |
+| `MAX_TOLERANCE`  | 2000 | ~43.6     |
 
 Convert for the port (keeps `queue.ts` and its tests structurally intact). **Then** switch the gate
 to `predictWin ≈ 0.5`, which is more principled because it accounts for σ — a wide-σ newcomer should
 match more loosely than a settled veteran at the same μ. Two steps, not one; don't do both at once.
 
 `mmrDiff` in the queue event payload (`matchmaking-emitter`, consumed by `matchmaking.tsx`) is
-μ-space after this. It is a *gap*, not a rating — it may stay on the wire.
+μ-space after this. It is a _gap_, not a rating — it may stay on the wire.
 
 ---
 
 ## 5. Merit — the displayed ladder
 
 **Store Merit; do not derive it from μ.** A pure function of skill makes rank yo-yo and destroys
-progression. Merit is nudged *toward* skill instead:
+progression. Merit is nudged _toward_ skill instead:
 
 ```ts
-E = predictWin([mine, theirs])[0]     // 0..1
-S = 1 | 0.5 | 0                       // win | draw | loss
-BASE = 20
+E = predictWin([mine, theirs])[0]; // 0..1
+S = 1 | 0.5 | 0; // win | draw | loss
+BASE = 20;
 
-skillTerm   = BASE * 2 * (S - E)                          // signed — covers both outcomes
-gap         = ordinal(skill) - anchorOrdinal(currentRank) // rank chases skill
-convergence = clamp(gap / K_CONV, -10, +10)
+skillTerm = BASE * 2 * (S - E); // signed — covers both outcomes
+gap = ordinal(skill) - anchorOrdinal(currentRank); // rank chases skill
+convergence = clamp(gap / K_CONV, -10, +10);
 
-meritDelta  = skillTerm + convergence
-meritDelta  = S > 0.5 ? clamp(meritDelta, +5, +40)
-                      : clamp(meritDelta, -40, -5)
+meritDelta = skillTerm + convergence;
+meritDelta = S > 0.5 ? clamp(meritDelta, +5, +40) : clamp(meritDelta, -40, -5);
 ```
 
-| Situation | Win | Loss |
-|---|---|---|
+| Situation                  | Win     | Loss    |
+| -------------------------- | ------- | ------- |
 | Even match, rank converged | **+20** | **−20** |
-| Beat a favourite (E=0.2) | **+32** | −8 |
-| Beat an underdog (E=0.85) | +6 | **−34** |
-| Underranked (gap high) | +30 | −10 |
-| Overranked (gap low) | +10 | −30 |
+| Beat a favourite (E=0.2)   | **+32** | −8      |
+| Beat an underdog (E=0.85)  | +6      | **−34** |
+| Underranked (gap high)     | +30     | −10     |
+| Overranked (gap low)       | +10     | −30     |
 
-The `+5` floor guarantees **a win never yields nothing**. The expectation term *is* "balanced by
+The `+5` floor guarantees **a win never yields nothing**. The expectation term _is_ "balanced by
 expected result" — it's Elo's `(S − E)` rescaled to Merit.
 
 **FFA generalisation.** For N players finishing at place `p`, normalise placement to a 0..1 score:
@@ -344,16 +365,16 @@ the Merit formula above is **unchanged across all three modes**.
 Four **active** ranks; the rest ship dormant. Five divisions (V→I), 100 Merit each → 2100 Merit of
 range. Percentile bands, recomputed per season.
 
-| Rank | Divisions | Band | Colour |
-|---|---|---|---|
-| **Cadet** | — | placements | `#64748b` |
-| **Private** | V–I | bottom 40% | `#4ade80` |
-| *Sergeant* | V–I | *dormant* | — |
-| **Lieutenant** | V–I | next 35% | `#60a5fa` |
-| **Captain** | V–I | next 20% | `#a78bfa` |
-| *Major* | V–I | *dormant* | — |
-| *Colonel* | V–I | *dormant* | — |
-| **Maréchal** | — | top 5% | `#e47220` (brand) |
+| Rank           | Divisions | Band       | Colour            |
+| -------------- | --------- | ---------- | ----------------- |
+| **Cadet**      | —         | placements | `#64748b`         |
+| **Private**    | V–I       | bottom 40% | `#4ade80`         |
+| _Sergeant_     | V–I       | _dormant_  | —                 |
+| **Lieutenant** | V–I       | next 35%   | `#60a5fa`         |
+| **Captain**    | V–I       | next 20%   | `#a78bfa`         |
+| _Major_        | V–I       | _dormant_  | —                 |
+| _Colonel_      | V–I       | _dormant_  | —                 |
+| **Maréchal**   | —         | top 5%     | `#e47220` (brand) |
 
 Maréchal is apex: no divisions, **Merit unbounded**, so the top still sorts. Promotion at ≥100
 (`merit -= 100`, division−1); demotion at <0 with a grace window at 0.
@@ -388,18 +409,35 @@ finalize(tx, matchId):
   7. SET ratedAt                            ← existing guard covers 5+6
 ```
 
-`endgame.summary` then **reads** `MatchPlayerStats` for a finished match, and only replays for an
-in-progress one (its other use). Old finished rows have no stats row — backfill with a one-off
-replay script, or accept `null` (dev data is disposable).
+**`endgame.summary` keeps replaying — do NOT point it at `MatchPlayerStats`.** (An earlier draft of
+this plan said to; that was wrong.) `summary` returns `stats.timeline` (a per-turn snapshot of every
+player's funds/army-value/properties/income) and `stats.captureLog`, which the per-player table does
+not hold and shouldn't — they're a time series, not a row. Replaying for ONE match on demand was
+never the problem; **N replays for a list** was.
 
-> The `ratedAt` guard covers rating only. Steps 3–4 need their **own** idempotency (upsert, or a
-> `statsAt` marker) — finalize is reachable more than once, on the deciding action *and* on rebuild.
+So the split is:
+
+| Consumer                          | Source                      | Why                                          |
+| --------------------------------- | --------------------------- | -------------------------------------------- |
+| `match.history` list (§7)         | `MatchPlayerStats` + `days` | 10 rows/page — replay is fatal               |
+| `/report/[matchId]` battle report | `endgame.summary` (replays) | one match, on demand, and needs the timeline |
+
+Old finished rows have no stats row — backfill with a one-off replay script (`utils/`), the same
+shape as the league backfill. There are 6 finished matches; that's the whole job.
+
+> The `ratedAt` guard covers rating only. Steps 3–4 need their **own** idempotency — a `statsAt`
+> marker (skips the replay entirely on a repeat) plus `upsert` (self-heals a partial write). Finalize
+> is reachable more than once: on the deciding action, and on rebuild.
+>
+> Note the rebuild path (`match-store.ts:163`) finalizes **in memory only** and deliberately does not
+> persist — its comment already defers to "the backfill script". So `action.ts`'s transaction is the
+> single write point.
 
 ### 6.1 The `turn: 0` bug
 
 `finishedRowToFrontend` (`lifecycle-helpers.ts:44`) hardcodes `turn: 0`, and its comment rationalises
-it: *"`turn` isn't persisted for archived matches — the history UI keys off the result, not the day
-count."* **That's the bug, not the design** — it's why `MatchHistoryRow` guarded day behind
+it: _"`turn` isn't persisted for archived matches — the history UI keys off the result, not the day
+count."_ **That's the bug, not the design** — it's why `MatchHistoryRow` guarded day behind
 `match.turn > 0`, and why day never rendered.
 
 `Match.days` (step 4) fixes it at the source. Then **audit every stats/history route** that reports a
@@ -445,7 +483,7 @@ Both are **server-side paginated and filtered** — the current page filters and
 over the full list, which is fine at 48 rows and not at 500.
 
 This retires the `leagueType`/`isRanked`/`finishedAt` fields added to `finishedRowToFrontend` for
-the interim Your Games build; that contract goes back to being the *live* match list only.
+the interim Your Games build; that contract goes back to being the _live_ match list only.
 
 ---
 
@@ -453,15 +491,15 @@ the interim Your Games build; that contract goes back to being the *live* match 
 
 Each is independently shippable and leaves the tree green.
 
-| # | Phase | Touches | Unblocks |
-|---|---|---|---|
-| **1** | **Match representation** — `mode`/`ruleset` on `Match`+`Lobby`, **re-key `MMR` to `(playerId, mode)`** (§8.1), drop `LeagueType`, map per §3.1 | ~30 files, schema | mode filters; everything else |
-| **2** | **Stats denormalisation + `days`** — `MatchPlayerStats`, finalize writes, `turn: 0` fix, route audit | `matches`, `endgame`, `engine/previews` | grade on the collapsed row |
-| **3** | **`match.history` endpoint** — server-side page/filter, `MatchHistoryCard` reads it | `routers/match`, FE | full history UI |
-| **4** | **OpenSkill** — `PlayerSkill`, replace `elo.ts`, convert queue constants to μ | `ranking`, `matchmaking` | ranked FFA/2v2 |
-| **5** | **Merit ladder** — `Rank`, `PlayerRank`, `MeritEvent`, `ranking.myRank` | `ranking`, FE panel | Play progress panel |
-| **6** | **Seasons** — `Season`, `activeRanks`, rollover + soft reset | `ranking` | rank activation |
-| **7** | **Play page** — mode rail, queues, `mode`/`ranked` on `matchmaking.join` | `matchmaking`, FE | the other nav half |
+| #     | Phase                                                                                                                                          | Touches                                 | Unblocks                      |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------- |
+| **1** | **Match representation** — `mode`/`ruleset` on `Match`+`Lobby`, **re-key `MMR` to `(playerId, mode)`** (§8.1), drop `LeagueType`, map per §3.1 | ~30 files, schema                       | mode filters; everything else |
+| **2** | **Stats denormalisation + `days`** — `MatchPlayerStats`, finalize writes, `turn: 0` fix, route audit                                           | `matches`, `endgame`, `engine/previews` | grade on the collapsed row    |
+| **3** | **`match.history` endpoint** — server-side page/filter, `MatchHistoryCard` reads it                                                            | `routers/match`, FE                     | full history UI               |
+| **4** | **OpenSkill** — `PlayerSkill`, replace `elo.ts`, convert queue constants to μ                                                                  | `ranking`, `matchmaking`                | ranked FFA/2v2                |
+| **5** | **Merit ladder** — `Rank`, `PlayerRank`, `MeritEvent`, `ranking.myRank`                                                                        | `ranking`, FE panel                     | Play progress panel           |
+| **6** | **Seasons** — `Season`, `activeRanks`, rollover + soft reset                                                                                   | `ranking`                               | rank activation               |
+| **7** | **Play page** — mode rail, queues, `mode`/`ranked` on `matchmaking.join`                                                                       | `matchmaking`, FE                       | the other nav half            |
 
 **Phases 1–3 alone finish Your Games.** 4–7 are the ladder.
 
@@ -489,7 +527,7 @@ are the same queue today), and queue population isn't exposed.
   table is a case, plus both clamps and the draw.
 - **Rank/band mapping pure**: `(ordinal, activeRanks) → rank+division`, incl. dormant ranks being
   unreachable and the apex having no divisions.
-- **Don't unit-test OpenSkill itself** (it's a tested library) — test *our* wiring: a duel updates
+- **Don't unit-test OpenSkill itself** (it's a tested library) — test _our_ wiring: a duel updates
   both players symmetrically; a 2v2 rates four; an FFA respects finishing order; a draw is
   `score: [1,1]`; an unranked match writes nothing.
 - **Finalize idempotency**: run it twice, assert one `MatchPlayerStats` row and one `MeritEvent`.
@@ -512,11 +550,12 @@ No data behind any of these. All are single-table changes; revisit on a real dis
 
 - **FFA expectation is approximate** (§5) — `predictWin` gives P(win outright), not E[placement
   score]. Bounded and testable; decide in phase 4.
-- **Ladder reset.** `MMR` → `PlayerSkill` re-keys and changes units; dev ratings are gone. Fine now,
-  expensive after real migrations start (`prisma-migrations-deferred`).
+- **Ladder reset at phase 4.** `MMR` → `PlayerSkill` changes units (Int → μ/σ), so ratings genuinely
+  reset _there_ — 800-scale Elo has no honest conversion to a 25-scale μ. Phase 1's re-key does not
+  (§3). Cheap now, expensive once real migrations start (`prisma-migrations-deferred`).
 - **Scope.** This began as "split a nav link". Play now depends on seasons. That's the right design,
   but phases 1–3 deliver the user-visible win and 4–7 can wait.
 - **The codebase keeps knowing more than we assume.** `endgame.summary` already existed;
-  `computeGrades` already owned S/A/B/C; `honor` already owned Recruit *and* the metals; `general`
+  `computeGrades` already owned S/A/B/C; `honor` already owned Recruit _and_ the metals; `general`
   already meant CO. **Re-read `honor`, `ranking`, `matchmaking` and the schema before each phase** —
   every naming collision so far was with a feature already in the repo.

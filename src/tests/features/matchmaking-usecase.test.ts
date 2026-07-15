@@ -121,8 +121,8 @@ const NOW = 2_000_000;
 const ticket = (playerId: string, mmr: number): Ticket => ({
   playerId,
   mmr,
-  leagueType: "standard",
-  mode: "1v1",
+  ruleset: "standard",
+  mode: "duel",
   enqueuedAt: NOW,
 });
 
@@ -301,8 +301,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("rejects joining the queue twice", async () => {
-    await usecase.joinQueue("A", { leagueType: "standard", mode: "1v1" });
-    await expect(usecase.joinQueue("A", { leagueType: "standard", mode: "1v1" })).rejects.toThrow();
+    await usecase.joinQueue("A", { mode: "duel", ruleset: "standard" });
+    await expect(usecase.joinQueue("A", { mode: "duel", ruleset: "standard" })).rejects.toThrow();
     expect(usecase.status("A")).toMatchObject({ inQueue: true, mmr: 1000 });
   });
 });

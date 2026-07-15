@@ -2,27 +2,19 @@
  * Match-history filtering + paging — pure, FE-local, engine-free. Types are structural so this file
  * imports nothing from `shared/` or the server (see src/frontend/CLAUDE.md); drift against the
  * server's `finishedRowToFrontend` surfaces as a tsc error at the `your-games.tsx` call site.
- *
- * Filters deliberately key off `isRanked` + `leagueType` only — the two facts the list query
- * actually carries. Mode chips (1v1 / 2v2 / FFA) are NOT possible yet: `Match` has no `mode` column
- * (it lives on `Lobby`, and `lobbyId` is null for v1 matches), so they arrive with the mode × ruleset
- * taxonomy refactor rather than being faked from `map.numberOfPlayers` — which can't tell 2v2 from
- * FFA-4 anyway.
  */
 
-/** Structural mirror of the league values the server sends (Prisma `LeagueType`). */
-export type LeagueKind =
-  | "standard"
-  | "fog"
-  | "highFunds"
-  | "dualLeague"
-  | "standardTeams"
-  | "broken";
+/** FE-local mirror of the server's `GameMode`. Identifiers, not labels — see MODE_LABEL. */
+export type GameMode = "duel" | "teams" | "ffa";
+
+/** FE-local mirror of the server's `Ruleset`. */
+export type Ruleset = "standard" | "fog" | "highFunds" | "broken";
 
 /** Only what a filter needs to decide — kept minimal so callers can pass richer rows. */
 export type HistoryFilterable = {
   isRanked?: boolean;
-  leagueType?: string | null;
+  mode?: string | null;
+  ruleset?: string | null;
 };
 
 export type HistoryFilter = {
@@ -31,32 +23,43 @@ export type HistoryFilter = {
   accepts: (match: HistoryFilterable) => boolean;
 };
 
+/**
+ * Two independent axes, flattened into one chip row because that's how players think ("show me my
+ * ranked games", "show me my 2v2s") — not because they're the same kind of thing.
+ */
 export const HISTORY_FILTERS: HistoryFilter[] = [
   { key: "all", label: "All", accepts: () => true },
   { key: "ranked", label: "Ranked", accepts: (match) => match.isRanked === true },
-  { key: "casual", label: "Casual", accepts: (match) => match.isRanked !== true },
-  { key: "standard", label: "Standard", accepts: (match) => match.leagueType === "standard" },
-  { key: "fog", label: "Fog", accepts: (match) => match.leagueType === "fog" },
-  { key: "highFunds", label: "High funds", accepts: (match) => match.leagueType === "highFunds" },
+  { key: "duel", label: "1v1", accepts: (match) => match.mode === "duel" },
+  { key: "teams", label: "2v2", accepts: (match) => match.mode === "teams" },
+  { key: "ffa", label: "FFA", accepts: (match) => match.mode === "ffa" },
+  { key: "fog", label: "Fog", accepts: (match) => match.ruleset === "fog" },
 ];
 
 /** Rows per page in the history list. */
 export const HISTORY_PAGE_SIZE = 10;
 
-/** Human label for a league value; unknown/missing reads as "Custom" (v1 rows carry no league). */
-export const LEAGUE_LABEL: Record<string, string> = {
+/** Prisma enum values are identifiers (they can't start with a digit); these are what players read. */
+export const MODE_LABEL: Record<string, string> = {
+  duel: "1v1",
+  teams: "2v2",
+  ffa: "FFA",
+};
+
+export const RULESET_LABEL: Record<string, string> = {
   standard: "Standard",
   fog: "Fog",
   highFunds: "High funds",
-  dualLeague: "Dual",
-  standardTeams: "Teams",
   broken: "Broken",
 };
 
-export const leagueLabelOf = (leagueType: string | null | undefined): string =>
-  leagueType === null || leagueType === undefined
-    ? "Custom"
-    : (LEAGUE_LABEL[leagueType] ?? leagueType);
+const labelFrom = (labels: Record<string, string>, value: string | null | undefined): string =>
+  value === null || value === undefined ? "—" : (labels[value] ?? value);
+
+export const modeLabelOf = (mode: string | null | undefined): string => labelFrom(MODE_LABEL, mode);
+
+export const rulesetLabelOf = (ruleset: string | null | undefined): string =>
+  labelFrom(RULESET_LABEL, ruleset);
 
 /** Total pages for `count` rows, never less than 1 (an empty list still has a page to show). */
 export const pageCountOf = (count: number): number =>

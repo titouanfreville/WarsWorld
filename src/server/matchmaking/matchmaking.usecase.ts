@@ -1,4 +1,4 @@
-import type { LeagueType, PrismaClient } from "@prisma/client";
+import type { GameMode, PrismaClient, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { emitQueue } from "server/emitter/matchmaking-emitter";
@@ -27,7 +27,8 @@ import type { JoinQueueInput } from "./schemas";
 /** The narrow cross-feature contracts matchmaking needs (no direct feature-to-feature imports). */
 type MatchSpawner = { spawnFromLobby(req: SpawnRequest): Promise<{ matchId: string }> };
 type Rater = {
-  getRatings(playerIds: string[], leagueType: LeagueType): Promise<Map<string, number>>;
+  /** Ratings pool by MODE — a fog duel and a standard duel move the same number. */
+  getRatings(playerIds: string[], mode: GameMode): Promise<Map<string, number>>;
 };
 
 /** Fisher–Yates over a copy. */
@@ -46,11 +47,11 @@ const shuffled = <T>(items: readonly T[]): T[] => {
 const rollTeamFactions = (teamCount: number): Army[] =>
   shuffled(armySchema.options).slice(0, teamCount);
 
-/** Sensible default rules for a ranked queue game, with the couple of per-league tweaks that matter. */
-const defaultRulesFor = (leagueType: LeagueType): MatchRules => ({
+/** Sensible default rules for a queue game, with the couple of per-ruleset tweaks that matter. */
+const defaultRulesFor = (ruleset: Ruleset): MatchRules => ({
   unitCapPerPlayer: 50,
-  fogOfWar: leagueType === "fog",
-  fundsPerProperty: leagueType === "highFunds" ? 3000 : 1000,
+  fogOfWar: ruleset === "fog",
+  fundsPerProperty: ruleset === "highFunds" ? 3000 : 1000,
   labUnitTypes: [],
   bannedUnitTypes: [],
   captureLimit: 50,
@@ -153,12 +154,13 @@ export class MatchmakingUsecase {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Finish your current match first" });
     }
 
-    const ratings = await this.ranking.getRatings([playerId], input.leagueType);
+    // Rating is per MODE — the ruleset the player queued for doesn't split it.
+    const ratings = await this.ranking.getRatings([playerId], input.mode);
 
     this.queue.add({
       playerId,
-      leagueType: input.leagueType,
       mode: input.mode,
+      ruleset: input.ruleset,
       mmr: ratings.get(playerId) ?? DEFAULT_MMR,
       enqueuedAt: Date.now(),
     });
@@ -185,8 +187,8 @@ export class MatchmakingUsecase {
     const now = Date.now();
     return {
       inQueue: true as const,
-      leagueType: ticket.leagueType,
       mode: ticket.mode,
+      ruleset: ticket.ruleset,
       mmr: ticket.mmr,
       waitedMs: now - ticket.enqueuedAt,
       tolerance: Math.round(toleranceAt(ticket, now)),
@@ -262,10 +264,11 @@ export class MatchmakingUsecase {
     const lobby = await this.db.lobby.create({
       data: {
         hostPlayerId: null,
-        mode: "1v1",
+        // Both tickets share a bucket keyed by (mode, ruleset), so a's values are b's too.
+        mode: a.mode,
         isRanked: true,
-        leagueType: a.leagueType,
-        rules: defaultRulesFor(a.leagueType),
+        ruleset: a.ruleset,
+        rules: defaultRulesFor(a.ruleset),
         status: "ready_check",
         readyEndsAt,
         readyCheckLenient: lenient,
@@ -655,8 +658,8 @@ export class MatchmakingUsecase {
 
     const { matchId } = await this.matches.spawnFromLobby({
       lobbyId,
-      mode: "1v1",
-      leagueType: lobby.leagueType,
+      mode: lobby.mode,
+      ruleset: lobby.ruleset,
       isRanked: lobby.isRanked,
       mapId: lobby.mapId,
       rules: lobby.rules,

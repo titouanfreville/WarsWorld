@@ -23,7 +23,7 @@ import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-matc
 import { mainEventToEmittables } from "server/engine/events/event-to-emittable";
 import { updateMoveVision } from "server/engine/events/handlers/move";
 import { fillDiscoveredUnitsAndProperties } from "server/engine/events/vision-update";
-import { rankingUsecase } from "server/composition-root";
+import { endgameUsecase, rankingUsecase } from "server/composition-root";
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "server/trpc/trpc-setup";
 import { finalizeIfGameOver } from "server/engine/previews/finalize";
 
@@ -189,6 +189,11 @@ export const actionRouter = router({
           // Ranked matches move MMR in the SAME transaction, off the results just stamped above.
           // Self-guards on `isRanked`/`ratedAt`, so v1 and unranked matches are a cheap no-op.
           await rankingUsecase.applyMatchResult(tx, match.id);
+
+          // Battle-report headline (grade + damage/kills/captures) + day/duration, derived once here
+          // so the history list never replays the event log per row. Every finished match, ranked or
+          // not; self-guards on `statsAt`. It reads the event written above, hence same-tx.
+          await endgameUsecase.persistStats(tx, match.id);
         }
       });
 

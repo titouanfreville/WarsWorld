@@ -48,16 +48,31 @@ export class MatchLifecycleUsecase {
 
   // Finished matches are archived out of the live store (rebuild skips them), so history reads from
   // the DB. Membership lives in the `playerState` JSON, so filter it in memory after fetching.
+  /**
+   * The viewer's finished matches, each carrying THEIR OWN battle-report headline (grade + the three
+   * axes + damage/kills/captures), joined from `MatchPlayerStats` — written once at finalize, so the
+   * list never replays an event log. `days`/`durationMs` ride on the row itself.
+   *
+   * `playerStats` is filtered to the viewer, so a row is exactly what this player did in that match;
+   * it's null for matches finished before the stats write landed whose backfill failed (e.g. a log
+   * that can't replay — see utils/backfill-match-stats.ts), and the UI degrades to the outcome alone.
+   *
+   * KNOWN LIMIT — this scans every finished match and filters membership in memory, because there is
+   * no queryable index for it: `MatchPlayer` covers only v2 matches, and the implicit `_MatchToPlayer`
+   * relation the schema declares is never populated (0 rows). That's also why paging is still the
+   * client's job: `skip`/`take` here would page BEFORE the filter and return ragged pages. Fine at
+   * this scale, wrong at 500 — fixing it needs a real membership index, not a query tweak.
+   */
   async listPlayerFinishedMatches(playerId: string) {
     const rows = await this.db.match.findMany({
       where: { status: "finished" },
-      include: { map: true },
+      include: { map: true, playerStats: { where: { playerId } } },
       orderBy: { finishedAt: "desc" },
     });
 
     return rows
       .filter((row) => row.playerState.some((player) => player.id === playerId))
-      .map(finishedRowToFrontend);
+      .map((row) => ({ ...finishedRowToFrontend(row), viewerStats: row.playerStats[0] ?? null }));
   }
 
   // ── Setup lifecycle ───────────────────────────────────────────────────────────

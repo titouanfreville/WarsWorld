@@ -1,11 +1,10 @@
 import { z } from "zod";
+import { gameModeSchema, rulesetSchema } from "server/core/schemas/game-mode";
 import { matchRulesSchema } from "server/core/schemas/match-rules";
-import { leagueTypeSchema } from "server/matches/league";
-import { lobbyModeSchema } from "server/matches/layout";
 
 export const createLobbySchema = z.object({
-  mode: lobbyModeSchema,
-  leagueType: leagueTypeSchema,
+  mode: gameModeSchema,
+  ruleset: rulesetSchema,
   mapId: z.string(),
   isRanked: z.boolean().default(false),
   // teamMapping in here is a placeholder; the real mapping is derived from seat assignments at spawn.

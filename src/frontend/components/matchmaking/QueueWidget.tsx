@@ -1,5 +1,5 @@
 import { usePlayers } from "frontend/context/players";
-import { LEAGUE_LABEL, useQueue } from "frontend/context/matchmaking";
+import { MODE_LABEL, RULESET_LABEL, useQueue } from "frontend/context/matchmaking";
 import { trpc } from "frontend/utils/trpc-client";
 import { useEffect, useState } from "react";
 
@@ -61,7 +61,7 @@ export default function QueueWidget() {
           </span>
           <span className="@text-xs @font-bold @uppercase @tracking-[0.14em]">Finding match</span>
           <span className="@ml-auto @rounded-full @border @border-primary-dark @px-2 @py-[3px] @text-[10px] @font-bold @uppercase @tracking-wider @text-primary-light">
-            Solo · {LEAGUE_LABEL[state.league]}
+            {MODE_LABEL[state.mode]} · {RULESET_LABEL[state.ruleset]}
           </span>
         </div>
         <div className="@px-4 @pb-4 @pt-4">

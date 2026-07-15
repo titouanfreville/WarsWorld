@@ -1,14 +1,18 @@
-import type { LeagueType } from "@prisma/client";
+import type { GameMode, Ruleset } from "@prisma/client";
 import { BASE_TOLERANCE, MAX_TOLERANCE, REMATCH_COOLDOWN_MS, TOLERANCE_RATE } from "./constants";
 
-/** Solo queue only for now; the field exists so buckets and pairing already key on it. */
-export type QueueMode = "1v1";
-
-/** One player waiting in the queue. `mmr` is snapshotted at enqueue; `enqueuedAt` is ms epoch. */
+/**
+ * One player waiting in the queue. `mmr` is snapshotted at enqueue; `enqueuedAt` is ms epoch.
+ *
+ * A QUEUE is identified by mode × ruleset (× ranked, once join carries that axis — plan phase 7):
+ * you queue for Fog specifically, and shouldn't be paired into a Standard game. The RATING is a
+ * different question — it pools by mode alone, so `mmr` here is the player's whole-mode rating
+ * regardless of which ruleset's bucket they're sitting in.
+ */
 export type Ticket = {
   playerId: string;
-  leagueType: LeagueType;
-  mode: QueueMode;
+  mode: GameMode;
+  ruleset: Ruleset;
   mmr: number;
   enqueuedAt: number;
 };
@@ -21,7 +25,7 @@ export const toleranceAt = (ticket: Ticket, now: number): number => {
   return Math.min(MAX_TOLERANCE, BASE_TOLERANCE + TOLERANCE_RATE * waitedSec);
 };
 
-const bucketKey = (leagueType: LeagueType, mode: QueueMode): string => `${leagueType}:${mode}`;
+const bucketKey = (mode: GameMode, ruleset: Ruleset): string => `${mode}:${ruleset}`;
 
 /** Order-independent key for a pair of players (anti-rematch bookkeeping). */
 const pairKey = (a: string, b: string): string => (a < b ? `${a}~${b}` : `${b}~${a}`);
@@ -81,7 +85,7 @@ export class MatchQueue {
   }
 
   /**
-   * One pairing pass. Within each (league, mode) bucket, oldest ticket first, greedily match it to
+   * One pairing pass. Within each (mode, ruleset) bucket, oldest ticket first, greedily match it to
    * the closest-MMR partner that BOTH players' tolerances admit (the `min` rule) and that isn't on
    * rematch cooldown. Every returned pair's tickets are removed from the queue.
    */
@@ -91,7 +95,7 @@ export class MatchQueue {
     const buckets = new Map<string, Ticket[]>();
 
     for (const ticket of this.tickets.values()) {
-      const key = bucketKey(ticket.leagueType, ticket.mode);
+      const key = bucketKey(ticket.mode, ticket.ruleset);
       (buckets.get(key) ?? buckets.set(key, []).get(key)!).push(ticket);
     }
 

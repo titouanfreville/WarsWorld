@@ -28,33 +28,39 @@ export const matchToFrontend = (match: MatchWrapper) => ({
   // Authoritative now: finalizeIfGameOver flips status="finished" both on the deciding action and on
   // rebuild, so the outcome no longer needs re-deriving on every read.
   finished: match.status === "finished",
-  // Same label the history list keys off, so a match that finished THIS session (still in the
+  // Same labels the history list keys off, so a match that finished THIS session (still in the
   // in-memory list) tags identically to its archived row. `isRanked` has no counterpart here — it's
   // ranking metadata, not match state, so it isn't on `MatchWrapper` and stays DB-only; the history
   // dedupe prefers the DB row, which carries it.
-  leagueType: match.leagueType,
+  mode: match.mode,
+  ruleset: match.ruleset,
 });
 
 /**
  * Map a persisted DB row to the same shape as `matchToFrontend`. Used for finished matches, which are
  * archived out of the in-memory store (`match-store.rebuild` skips `finished`) and so must be read
- * straight from the DB. `turn` isn't persisted for archived matches — the history UI keys off the
- * result, not the day count (the real day count comes from `endgame.summary`, which replays the log).
+ * straight from the DB.
  *
- * `leagueType`/`isRanked`/`finishedAt` ride along so the history list can label and filter a row
- * without a per-row `endgame.summary` call — that one replays the whole event log, so it stays
- * lazy behind the row's expand.
+ * `turn` used to be hardcoded to 0 here, rationalised as "the history UI keys off the result, not the
+ * day count" — that was a bug wearing a design's clothes, and it's why the day never rendered.
+ * `Match.days` is now persisted at finalize, so the real count is available without replaying the
+ * log. It stays null on rows that finished before that landed and were never backfilled.
+ *
+ * `mode`/`ruleset`/`isRanked`/`finishedAt` ride along so the history list can label and filter a row
+ * without a per-row `endgame.summary` call — that one replays the whole event log.
  */
 export const finishedRowToFrontend = (row: Match & { map: WWMap }) => ({
   id: row.id,
   map: { id: row.map.id, name: row.map.name, numberOfPlayers: row.map.numberOfPlayers },
   players: row.playerState as PlayerInMatch[],
   state: row.status,
-  turn: 0,
+  turn: row.days ?? 0,
   finished: true,
-  leagueType: row.leagueType,
+  mode: row.mode,
+  ruleset: row.ruleset,
   isRanked: row.isRanked,
   finishedAt: row.finishedAt,
+  durationMs: row.durationMs,
 });
 
 export function allMatchSlotsReady(match: MatchWrapper) {

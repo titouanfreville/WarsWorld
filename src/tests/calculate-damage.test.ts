@@ -58,6 +58,7 @@ function buildScenario() {
 
   const match = new MatchWrapper(
     "",
+    "duel",
     "standard",
     [],
     {

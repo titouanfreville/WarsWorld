@@ -45,7 +45,8 @@ export const buildMatchFullView = (match: MatchWrapper, currentPlayerId: string)
 
   return {
     id: match.id,
-    leagueType: match.leagueType,
+    mode: match.mode,
+    ruleset: match.ruleset,
     // Fog-projected: fogged properties show their last-known owner, not the live one, so a capture
     // out of the viewer's vision doesn't leak through this full-board refetch (see fogViewChangeableTiles).
     changeableTiles: fogViewChangeableTiles(match, viewerTeam),

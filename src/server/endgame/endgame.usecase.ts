@@ -1,9 +1,20 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { egPresentPlayers, markEgPresent } from "server/adapters/eg-presence";
 import { buildMatchWrapper } from "server/match-store";
 import { computeGrades } from "server/engine/previews/match-grade";
 import { buildMatchStats } from "server/engine/previews/match-stats";
+
+/** Accepts the base client or a transaction client, so `persistStats` can join finalize's tx. */
+type Db = PrismaClient | Prisma.TransactionClient;
+
+const MATCH_INCLUDE = {
+  map: true,
+  // Replay order is the per-match event `index` (see MatchStore.rebuild) — SQL leaves relation
+  // order undefined without this, which would scramble the replay.
+  Event: { orderBy: { index: "asc" } },
+  matchPlayers: { include: { player: { select: { id: true, name: true } } } },
+} as const;
 
 /**
  * End-game feature usecase (see .ai/plans/end-game-screen-plan.md, Epic 3.2). Its one job: given a
@@ -18,38 +29,99 @@ import { buildMatchStats } from "server/engine/previews/match-stats";
 export class EndgameUsecase {
   constructor(private readonly db: PrismaClient) {}
 
-  async summary(matchId: string) {
-    const raw = await this.db.match.findUnique({
-      where: { id: matchId },
-      include: {
-        map: true,
-        // Replay order is the per-match event `index` (see MatchStore.rebuild) — SQL leaves relation
-        // order undefined without this, which would scramble the replay.
-        Event: { orderBy: { index: "asc" } },
-        matchPlayers: { include: { player: { select: { id: true, name: true } } } },
-      },
-    });
+  /**
+   * The replay: seed a throwaway match from the DB rows exactly as `MatchStore` does, run the event
+   * log onto it, and derive the stats + grades. Shared by `summary` (which needs the full analysis,
+   * timeline included) and `persistStats` (which keeps only the per-player headline).
+   *
+   * This is the expensive bit — it reads and replays every event — which is exactly why the history
+   * list must never call it per row.
+   */
+  private async analyse(db: Db, matchId: string) {
+    const raw = await db.match.findUnique({ where: { id: matchId }, include: MATCH_INCLUDE });
 
     if (raw === null) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Match not found" });
     }
 
     const hasRelationalPlayers = raw.matchPlayers.length > 0;
-
-    // A fresh, unreplayed seed + the ordered log → the same replay MatchStore does, but throwaway.
     const seed = buildMatchWrapper(
       raw,
       raw.map,
       hasRelationalPlayers ? raw.matchPlayers : undefined,
     );
-    const events = raw.Event.map((event) => event.content);
-    const stats = buildMatchStats(seed, events);
+    const stats = buildMatchStats(
+      seed,
+      raw.Event.map((event) => event.content),
+    );
 
     // Wall-clock duration. A finished match has `finishedAt`; for one that never formally finished
     // (e.g. cancelled after play), fall back to the last event's timestamp so a real duration still
     // shows instead of a blank.
     const endedAt = raw.finishedAt ?? raw.Event[raw.Event.length - 1]?.createdAt ?? raw.createdAt;
     const durationMs = Math.max(0, endedAt.getTime() - raw.createdAt.getTime());
+
+    return { raw, hasRelationalPlayers, stats, durationMs };
+  }
+
+  /**
+   * Write the per-player battle-report headline + day/duration. Called from finalize's transaction,
+   * so a finished match carries its grade without anyone replaying the log again.
+   *
+   * Guarded by `Match.statsAt` — its own marker, NOT `ratedAt`: stats are written for every finished
+   * match, ranked or not. The guard skips the replay entirely on a repeat (finalize is reachable
+   * more than once), and the upsert makes a partial write self-heal.
+   */
+  async persistStats(tx: Db, matchId: string): Promise<void> {
+    const existing = await tx.match.findUnique({
+      where: { id: matchId },
+      select: { statsAt: true },
+    });
+
+    if (existing === null || existing.statsAt !== null) {
+      return;
+    }
+
+    const { stats, durationMs } = await this.analyse(tx, matchId);
+    const gradeById = new Map(computeGrades(stats).map((grade) => [grade.playerId, grade]));
+
+    for (const player of stats.players) {
+      const grade = gradeById.get(player.playerId);
+
+      if (grade === undefined) {
+        continue;
+      }
+
+      const row = {
+        grade: grade.overall,
+        tactics: grade.tactics.score,
+        strength: grade.strength.score,
+        economy: grade.economy.score,
+        damageDealt: Math.round(player.damageDealt),
+        damageTaken: Math.round(player.damageTaken),
+        unitsKilled: player.unitsKilled,
+        unitsLost: player.unitsLost,
+        captures: player.captures,
+        producedFunds: Math.round(player.producedFunds),
+        incomeEarned: Math.round(player.incomeEarned),
+        powersUsed: player.powersUsed,
+      };
+
+      await tx.matchPlayerStats.upsert({
+        where: { matchId_playerId: { matchId, playerId: player.playerId } },
+        create: { matchId, playerId: player.playerId, ...row },
+        update: row,
+      });
+    }
+
+    await tx.match.update({
+      where: { id: matchId },
+      data: { days: stats.days, durationMs, statsAt: new Date() },
+    });
+  }
+
+  async summary(matchId: string) {
+    const { raw, hasRelationalPlayers, stats, durationMs } = await this.analyse(this.db, matchId);
 
     // Per-player letter grade (Tactics/Strength/Economy → overall), derived from the stats.
     const gradeById = new Map(computeGrades(stats).map((grade) => [grade.playerId, grade]));

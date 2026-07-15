@@ -1,4 +1,4 @@
-import { LEAGUE_LABEL, LEAGUES, useQueue, type League } from "frontend/context/matchmaking";
+import { RULESET_LABEL, RULESETS, useQueue, type Ruleset } from "frontend/context/matchmaking";
 import { useState } from "react";
 
 /**
@@ -37,17 +37,19 @@ export default function PlayButton() {
   if (pickerOpen) {
     return (
       <div className="@flex @flex-wrap @items-center @gap-1.5 @rounded-lg @border @border-bg-tertiary @bg-bg-secondary @p-1.5">
-        {LEAGUES.map((league: League) => (
+        {/* Duel-only picker: the queue takes a mode now, but there's no UI to choose one until the
+            Play page lands (plan phase 7), so this keeps today's behaviour. */}
+        {RULESETS.map((ruleset: Ruleset) => (
           <button
-            key={league}
+            key={ruleset}
             disabled={joining}
             onClick={() => {
-              join(league);
+              join({ mode: "duel", ruleset });
               setPickerOpen(false);
             }}
             className="@rounded-md @px-2.5 @py-1.5 @text-xs @font-semibold @uppercase @tracking-wide @text-slate-300 @transition hover:@bg-primary hover:@text-black disabled:@opacity-50"
           >
-            {LEAGUE_LABEL[league]}
+            {RULESET_LABEL[ruleset]}
           </button>
         ))}
         <button

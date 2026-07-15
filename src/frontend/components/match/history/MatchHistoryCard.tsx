@@ -1,25 +1,35 @@
 import { coPortraitUrl } from "frontend/utils/sprites/co";
 import { formatDuration, formatMatchDate } from "frontend/utils/format-time";
-import { trpc } from "frontend/utils/trpc-client";
+import Link from "next/link";
 import { useState } from "react";
 import { deriveLobbyStatus } from "../lobby/match-status";
-import { leagueLabelOf } from "./history-filters";
+import { modeLabelOf, rulesetLabelOf } from "./history-filters";
 
 /**
- * One row in the match-history list: the outcome at a glance, both COs, and — once expanded — the
- * battle report's headline stats and the per-axis grade.
+ * One row in the match-history list: outcome, grade and headline stats at a glance; the three grade
+ * axes on expand.
  *
- * The stats are NOT on the collapsed row on purpose. `endgame.summary` rebuilds a throwaway match
- * and replays the whole event log to derive them; that's fine for one match, but ten of them on
- * every page load is not. So the query is gated on `open` (the codebase's established `enabled:`
- * pattern) and each row pays for itself only when the player asks. Putting the grade on the
- * collapsed row wants the stats denormalised at finalize instead — a backend change, not a UI one.
+ * Everything here comes from the LIST query — `viewerStats` is joined from `MatchPlayerStats`, which
+ * finalize writes once per match. This row used to lazily fetch `endgame.summary` on expand, because
+ * the stats could only be had by replaying the whole event log; that's gone. The full battle report
+ * (which needs the per-turn timeline, and so still replays) lives behind the link at /report.
  */
 
 type HistoryPlayer = {
   id: string;
   name: string;
   coId?: { name: string } | null;
+};
+
+/** The viewer's own row from `MatchPlayerStats`. Null when a match has no stats (see below). */
+type ViewerStats = {
+  grade: string;
+  tactics: number;
+  strength: number;
+  economy: number;
+  damageDealt: number;
+  unitsKilled: number;
+  captures: number;
 };
 
 /**
@@ -33,11 +43,15 @@ type Props = {
     map: { name: string; numberOfPlayers: number };
     players: (HistoryPlayer & { status?: "alive" | "routed" | "captured" })[];
     state: string;
+    /** Day count. Real for finished rows now that `Match.days` is persisted (was hardcoded 0). */
     turn: number;
     finished?: boolean;
     isRanked?: boolean;
-    leagueType?: string | null;
+    mode?: string | null;
+    ruleset?: string | null;
     finishedAt?: Date | string | null;
+    durationMs?: number | null;
+    viewerStats?: ViewerStats | null;
   };
   playerId: string | undefined;
 };
@@ -77,13 +91,20 @@ function CoMug({ co, muted }: { co: string | undefined; muted?: boolean }) {
   );
 }
 
-function Axis({ name, score, letter }: { name: string; score: number; letter: string }) {
+/**
+ * FE-local mirror of the server's `letterOf` (match-grade.ts) — the axis letter is a pure function of
+ * its score, so it's derived here rather than widening the stats row to carry three more strings.
+ */
+const letterOf = (score: number): string =>
+  score >= 85 ? "S" : score >= 70 ? "A" : score >= 50 ? "B" : "C";
+
+function Axis({ name, score }: { name: string; score: number }) {
   return (
     <div>
       <div className="@mb-1 @flex @justify-between @text-xs">
         <span className="@font-semibold @uppercase @tracking-wide @text-slate-500">{name}</span>
         <span className="@text-slate-300">
-          {score} · {letter}
+          {score} · {letterOf(score)}
         </span>
       </div>
       <div className="@h-1.5 @overflow-hidden @rounded @bg-bg-tertiary/50">
@@ -117,9 +138,6 @@ function Stat({
 export default function MatchHistoryCard({ match, playerId }: Props) {
   const [open, setOpen] = useState(false);
 
-  // Gated on `open` — see the note above: this replays the match's whole event log.
-  const summary = trpc.endgame.summary.useQuery({ matchId: match.id }, { enabled: open });
-
   const status = deriveLobbyStatus(match, playerId);
   const meta =
     status === "victory" || status === "defeat" || status === "draw"
@@ -128,9 +146,7 @@ export default function MatchHistoryCard({ match, playerId }: Props) {
 
   const viewer = match.players.find((player) => player.id === playerId);
   const opponent = match.players.find((player) => player.id !== playerId);
-
-  const grade = summary.data?.players.find((player) => player.playerId === playerId)?.grade ?? null;
-  const stats = summary.data?.stats.players.find((player) => player.playerId === playerId) ?? null;
+  const stats = match.viewerStats ?? null;
 
   return (
     <div className="@relative @overflow-hidden @rounded-lg @bg-bg-primary @outline @outline-2 @outline-black">
@@ -139,8 +155,24 @@ export default function MatchHistoryCard({ match, playerId }: Props) {
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="@grid @w-full @grid-cols-[auto_auto_1fr_auto] @items-center @gap-4 @py-3 @pl-5 @pr-4 @text-left"
+        className="@grid @w-full @grid-cols-[auto_auto_auto_1fr_auto_auto] @items-center @gap-4 @py-3 @pl-5 @pr-4 @text-left"
       >
+        {/* The "match note". Null only when a match has no stats row — a pre-stats match whose
+            backfill failed (an event log that can't replay). Reserve the width either way so rows
+            don't jag. */}
+        <span
+          className={`@grid @h-9 @w-9 @flex-none @place-items-center @rounded-md @font-russoOne @text-lg @outline @outline-1 ${
+            stats === null
+              ? "@text-slate-700 @outline-slate-700/30"
+              : (GRADE_STYLE[stats.grade] ?? GRADE_STYLE.C)
+          }`}
+          title={
+            stats === null ? "No battle report for this match" : `Overall grade: ${stats.grade}`
+          }
+        >
+          {stats?.grade ?? "–"}
+        </span>
+
         <span className={`@w-[4.5rem] @text-lg @font-bold @uppercase @tracking-wide ${meta.text}`}>
           {meta.label}
         </span>
@@ -169,13 +201,29 @@ export default function MatchHistoryCard({ match, playerId }: Props) {
               {match.isRanked === true ? "Ranked" : "Casual"}
             </span>
             <span className="@rounded @bg-bg-tertiary/50 @px-1.5 @py-0.5 @font-semibold @text-slate-300">
-              {leagueLabelOf(match.leagueType)}
+              {modeLabelOf(match.mode)}
             </span>
+            <span className="@rounded @bg-bg-tertiary/50 @px-1.5 @py-0.5 @font-semibold @text-slate-300">
+              {rulesetLabelOf(match.ruleset)}
+            </span>
+            {match.turn > 0 && <span>Day {match.turn}</span>}
+            {match.durationMs !== null && match.durationMs !== undefined && (
+              <span>{formatDuration(match.durationMs)}</span>
+            )}
             {match.finishedAt !== null && match.finishedAt !== undefined && (
               <span>{formatMatchDate(match.finishedAt)}</span>
             )}
           </span>
         </span>
+
+        {/* Headline stats, straight from the list query — no per-row replay. */}
+        {stats !== null && (
+          <span className="@hidden @gap-5 laptop:@flex">
+            <Stat value={`${Math.round(stats.damageDealt / 100) / 10}k`} label="Damage" accent />
+            <Stat value={stats.unitsKilled} label="Kills" />
+            <Stat value={stats.captures} label="Caps" />
+          </span>
+        )}
 
         <span className={`@text-xs @text-slate-500 @transition ${open ? "@rotate-90" : ""}`}>
           ▶
@@ -184,70 +232,49 @@ export default function MatchHistoryCard({ match, playerId }: Props) {
 
       {open && (
         <div className="@border-t @border-bg-tertiary/30 @px-4 @pb-4 @pl-5">
-          {summary.isLoading && (
-            <p className="@py-4 @text-center @text-xs @text-slate-500">Loading battle report…</p>
-          )}
-
-          {summary.isError && (
-            <p className="@py-4 @text-center @text-xs @text-red-400">
-              Couldn&apos;t load this battle report.
+          {stats === null ? (
+            <p className="@py-4 @text-xs @text-slate-500">
+              No battle report for this match — it finished before reports were recorded, and its
+              event log can&apos;t be replayed to rebuild one.
             </p>
-          )}
-
-          {summary.data !== undefined && summary.data !== null && (
+          ) : (
             <>
-              <div className="@flex @flex-wrap @items-center @justify-between @gap-4 @py-3">
-                <div className="@flex @items-center @gap-3">
-                  {grade !== null && (
-                    <div
-                      className={`@grid @h-9 @w-9 @place-items-center @rounded-md @font-russoOne @text-lg @outline @outline-1 ${
-                        GRADE_STYLE[grade.overall] ?? GRADE_STYLE.C
-                      }`}
-                      title={`Overall grade: ${grade.overall}`}
-                    >
-                      {grade.overall}
-                    </div>
-                  )}
-                  <div className="@text-xs @text-slate-500">
-                    Day {summary.data.stats.days} · {formatDuration(summary.data.durationMs)}
-                  </div>
-                </div>
-
-                {stats !== null && (
-                  <div className="@flex @gap-5">
-                    <Stat
-                      value={`${Math.round(stats.damageDealt / 100) / 10}k`}
-                      label="Damage"
-                      accent
-                    />
-                    <Stat value={stats.unitsKilled} label="Kills" />
-                    <Stat value={stats.captures} label="Caps" />
-                  </div>
-                )}
+              {/* Narrow screens hide the headline row above, so repeat it here. */}
+              <div className="@flex @gap-5 @py-3 laptop:@hidden">
+                <Stat
+                  value={`${Math.round(stats.damageDealt / 100) / 10}k`}
+                  label="Damage"
+                  accent
+                />
+                <Stat value={stats.unitsKilled} label="Kills" />
+                <Stat value={stats.captures} label="Caps" />
               </div>
 
-              {grade !== null && (
-                <div className="@grid @gap-4 @py-2 laptop:@grid-cols-3">
-                  <Axis name="Tactics" score={grade.tactics.score} letter={grade.tactics.letter} />
-                  <Axis
-                    name="Strength"
-                    score={grade.strength.score}
-                    letter={grade.strength.letter}
-                  />
-                  <Axis name="Economy" score={grade.economy.score} letter={grade.economy.letter} />
-                </div>
-              )}
-
-              {/* Finished matches are archived out of the live store, so there's no board to open.
-                  Replay/archived viewing is a follow-up. */}
-              <span
-                className="@mt-3 @inline-block @cursor-not-allowed @select-none @rounded @border @border-dashed @border-bg-tertiary/50 @px-3 @py-1 @text-xs @font-semibold @text-slate-600"
-                title="Replays aren't available yet"
-              >
-                Replay — not available yet
-              </span>
+              <div className="@grid @gap-4 @py-2 laptop:@grid-cols-3">
+                <Axis name="Tactics" score={stats.tactics} />
+                <Axis name="Strength" score={stats.strength} />
+                <Axis name="Economy" score={stats.economy} />
+              </div>
             </>
           )}
+
+          <div className="@mt-3 @flex @flex-wrap @items-center @gap-2">
+            <Link
+              href={`/report/${match.id}`}
+              className="@rounded @bg-primary @px-3 @py-1.5 @text-xs @font-semibold @uppercase @tracking-wide @text-black @transition hover:@brightness-110"
+            >
+              Full battle report
+            </Link>
+
+            {/* Finished matches are archived out of the live store, so there's no board to
+                re-open. Replay is a follow-up; the report above is the read-only substitute. */}
+            <span
+              className="@cursor-not-allowed @select-none @rounded @border @border-dashed @border-bg-tertiary/50 @px-3 @py-1.5 @text-xs @font-semibold @text-slate-600"
+              title="Replays aren't available yet"
+            >
+              Replay — not available yet
+            </span>
+          </div>
         </div>
       )}
     </div>

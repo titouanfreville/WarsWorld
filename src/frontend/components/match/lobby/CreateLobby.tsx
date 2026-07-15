@@ -9,10 +9,12 @@ type Props = {
   onCreated?: () => void;
 };
 
+// FE-local mirror of the server `GameMode`. The values are the enum's identifiers (Prisma enum
+// members can't start with a digit, so "1v1" is unspellable); the labels are what players read.
 const MODES = [
-  { value: "1v1", label: "1v1 (2 players)" },
-  { value: "2v2", label: "2v2 (4 players)" },
-  { value: "ffa4", label: "Free-for-all (4 players)" },
+  { value: "duel", label: "1v1 (2 players)" },
+  { value: "teams", label: "2v2 (4 players)" },
+  { value: "ffa", label: "Free-for-all (4 players)" },
 ] as const;
 
 type Mode = (typeof MODES)[number]["value"];
@@ -35,7 +37,7 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
   const { data: maps, isLoading } = trpc.map.getAll.useQuery();
 
   const [mapId, setMapId] = useState("");
-  const [mode, setMode] = useState<Mode>("1v1");
+  const [mode, setMode] = useState<Mode>("duel");
   const [fogOfWar, setFogOfWar] = useState(false);
   const [weatherSetting, setWeatherSetting] = useState<WeatherSetting>("clear");
 
@@ -56,7 +58,10 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
     createLobby.mutate({
       playerId: currentPlayer.id,
       mode,
-      leagueType: "standard",
+      // Custom lobbies are unranked, so `ruleset` is only a label here — derive it from the rules the
+      // host actually picked rather than asking them the same question twice. (A custom game can mix
+      // axes the queue rulesets keep separate; fog is the one worth surfacing.)
+      ruleset: fogOfWar ? "fog" : "standard",
       mapId: selectedMapId,
       isRanked: false,
       rules: {

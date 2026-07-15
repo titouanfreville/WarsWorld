@@ -8,12 +8,14 @@ import { RankingUsecase } from "server/ranking/ranking.usecase";
  * finalize idempotent.
  */
 
-type MatchRow = { isRanked: boolean; ratedAt: Date | null; leagueType: string };
+type MatchRow = { isRanked: boolean; ratedAt: Date | null; mode: string };
 type SeatRow = { playerId: string; team: number; result: string | null };
 type MmrRow = { playerId: string; mmr: number; topMmr: number };
+type UpsertRow = { playerId: string; mode: string; mmr: number; topMmr: number };
 
 const makeTx = (match: MatchRow, seats: SeatRow[], mmr: MmrRow[]) => {
-  const upserts: { playerId: string; mmr: number; topMmr: number }[] = [];
+  const upserts: UpsertRow[] = [];
+  const lookups: { mode?: string }[] = [];
   let ratedAtWritten: Date | null = null;
 
   const tx = {
@@ -31,14 +33,17 @@ const makeTx = (match: MatchRow, seats: SeatRow[], mmr: MmrRow[]) => {
       findMany: async () => seats,
     },
     mMR: {
-      findMany: async () => mmr,
-      upsert: async ({ create }: { create: { playerId: string; mmr: number; topMmr: number } }) => {
+      findMany: async ({ where }: { where: { mode?: string } }) => {
+        lookups.push(where);
+        return mmr;
+      },
+      upsert: async ({ create }: { create: UpsertRow }) => {
         upserts.push(create);
       },
     },
   };
 
-  return { tx, upserts, ratedAt: () => ratedAtWritten };
+  return { tx, upserts, lookups, ratedAt: () => ratedAtWritten };
 };
 
 const seat = (playerId: string, team: number, result: string | null): SeatRow => ({
@@ -53,7 +58,7 @@ const usecase = new RankingUsecase({} as never);
 describe("ranking usecase — applyMatchResult", () => {
   it("moves both players by ±16 on an even ranked 1v1", async () => {
     const { tx, upserts, ratedAt } = makeTx(
-      { isRanked: true, ratedAt: null, leagueType: "standard" },
+      { isRanked: true, ratedAt: null, mode: "duel" },
       [seat("winner", 0, "won"), seat("loser", 1, "lost")],
       [
         { playerId: "winner", mmr: 800, topMmr: 800 },
@@ -68,9 +73,24 @@ describe("ranking usecase — applyMatchResult", () => {
     expect(ratedAt()).toBeInstanceOf(Date);
   });
 
+  it("keys the rating by MODE, not by ruleset — fog and standard duels share one rating", async () => {
+    const { tx, upserts, lookups } = makeTx(
+      { isRanked: true, ratedAt: null, mode: "duel" },
+      [seat("winner", 0, "won"), seat("loser", 1, "lost")],
+      [{ playerId: "winner", mmr: 800, topMmr: 800 }],
+    );
+
+    await usecase.applyMatchResult(tx as never, "m1");
+
+    // The lookup and the write both hang off `mode` alone. If a `ruleset` ever creeps into this
+    // key, ratings silently shard per-ruleset and every player's number resets — see plan §1.3.
+    expect(lookups[0]).toEqual({ mode: "duel", playerId: { in: ["winner", "loser"] } });
+    expect(upserts.every((u) => u.mode === "duel")).toBe(true);
+  });
+
   it("bumps topMmr for the winner but never lowers the loser's peak", async () => {
     const { tx, upserts } = makeTx(
-      { isRanked: true, ratedAt: null, leagueType: "standard" },
+      { isRanked: true, ratedAt: null, mode: "duel" },
       [seat("winner", 0, "won"), seat("loser", 1, "lost")],
       [
         { playerId: "winner", mmr: 800, topMmr: 800 },
@@ -87,7 +107,7 @@ describe("ranking usecase — applyMatchResult", () => {
 
   it("seeds unseen players from the 800 default", async () => {
     const { tx, upserts } = makeTx(
-      { isRanked: true, ratedAt: null, leagueType: "fog" },
+      { isRanked: true, ratedAt: null, mode: "duel" },
       [seat("a", 0, "won"), seat("b", 1, "lost")],
       [], // neither player has an MMR row yet
     );
@@ -100,7 +120,7 @@ describe("ranking usecase — applyMatchResult", () => {
 
   it("no-ops for an unranked match", async () => {
     const { tx, upserts, ratedAt } = makeTx(
-      { isRanked: false, ratedAt: null, leagueType: "standard" },
+      { isRanked: false, ratedAt: null, mode: "duel" },
       [seat("a", 0, "won"), seat("b", 1, "lost")],
       [],
     );
@@ -113,7 +133,7 @@ describe("ranking usecase — applyMatchResult", () => {
 
   it("no-ops when already rated (idempotency guard)", async () => {
     const { tx, upserts } = makeTx(
-      { isRanked: true, ratedAt: new Date("2026-01-01"), leagueType: "standard" },
+      { isRanked: true, ratedAt: new Date("2026-01-01"), mode: "duel" },
       [seat("a", 0, "won"), seat("b", 1, "lost")],
       [{ playerId: "a", mmr: 800, topMmr: 800 }],
     );

@@ -1,4 +1,4 @@
-import type { LeagueType, Prisma, PrismaClient } from "@prisma/client";
+import type { GameMode, Prisma, PrismaClient } from "@prisma/client";
 import { logger } from "shared/utils/logger";
 import { DEFAULT_MMR, nextRating, scoreForResult, type Score } from "./elo";
 
@@ -6,15 +6,20 @@ import { DEFAULT_MMR, nextRating, scoreForResult, type Score } from "./elo";
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
- * The `ranking` feature: keeps per-league `MMR` live off match outcomes and exposes ratings to the
- * matchmaker. Thin — plain Elo (`elo.ts`) plus persistence. The engine never sees it; it's driven
- * from the finalize transaction.
+ * The `ranking` feature: keeps `MMR` live off match outcomes and exposes ratings to the matchmaker.
+ * Thin — plain Elo (`elo.ts`) plus persistence. The engine never sees it; it's driven from the
+ * finalize transaction.
+ *
+ * Ratings are keyed per MODE and POOLED across rulesets: fog / standard / high-funds duels all move
+ * one `duel` rating. The playerbase is too small to shard it (plan §1.3) — revisit with data
+ * (per-ruleset residuals vs predicted score), not opinion. QUEUES still split by mode × ruleset ×
+ * ranked; only the rating pools. Don't conflate the two.
  */
 export class RankingUsecase {
   constructor(private readonly db: PrismaClient) {}
 
-  /** Current rating per player for a league; players with no row yet default to {@link DEFAULT_MMR}. */
-  async getRatings(playerIds: string[], leagueType: LeagueType): Promise<Map<string, number>> {
+  /** Current rating per player for a mode; players with no row yet default to {@link DEFAULT_MMR}. */
+  async getRatings(playerIds: string[], mode: GameMode): Promise<Map<string, number>> {
     const ratings = new Map(playerIds.map((id) => [id, DEFAULT_MMR]));
 
     if (playerIds.length === 0) {
@@ -22,7 +27,7 @@ export class RankingUsecase {
     }
 
     const rows = await this.db.mMR.findMany({
-      where: { leagueType, playerId: { in: playerIds } },
+      where: { mode, playerId: { in: playerIds } },
       select: { playerId: true, mmr: true },
     });
 
@@ -42,7 +47,8 @@ export class RankingUsecase {
   async applyMatchResult(tx: Db, matchId: string): Promise<void> {
     const match = await tx.match.findUnique({
       where: { id: matchId },
-      select: { isRanked: true, ratedAt: true, leagueType: true },
+      // `mode` only: the rating pools across rulesets, so `ruleset` is irrelevant to rating.
+      select: { isRanked: true, ratedAt: true, mode: true },
     });
 
     if (match === null || !match.isRanked || match.ratedAt !== null) {
@@ -71,7 +77,7 @@ export class RankingUsecase {
     }
 
     const existing = await tx.mMR.findMany({
-      where: { leagueType: match.leagueType, playerId: { in: players.map((p) => p.playerId) } },
+      where: { mode: match.mode, playerId: { in: players.map((p) => p.playerId) } },
     });
     const ratingByPlayer = new Map(existing.map((r) => [r.playerId, r.mmr]));
     const topByPlayer = new Map(existing.map((r) => [r.playerId, r.topMmr]));
@@ -96,14 +102,14 @@ export class RankingUsecase {
         const top = Math.max(topByPlayer.get(playerId) ?? DEFAULT_MMR, after);
 
         await tx.mMR.upsert({
-          where: { leagueType_playerId: { leagueType: match.leagueType, playerId } },
-          create: { leagueType: match.leagueType, playerId, mmr: after, topMmr: top },
+          where: { playerId_mode: { playerId, mode: match.mode } },
+          create: { playerId, mode: match.mode, mmr: after, topMmr: top },
           update: { mmr: after, topMmr: top },
         });
       }
     }
 
     await tx.match.update({ where: { id: matchId }, data: { ratedAt: new Date() } });
-    logger.info(`[ranking] rated match ${matchId} (${teams.size} teams, ${match.leagueType}).`);
+    logger.info(`[ranking] rated match ${matchId} (${teams.size} teams, ${match.mode}).`);
   }
 }

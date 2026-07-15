@@ -3,36 +3,43 @@ import { trpc } from "frontend/utils/trpc-client";
 import { useRouter } from "next/router";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
-/** The six ranked ladders (FE-local mirror of the server `LeagueType`; the BE re-validates). */
-export const LEAGUES = [
-  "standard",
-  "fog",
-  "highFunds",
-  "dualLeague",
-  "standardTeams",
-  "broken",
-] as const;
-export type League = (typeof LEAGUES)[number];
+/**
+ * FE-local mirror of the server's `Ruleset` (the BE re-validates, so drift surfaces as a tsc error
+ * at the `join` call below). The old flat six-league list is gone: `standardTeams` was a seat shape
+ * and `dualLeague` a format, neither a ruleset — they decomposed into mode × ruleset.
+ */
+export const RULESETS = ["standard", "fog", "highFunds", "broken"] as const;
+export type Ruleset = (typeof RULESETS)[number];
 
-export const LEAGUE_LABEL: Record<League, string> = {
+export const RULESET_LABEL: Record<Ruleset, string> = {
   standard: "Standard",
   fog: "Fog of War",
   highFunds: "High Funds",
-  dualLeague: "Dual",
-  standardTeams: "Teams",
   broken: "Broken",
 };
+
+/** Mirror of the server's `GameMode`. Enum values are identifiers; these are the labels. */
+export const MODE_LABEL: Record<GameMode, string> = {
+  duel: "1v1",
+  teams: "2v2",
+  ffa: "FFA",
+};
+
+export type GameMode = "duel" | "teams" | "ffa";
+
+/** What the player queued for: a queue is (mode × ruleset), not a single league. */
+export type QueueChoice = { mode: GameMode; ruleset: Ruleset };
 
 /** The client-side view of where this player is in the matchmaking flow. */
 type QueueState =
   | { phase: "idle" }
-  | { phase: "searching"; since: number; league: League }
+  | ({ phase: "searching"; since: number } & QueueChoice)
   | { phase: "ready"; lobbyId: string; readyEndsAt: string; lenient: boolean; mmrDiff: number }
   | { phase: "map"; lobbyId: string };
 
 type QueueContextValue = {
   state: QueueState;
-  join: (league: League) => void;
+  join: (choice: QueueChoice) => void;
   leave: () => void;
   joining: boolean;
 };
@@ -51,19 +58,19 @@ export function ProvideQueue({ children }: { children: ReactNode }) {
 
   const [state, setState] = useState<QueueState>({ phase: "idle" });
   // Remember the current search so a requeue (opponent declined) restores it with the same timer.
-  const searchRef = useRef<{ since: number; league: League } | null>(null);
+  const searchRef = useRef<({ since: number } & QueueChoice) | null>(null);
 
   const beginSearching = () => {
     const search = searchRef.current;
 
     if (search !== null) {
-      setState({ phase: "searching", since: search.since, league: search.league });
+      setState({ phase: "searching", ...search });
     }
   };
 
   const joinM = trpc.matchmaking.join.useMutation({
     onSuccess: (_data, vars) => {
-      searchRef.current = { since: Date.now(), league: vars.leagueType as League };
+      searchRef.current = { since: Date.now(), mode: vars.mode, ruleset: vars.ruleset };
       beginSearching();
     },
   });
@@ -115,7 +122,9 @@ export function ProvideQueue({ children }: { children: ReactNode }) {
   const value = useMemo<QueueContextValue>(
     () => ({
       state,
-      join: (league) => joinM.mutate({ leagueType: league, mode: "1v1", playerId }),
+      // `playerBaseProcedure` merges `withPlayerIdSchema` into every input, so playerId rides along
+      // even though the procedure authorises off `ctx.currentPlayer`.
+      join: (choice) => joinM.mutate({ ...choice, playerId }),
       leave: () => leaveM.mutate({ playerId }),
       joining: joinM.isLoading,
     }),

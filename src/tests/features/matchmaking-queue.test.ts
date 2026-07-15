@@ -10,8 +10,8 @@ const NOW = 1_000_000;
 const ticket = (playerId: string, mmr: number, waitedSec = 0): Ticket => ({
   playerId,
   mmr,
-  leagueType: "standard",
-  mode: "1v1",
+  ruleset: "standard",
+  mode: "duel",
   enqueuedAt: NOW - waitedSec * 1000,
 });
 
@@ -41,10 +41,10 @@ describe("MatchQueue pairing", () => {
     expect(q.has("B")).toBe(true);
   });
 
-  it("does not pair across leagues or modes", () => {
+  it("does not pair across rulesets or modes", () => {
     const q = new MatchQueue();
-    q.add({ ...ticket("A", 1000), leagueType: "standard" });
-    q.add({ ...ticket("B", 1000), leagueType: "fog" });
+    q.add({ ...ticket("A", 1000), ruleset: "standard" });
+    q.add({ ...ticket("B", 1000), ruleset: "fog" });
 
     expect(q.pair(NOW)).toHaveLength(0);
     expect(q.size()).toBe(2);

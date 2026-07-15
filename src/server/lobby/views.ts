@@ -1,5 +1,5 @@
 import type { Lobby, LobbyMembership, PlayerInLobby } from "@prisma/client";
-import { capacityForMode, type LobbyMode } from "server/matches/layout";
+import { capacityForMode } from "server/matches/layout";
 
 type LobbyMemberRow = PlayerInLobby & { player: { id: string; name: string } };
 export type LobbyRow = Lobby & {
@@ -21,7 +21,7 @@ export type LobbyView = {
   id: string;
   hostPlayerId: string | null;
   mode: string;
-  leagueType: string;
+  ruleset: string;
   isRanked: boolean;
   mapId: string | null;
   status: string;
@@ -38,11 +38,11 @@ export const lobbyToView = (row: LobbyRow): LobbyView => ({
   id: row.id,
   hostPlayerId: row.hostPlayerId,
   mode: row.mode,
-  leagueType: row.leagueType,
+  ruleset: row.ruleset,
   isRanked: row.isRanked,
   mapId: row.mapId,
   status: row.status,
-  capacity: capacityForMode(row.mode as LobbyMode),
+  capacity: capacityForMode(row.mode),
   teamFactions: row.teamFactions ?? null,
   rules: {
     fogOfWar: row.rules.fogOfWar,

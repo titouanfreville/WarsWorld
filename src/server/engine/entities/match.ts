@@ -1,5 +1,6 @@
-import type { LeagueType, MatchStatus, WWMap } from "server/engine/types/domain-entities";
+import type { MatchStatus, WWMap } from "server/engine/types/domain-entities";
 import { DispatchableError } from "server/engine/dispatchable-error";
+import type { GameMode, Ruleset } from "server/core/schemas/game-mode";
 import type { MatchRules } from "server/core/schemas/match-rules";
 import type { PlayerSlot } from "server/core/schemas/player-slot";
 import type { Position } from "server/core/schemas/position";
@@ -50,7 +51,13 @@ export class MatchWrapper<
 
   constructor(
     public id: string,
-    public leagueType: LeagueType,
+    /**
+     * Seat shape + rules, replacing the old flat `leagueType`. Ranked-ness deliberately does NOT
+     * live here: it's ranking metadata, not match state, so it stays on the Prisma row and off the
+     * engine entity (engine scope is strict — see src/server/CLAUDE.md).
+     */
+    public mode: GameMode,
+    public ruleset: Ruleset,
     public changeableTiles: ChangeableTileType[], //TODO change to map from position to changeableTile for better performance
     public rules: MatchRules,
     public status: MatchStatus,
