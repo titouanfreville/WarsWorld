@@ -1,5 +1,6 @@
 import { rankingUsecase } from "server/composition-root";
 import { playerBaseProcedure, router } from "server/trpc/trpc-setup";
+import { z } from "zod";
 
 export const rankingRouter = router({
   /**
@@ -11,4 +12,13 @@ export const rankingRouter = router({
    * play instead of the game. Replaced `myRatings`, which exposed the raw Elo number.
    */
   myRank: playerBaseProcedure.query(({ ctx }) => rankingUsecase.getLadder(ctx.currentPlayer.id)),
+
+  /**
+   * The viewer's Merit movement from one match, for the End-Game screen: `{ delta, rank, division,
+   * inPlacements, games }`, or null for a casual/unranked match. Viewer-scoped off `ctx` — a player
+   * only reads their own progression.
+   */
+  matchOutcome: playerBaseProcedure
+    .input(z.object({ matchId: z.string() }))
+    .query(({ ctx, input }) => rankingUsecase.matchOutcome(ctx.currentPlayer.id, input.matchId)),
 });

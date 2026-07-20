@@ -1,5 +1,6 @@
 "use client";
 
+import { PlayerLink } from "frontend/components/PlayerLink";
 import { ARMY_HEX, ARMY_LABEL, type Army } from "frontend/utils/sprites";
 import { coPortraitUrl } from "frontend/utils/sprites";
 import type { inferTRPCOutput } from "frontend/utils/trpc-client";
@@ -8,6 +9,7 @@ import { deciderPhrase, formatDuration } from "./eg-phrases";
 import { EndGameChat } from "./EndGameChat";
 import { HonorPanel } from "./HonorPanel";
 import { MatchAnalysis } from "./MatchAnalysis";
+import { MeritOutcome } from "./MeritOutcome";
 import { PerformancePanel } from "./PerformancePanel";
 
 /** One seat's end-of-match summary. Grade + match meta are enriched from `endgame.summary`. */
@@ -73,7 +75,7 @@ function PlayerCard({ player, grade }: { player: EndGamePlayer; grade: string | 
       </div>
       <div className="egs__player-meta">
         <p className="egs__player-name">
-          {player.name}
+          <PlayerLink name={player.name} hideAvatar />
           {player.isViewer && <span className="egs__you">You</span>}
         </p>
         <p className="egs__player-army">{ARMY_LABEL[player.army]}</p>
@@ -182,6 +184,7 @@ export function EndGameScreen({
           <div className="egs__title">
             <p className="egs__eyebrow">Match report</p>
             <h1 className="egs__headline">{HEADLINE[outcome]}</h1>
+            <MeritOutcome matchId={matchId} viewerId={viewerId} />
           </div>
           <div className={`egs__stamp${viewerGrade !== null ? " is-graded" : ""}`}>
             <span className="egs__stamp-glyph">{viewerGrade ?? "—"}</span>
@@ -209,7 +212,7 @@ export function EndGameScreen({
         <MatchAnalysis matchId={matchId} />
 
         <div className="egs__grid">
-          <HonorPanel matchId={matchId} viewerId={viewerId} />
+          <HonorPanel matchId={matchId} viewerId={viewerId} players={players} />
           <EndGameChat
             matchId={matchId}
             viewerId={viewerId}

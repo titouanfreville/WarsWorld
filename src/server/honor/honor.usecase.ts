@@ -11,6 +11,21 @@ import { computeStanding, type HonorStanding } from "./honor";
 export class HonorUsecase {
   constructor(private readonly db: PrismaClient) {}
 
+  /**
+   * The medal THIS giver has already awarded in a match, or null. Drives the End-Game panel: one
+   * commendation per match, so once it's cast the panel shows what/who instead of the vote buttons —
+   * and, being persisted, it survives a reload (transient client state didn't).
+   */
+  async myAward(
+    fromId: string,
+    matchId: string,
+  ): Promise<{ toId: string; medal: MedalType } | null> {
+    return this.db.commendation.findUnique({
+      where: { matchId_fromId: { matchId, fromId } },
+      select: { toId: true, medal: true },
+    });
+  }
+
   /** Aggregate a player's received medals into tiers + prestige (see `computeStanding`). */
   async standing(playerId: string): Promise<HonorStanding> {
     const rows = await this.db.commendation.groupBy({

@@ -1,7 +1,8 @@
-import type { PrismaClient } from "@prisma/client";
+import type { GameMode, PrismaClient, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { armySchema, type Army } from "server/core/schemas/army";
+import type { MatchRules } from "server/core/schemas/match-rules";
 import { logger } from "shared/utils/logger";
 import { capacityForMode, isValidSeat, layoutForMode } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
@@ -42,19 +43,10 @@ export class LobbyUsecase {
   ) {}
 
   async createLobby(hostPlayerId: string, input: CreateLobbyInput): Promise<LobbyView> {
-    const map = await this.db.wWMap.findUnique({ where: { id: input.mapId } });
-
-    if (map === null) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Map not found" });
-    }
-
-    const capacity = capacityForMode(input.mode);
-
-    if (map.numberOfPlayers < capacity) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `Map supports ${map.numberOfPlayers} players but ${input.mode} needs ${capacity}`,
-      });
+    // The map is optional here — the host chooses it in the setup panel (see setMap) — but if one is
+    // passed, it must exist and fit the mode, same as `createForcedMatch`.
+    if (input.mapId !== undefined) {
+      await this.assertMapFits(input.mapId, input.mode);
     }
 
     const lobby = await this.db.lobby.create({
@@ -75,6 +67,101 @@ export class LobbyUsecase {
     });
 
     return lobbyToView(lobby);
+  }
+
+  /**
+   * Admin force-match (non-queue path): create a custom lobby the admin HOSTS but does not play. The
+   * host sits benched (no team) as an organizer while the two chosen players are pre-seated across the
+   * grid, so the admin lands in the setup panel with a ready-to-start room. Unlike {@link createLobby}
+   * (host seats only themselves), this seats OTHER players — a power only the admin tools may use.
+   */
+  async createForcedMatch(args: {
+    hostPlayerId: string;
+    seatPlayerIds: string[];
+    mode: GameMode;
+    ruleset: Ruleset;
+    isRanked: boolean;
+    /** Optional — omit to let the host pick the map in the setup panel (see {@link setMap}). */
+    mapId?: string;
+    rules: MatchRules;
+  }): Promise<LobbyView> {
+    const { hostPlayerId, seatPlayerIds, mode, ruleset, isRanked, mapId, rules } = args;
+    const capacity = capacityForMode(mode);
+
+    if (seatPlayerIds.length !== capacity) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `${mode} seats ${capacity} players, got ${seatPlayerIds.length}`,
+      });
+    }
+
+    if (new Set(seatPlayerIds).size !== seatPlayerIds.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "A player can't take two seats" });
+    }
+
+    // The map is optional here — the host chooses it in the setup panel — but if one is passed, it
+    // must exist and fit the mode, same as `createLobby`.
+    if (mapId !== undefined) {
+      await this.assertMapFits(mapId, mode);
+    }
+
+    const { slotsPerTeam } = layoutForMode(mode);
+    // Key rows by playerId so an admin who force-seats themselves doesn't collide with the benched
+    // host row (the seat wins). Otherwise the host stays benched: an organizer, not a competitor.
+    const members = new Map<
+      string,
+      { playerId: string; membership: "active"; team: number | null; slot: number | null }
+    >();
+    members.set(hostPlayerId, {
+      playerId: hostPlayerId,
+      membership: "active",
+      team: null,
+      slot: null,
+    });
+    seatPlayerIds.forEach((playerId, i) => {
+      members.set(playerId, {
+        playerId,
+        membership: "active",
+        team: Math.floor(i / slotsPerTeam),
+        slot: i % slotsPerTeam,
+      });
+    });
+
+    const lobby = await this.db.lobby.create({
+      data: {
+        hostPlayerId,
+        mode,
+        ruleset,
+        isRanked,
+        mapId,
+        rules,
+        teamFactions: rollTeamFactions(layoutForMode(mode).teamCount),
+        members: { create: [...members.values()] },
+      },
+      include: LOBBY_INCLUDE,
+    });
+
+    logger.info(
+      `[lobby] admin ${hostPlayerId} force-created ${lobby.id} seating ${seatPlayerIds.join(", ")}`,
+    );
+
+    return lobbyToView(lobby);
+  }
+
+  /**
+   * Host picks (or changes) the lobby map before starting — the setup-panel counterpart to the map
+   * the matchmaking ban phase would otherwise roll. This is why a forced lobby can be created without
+   * one. Validated like creation; host-only, and only while the lobby is still assembling.
+   */
+  async setMap(lobbyId: string, hostId: string, mapId: string): Promise<LobbyView> {
+    const lobby = await this.loadOrThrow(lobbyId);
+    this.assertHost(lobby, hostId);
+    this.assertAssembling(lobby);
+    await this.assertMapFits(mapId, lobby.mode);
+
+    await this.db.lobby.update({ where: { id: lobbyId }, data: { mapId } });
+    await this.notifyLobby(lobbyId);
+    return this.getLobby(lobbyId);
   }
 
   async getLobby(lobbyId: string): Promise<LobbyView> {
@@ -382,6 +469,24 @@ export class LobbyUsecase {
     }
 
     return lobby;
+  }
+
+  /** A map exists and seats at least the mode's capacity — the shared guard for choosing a map. */
+  private async assertMapFits(mapId: string, mode: GameMode): Promise<void> {
+    const map = await this.db.wWMap.findUnique({ where: { id: mapId } });
+
+    if (map === null) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Map not found" });
+    }
+
+    const capacity = capacityForMode(mode);
+
+    if (map.numberOfPlayers < capacity) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Map supports ${map.numberOfPlayers} players but ${mode} needs ${capacity}`,
+      });
+    }
   }
 
   private assertAssembling(lobby: LobbyRow): void {

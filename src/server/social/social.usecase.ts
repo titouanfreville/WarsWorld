@@ -159,6 +159,20 @@ export class SocialUsecase {
     });
   }
 
+  /**
+   * Accepted friends' player ids for ANY player — the friendship graph the public profile page reads
+   * through. Social owns "who is friends with whom"; the profile feature enriches these ids into
+   * player cards. Kept separate from `getFriendsList` (own-scoped, category-laden) on purpose.
+   */
+  async getAcceptedFriendIds(playerId: string): Promise<string[]> {
+    const friendships = await this.db.friendship.findMany({
+      where: { status: "ACCEPTED", OR: [{ senderId: playerId }, { receiverId: playerId }] },
+      select: { senderId: true, receiverId: true },
+    });
+
+    return friendships.map((f) => (f.senderId === playerId ? f.receiverId : f.senderId));
+  }
+
   // ── Friend categories ───────────────────────────────────────────────────────
 
   createCategory(playerId: string, name: string) {

@@ -1,17 +1,22 @@
 "use client";
 
+import { ChatComposer } from "frontend/components/chat/ChatComposer";
+import { ChatShell } from "frontend/components/chat/ChatShell";
+import { useChatAutoscroll } from "frontend/components/chat/useChatAutoscroll";
 import { useMatchChat } from "frontend/components/match/useMatchChat";
+import { PlayerMention } from "frontend/components/PlayerMention";
 import { trpc } from "frontend/utils/trpc-client";
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Post-game chat on the End-Game screen (Epic 5, §mockup step 7 / FR7). Reuses the match's shared
- * conversation plumbing (`useMatchChat`, All channel) for history + live messages + send, and adds a
- * presence heartbeat so the write window stays open while participants linger. When the viewer is a
- * participant it beats `endgame.chatHeartbeat` every few seconds; the server keeps the conversation
- * writable while anyone is present and drains it to read-only once everyone leaves.
+ * Post-game chat on the End-Game screen (Epic 5, §mockup step 7 / FR7). Renders the shared docked
+ * `ChatShell` so it matches every other chat surface, and reuses the match's conversation plumbing
+ * (`useMatchChat`, All channel) for history + live messages + send. A presence heartbeat keeps the
+ * write window open while participants linger: when the viewer is a participant it beats
+ * `endgame.chatHeartbeat` every few seconds; the server keeps the conversation writable while anyone
+ * is present and drains it to read-only once everyone leaves.
  *
- * `readOnly` renders a transcript with no input — for the future historical view (FR8), where the
+ * `readOnly` renders a transcript with no composer — for the future historical view (FR8), where the
  * live channels/presence no longer apply.
  */
 
@@ -31,7 +36,7 @@ export function EndGameChat({
 }) {
   const isParticipant = viewerId !== undefined && !readOnly;
 
-  const { messages, send, sending, ready } = useMatchChat({
+  const { messages, send, sending, ready, avatarForHandle } = useMatchChat({
     matchId,
     playerId: viewerId ?? "",
     players,
@@ -41,18 +46,8 @@ export function EndGameChat({
 
   const heartbeat = trpc.endgame.chatHeartbeat.useMutation();
   const [writable, setWritable] = useState(true);
-  const [draft, setDraft] = useState("");
 
-  const listRef = useRef<HTMLDivElement | null>(null);
-
-  // Keep the transcript pinned to the latest message.
-  useEffect(() => {
-    const el = listRef.current;
-
-    if (el !== null) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
+  const listRef = useChatAutoscroll<HTMLDivElement>([messages]);
 
   // Presence heartbeat: mark the viewer present now and on an interval while this panel is mounted.
   // Latest mutate in a ref so the interval effect runs once (not re-created every render).
@@ -77,80 +72,57 @@ export function EndGameChat({
   }, [isParticipant, viewerId, matchId]);
 
   const canSend = isParticipant && writable && ready;
-
-  const submit = () => {
-    const trimmed = draft.trim();
-
-    if (trimmed === "" || !canSend) {
-      return;
-    }
-
-    send(trimmed);
-    setDraft("");
-  };
-
   const nameById = new Map(players.map((player) => [player.id, player.name]));
 
-  return (
-    <section className="egs__panel egs-chat">
-      <header className="egs__panel-head">
-        <h2 className="egs__panel-title">Post-game chat</h2>
-        {readOnly ? (
-          <span className="egs__soon">Transcript</span>
-        ) : (
-          canSend && <span className="egs-chat__live">Open</span>
-        )}
-      </header>
+  // The closed/read-only states replace the composer with an explanatory line.
+  const notice = readOnly
+    ? "This match is archived — chat is read-only."
+    : !isParticipant
+      ? "Only participants can chat."
+      : !writable
+        ? "Post-game chat has closed — everyone left."
+        : null;
 
-      <div ref={listRef} className="egs-chat__log">
+  return (
+    <ChatShell
+      variant="docked"
+      title="Post-game"
+      live={canSend}
+      actions={
+        <span className="@rounded-full @border @border-white/15 @px-2 @py-0.5 @text-[10px] @uppercase @tracking-wide @text-slate-400">
+          {readOnly ? "Transcript" : canSend ? "Open" : "Closed"}
+        </span>
+      }
+      bodyRef={listRef}
+      footer={
+        notice !== null ? (
+          <p className="@px-1 @py-0.5 @text-xs @italic @text-slate-500">{notice}</p>
+        ) : (
+          <ChatComposer onSend={send} sending={sending} disabled={!canSend} />
+        )
+      }
+    >
+      <div className="@flex @flex-col @gap-1.5 @text-sm">
         {messages.length === 0 ? (
-          <p className="egs-chat__empty">
+          <p className="@my-auto @text-xs @italic @text-slate-500">
             {readOnly ? "No messages were sent." : "Say gg — messages appear here."}
           </p>
         ) : (
           messages.map((message) => (
-            <p className="egs-chat__msg" key={message.id}>
-              <span className={`egs-chat__sender${message.senderId === viewerId ? " is-you" : ""}`}>
-                {nameById.get(message.senderId) ?? message.senderName}
-              </span>
-              <span className="egs-chat__text">{message.content}</span>
-            </p>
+            <div key={message.id} className="@flex @items-center @gap-1.5 @py-0 @leading-snug">
+              <PlayerMention
+                name={message.senderHandle}
+                label={nameById.get(message.senderId) ?? message.senderName}
+                avatar={avatarForHandle(message.senderHandle)}
+                className={`@shrink-0 @font-semibold ${
+                  message.senderId === viewerId ? "@text-primary" : "@text-slate-300"
+                }`}
+              />
+              <span className="@min-w-0 @text-slate-100">{message.content}</span>
+            </div>
           ))
         )}
       </div>
-
-      {readOnly ? (
-        <p className="egs-chat__closed">This match is archived — chat is read-only.</p>
-      ) : !isParticipant ? (
-        <p className="egs-chat__closed">Only participants can chat.</p>
-      ) : writable ? (
-        <div className="egs-chat__compose">
-          <input
-            className="egs-chat__input"
-            value={draft}
-            maxLength={500}
-            placeholder="Message everyone…"
-            disabled={!ready}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="egs-chat__send"
-            disabled={draft.trim() === "" || sending || !canSend}
-            onClick={submit}
-          >
-            Send
-          </button>
-        </div>
-      ) : (
-        <p className="egs-chat__closed">Post-game chat has closed — everyone left.</p>
-      )}
-    </section>
+    </ChatShell>
   );
 }

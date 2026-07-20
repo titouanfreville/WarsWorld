@@ -22,10 +22,6 @@ const mmss = (ms: number): string => {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 };
 
-// Mirror of the server tolerance curve, for the "searching ±N" hint only (display, not a decision).
-const toleranceFor = (waitedMs: number): number =>
-  Math.min(2000, Math.round(100 + 15 * (waitedMs / 1000)));
-
 /**
  * The docked, non-blocking matchmaking widget. Rendered globally by `ProvideQueue`; shows nothing
  * unless the player is searching or in a ready-check (the map-ban phase has its own overlay).
@@ -51,7 +47,6 @@ export default function QueueWidget() {
 
   if (state.phase === "searching") {
     const waited = now - state.since;
-    const tol = toleranceFor(waited);
 
     return (
       <div className={shell} style={bg}>
@@ -73,16 +68,11 @@ export default function QueueWidget() {
               elapsed
             </span>
           </div>
-          <p className="@mt-4 @flex @justify-between @py-0 @text-[11px] @uppercase @tracking-wide @text-slate-400">
-            <span>Acceptable gap</span>
-            <span className="@font-semibold @tabular-nums @text-white">±{tol} MMR</span>
+          {/* No MMR number: the rating is hidden by design. We say the search is widening, not by
+              how much. */}
+          <p className="@mt-4 @py-0 @text-[11px] @uppercase @tracking-wide @text-slate-400">
+            Widening the search the longer you wait.
           </p>
-          <div className="@mt-2 @h-2 @overflow-hidden @rounded @bg-[#141c30]">
-            <div
-              className="@h-full @bg-primary/60 @transition-all @duration-1000"
-              style={{ width: `${Math.min(100, (tol / 2000) * 100)}%` }}
-            />
-          </div>
           <button
             className="@mt-4 @w-full @rounded-lg @border @border-white/15 @bg-[#182238] @py-2.5 @text-xs @font-bold @uppercase @tracking-wider @text-slate-300 @transition hover:@border-slate-400 hover:@text-white"
             onClick={leave}
@@ -107,7 +97,7 @@ export default function QueueWidget() {
           className="@ml-auto @rounded-full @border @px-2 @py-[3px] @text-[10px] @font-bold @uppercase @tracking-wider"
           style={{ borderColor: `${accent}66`, color: accent }}
         >
-          {state.lenient ? "Wide gap" : "Ranked 1v1"}
+          {state.lenient ? "Wide gap" : "Ready check"}
         </span>
       </div>
       <div className="@px-4 @pb-4 @pt-4">
@@ -118,21 +108,9 @@ export default function QueueWidget() {
           >
             {Math.max(0, Math.ceil(remaining / 1000))}
           </span>
-          {/* A win-probability gap, not a rating: the hidden rating never reaches the client, and
-              "68/32" says more to a player than any rating distance would. */}
+          {/* No odds/gap number — the rating is hidden, and a lopsided ranked game can't happen (the
+              rank band prevents it), so there's nothing to warn about here. */}
           <p className="@py-0 @text-[11px] @leading-snug @text-slate-400">
-            {state.fairnessGap <= 5 ? (
-              <>Evenly matched.</>
-            ) : (
-              <>
-                Odds{" "}
-                <span className="@font-semibold @text-white">
-                  {50 + state.fairnessGap}/{50 - state.fairnessGap}
-                </span>
-                .
-              </>
-            )}
-            <br />
             Both players must accept to launch.
           </p>
         </div>

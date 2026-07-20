@@ -50,6 +50,23 @@ type LobbyMember = {
 
 type Props = { lobbyId: string };
 
+/**
+ * Where a member goes when the match starts: seated players enter the CO pick; anyone else (e.g. an
+ * admin who force-created the match and hosts it without a seat) follows the game as a spectator on
+ * the board.
+ */
+const matchPathFor = (
+  members: { playerId: string; membership: string; team: number | null }[],
+  playerId: string,
+  matchId: string,
+): string => {
+  const amSeated = members.some(
+    (m) => m.playerId === playerId && m.membership === "active" && m.team !== null,
+  );
+
+  return amSeated ? `/pick/${matchId}` : `/match2/${matchId}`;
+};
+
 export default function LobbyRoom({ lobbyId }: Props) {
   const router = useRouter();
   const { currentPlayer } = usePlayers();
@@ -72,13 +89,15 @@ export default function LobbyRoom({ lobbyId }: Props) {
   );
 
   const assignTeam = trpc.lobby.assignTeam.useMutation({ onSuccess: refresh });
+  const setMap = trpc.lobby.setMap.useMutation({ onSuccess: refresh });
   const invite = trpc.lobby.invite.useMutation({ onSuccess: refresh });
   const kick = trpc.lobby.kick.useMutation({ onSuccess: refresh });
   const leave = trpc.lobby.leave.useMutation({
     onSuccess: () => void router.push("/your-games"),
   });
   const start = trpc.lobby.start.useMutation({
-    onSuccess: ({ matchId }) => void router.push(`/pick/${matchId}`),
+    onSuccess: ({ matchId }) =>
+      void router.push(matchPathFor(lobby?.members ?? [], playerId, matchId)),
   });
 
   if (error) {
@@ -89,9 +108,10 @@ export default function LobbyRoom({ lobbyId }: Props) {
     return <p className="@p-8 @text-slate-400">Loading lobby…</p>;
   }
 
-  // The host already started — follow everyone into the pick phase.
+  // The host already started — seated players follow into the pick phase, a benched host/organizer
+  // into the game as a spectator.
   if (lobby.matchId !== null && lobby.status === "started") {
-    void router.push(`/pick/${lobby.matchId}`);
+    void router.push(matchPathFor(lobby.members, playerId, lobby.matchId));
   }
 
   const layout = LAYOUT[lobby.mode] ?? { teams: 2, slots: 1 };
@@ -104,10 +124,13 @@ export default function LobbyRoom({ lobbyId }: Props) {
     seated.find((m) => m.team === team && m.slot === slot);
   const factionOf = (team: number): Army | undefined =>
     lobby.teamFactions?.[team] as Army | undefined;
-  const canStart = seated.length === layout.teams * layout.slots;
+  const capacity = layout.teams * layout.slots;
+  const canStart = seated.length === capacity && lobby.mapId !== null;
+  const eligibleMaps = (maps ?? []).filter((m) => m.numberOfPlayers >= capacity);
 
   const mutationError =
     assignTeam.error?.message ??
+    setMap.error?.message ??
     invite.error?.message ??
     kick.error?.message ??
     start.error?.message;
@@ -372,6 +395,27 @@ export default function LobbyRoom({ lobbyId }: Props) {
 
           {isHost && (
             <div className="@flex @flex-wrap @items-center @gap-2 @border-t @border-white/5 @pt-3">
+              <label className="@flex @items-center @gap-2">
+                <span className="@text-[11px] @uppercase @tracking-wider @text-slate-500">Map</span>
+                <select
+                  className="@w-48 @rounded @bg-black/30 @px-3 @py-2 @text-sm @outline @outline-1 @outline-white/10 disabled:@opacity-40"
+                  value={lobby.mapId ?? ""}
+                  disabled={setMap.isLoading}
+                  onChange={(e) =>
+                    e.target.value !== "" &&
+                    setMap.mutate({ lobbyId, playerId, mapId: e.target.value })
+                  }
+                >
+                  <option value="" disabled>
+                    Choose a map…
+                  </option>
+                  {eligibleMaps.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.numberOfPlayers}p)
+                    </option>
+                  ))}
+                </select>
+              </label>
               <input
                 className="@w-48 @rounded @bg-black/30 @px-3 @py-2 @text-sm @outline @outline-1 @outline-white/10 @placeholder:text-slate-600"
                 value={inviteName}

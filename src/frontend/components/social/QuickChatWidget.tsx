@@ -1,9 +1,24 @@
+import { ChatLauncher } from "frontend/components/chat/ChatLauncher";
+import { ChatComposer } from "frontend/components/chat/ChatComposer";
+import { ChatMessageList } from "frontend/components/chat/ChatMessageList";
+import { ChatShell } from "frontend/components/chat/ChatShell";
+import { useChatAutoscroll } from "frontend/components/chat/useChatAutoscroll";
+import UserAvatar from "frontend/components/navbar/UserAvatar";
+import { PlayerMention } from "frontend/components/PlayerMention";
 import { usePlayers } from "frontend/context/players";
 import { parseNotificationPayload } from "frontend/utils/notification-payload";
+import { avatarImageProps, type CoAvatar } from "frontend/utils/sprites/avatar";
 import { trpc } from "frontend/utils/trpc-client";
 import Link from "next/link";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+/**
+ * The out-of-game floating chat (bottom-right, mounted app-wide in the Layout). Collapsed, it's the
+ * shared COMMS launcher; open, it's a floating `ChatShell` housing the social DM system — a contacts
+ * list (friends / recents) and, once a partner is picked, their live DM thread. Presentation runs
+ * through the shared chat kit so it matches the in-game dock, the End-Game panel, and the hub; the
+ * data is `trpc.social.*`.
+ */
 export default function QuickChatWidget() {
   const { currentPlayer } = usePlayers();
   const [isOpen, setIsOpen] = useState(false);
@@ -13,7 +28,6 @@ export default function QuickChatWidget() {
     displayName: string;
     name: string;
   } | null>(null);
-  const [messageInput, setMessageInput] = useState("");
   const [activeTab, setActiveTab] = useState<"friends" | "recents">("friends");
 
   const pId = currentPlayer?.id ?? "";
@@ -53,7 +67,6 @@ export default function QuickChatWidget() {
 
   const sendMsg = trpc.social.sendMessage.useMutation({
     onSuccess: () => {
-      setMessageInput("");
       void refetchConvHistory();
     },
   });
@@ -79,13 +92,35 @@ export default function QuickChatWidget() {
     },
   );
 
-  // Scroll to bottom
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (isOpen) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Resolve chosen avatars for everyone shown (friends, recents, the open DM partner), keyed by handle.
+  const cardNames = useMemo(() => {
+    const names = new Set<string>();
+    (friendsList ?? []).forEach((friend) => names.add(friend.name));
+    (recentsList ?? []).forEach((player) => names.add(player.name));
+
+    if (activePartner !== null) {
+      names.add(activePartner.name);
     }
-  }, [activeConvHistory?.messages, isOpen, activeConvId]);
+
+    return [...names];
+  }, [friendsList, recentsList, activePartner]);
+
+  const { data: cards } = trpc.players.cards.useQuery(
+    { names: cardNames },
+    { enabled: cardNames.length > 0, staleTime: 5 * 60 * 1000 },
+  );
+  const avatarByName = useMemo(
+    () => new Map((cards ?? []).map((card) => [card.name, card.avatar])),
+    [cards],
+  );
+  const avatarOf = (name: string): CoAvatar | null => avatarByName.get(name) ?? null;
+
+  // Scroll to bottom
+  const listRef = useChatAutoscroll<HTMLDivElement>([
+    activeConvHistory?.messages,
+    isOpen,
+    activeConvId,
+  ]);
 
   // Mark the open conversation read once per open / new message (explicit mutation, not a query
   // side effect) so refetches don't spam read-receipts.
@@ -107,144 +142,101 @@ export default function QuickChatWidget() {
     startDM.mutate({ playerId: pId, targetPlayerName: friend.name });
   };
 
-  const handleSendMessage = () => {
-    if (messageInput.trim() === "" || activeConvId === null) {
+  const handleSend = (content: string) => {
+    if (activeConvId === null) {
       return;
     }
 
-    sendMsg.mutate({ playerId: pId, conversationId: activeConvId, content: messageInput });
+    sendMsg.mutate({ playerId: pId, conversationId: activeConvId, content });
   };
 
   const totalAlerts = notifications?.length ?? 0;
+  const inThread = activePartner !== null && activeConvId !== null;
 
   return (
     <div className="@fixed @bottom-5 @right-5 @z-50 @font-sans">
-      {/* COLLAPSED STATE */}
-      {!isOpen && (
-        <button
+      {!isOpen ? (
+        <ChatLauncher
+          shape="pill"
+          label="Comms"
+          live
+          unread={totalAlerts}
           onClick={() => setIsOpen(true)}
-          className="@flex @items-center @gap-2.5 @px-4 @py-2.5 @rounded-full @bg-bg-primary @border-2 @border-primary @text-slate-100 @shadow-lg @shadow-black/60 hover:@bg-bg-secondary hover:@scale-[1.03] @transition-all @duration-200"
-        >
-          <span className="@relative @flex @h-2.5 @w-2.5">
-            <span className="@animate-ping @absolute @inline-flex @h-full @w-full @rounded-full @bg-emerald-400 @opacity-75"></span>
-            <span className="@relative @inline-flex @rounded-full @h-2.5 @w-2.5 @bg-emerald-500"></span>
-          </span>
-          <span className="@text-xs @font-bold @uppercase @tracking-wider @font-russoOne">
-            📡 COMMS FEED
-          </span>
-          {totalAlerts > 0 && (
-            <span className="@bg-primary @text-black @text-[10px] @font-bold @h-5 @w-5 @rounded-full @flex @items-center @justify-center">
-              {totalAlerts}
-            </span>
-          )}
-        </button>
-      )}
-
-      {/* EXPANDED PANEL (Messenger style) */}
-      {isOpen && (
-        <div className="@w-[340px] @h-[480px] @bg-bg-primary/95 @border @border-bg-tertiary @rounded-xl @shadow-2xl @shadow-black/80 @flex @flex-col @overflow-hidden @animate-slide-up">
-          {/* Header */}
-          <div className="@px-3.5 @py-3 @bg-bg-secondary/80 @border-b @border-bg-tertiary/60 @flex @items-center @justify-between">
-            {activePartner ? (
-              <div className="@flex @items-center @gap-2">
-                <button
-                  onClick={() => {
-                    setActivePartner(null);
-                    setActiveConvId(null);
-                  }}
-                  className="@text-slate-400 hover:@text-slate-200 @text-sm @mr-1 @font-bold"
-                >
-                  ←
-                </button>
-                <div className="@flex @flex-col">
-                  <span className="@text-xs @font-bold @text-slate-100 @truncate @max-w-[160px]">
-                    {activePartner.displayName}
-                  </span>
-                  <span className="@text-[9px] @text-emerald-500 @font-bold">DIRECT CHANNEL</span>
-                </div>
-              </div>
-            ) : (
-              <div className="@flex @items-center @gap-2">
-                <span className="@text-sm @font-bold @text-primary @font-russoOne">
-                  📡 SECURE COMMS
-                </span>
-              </div>
-            )}
-
-            <button
-              onClick={() => setIsOpen(false)}
-              className="@text-slate-400 hover:@text-slate-200 @text-xs @font-bold @px-2 @py-1 @rounded hover:@bg-bg-tertiary/40"
-            >
-              Close
-            </button>
-          </div>
-
-          {/* Main Body */}
-          <div className="@flex-1 @overflow-y-auto @p-3 @bg-bg-primary/40">
-            {activePartner !== null && activeConvId !== null ? (
-              /* Chat Message Feed */
-              <div className="@flex @flex-col @gap-2.5 @h-full @justify-between">
-                <div className="@flex-1 @overflow-y-auto @flex @flex-col @gap-2.5 @pr-1">
-                  {activeConvHistory && activeConvHistory.messages.length > 0 ? (
-                    activeConvHistory.messages.map((msg) => {
-                      const isMe = msg.senderId === currentPlayer.id;
-                      return (
-                        <div
-                          key={msg.id}
-                          className={`@flex @gap-2 @max-w-[85%] ${isMe ? "@ml-auto @justify-end" : ""}`}
-                        >
-                          <div className="@flex @flex-col">
-                            <div
-                              className={`@px-3 @py-1.5 @rounded-xl @text-xs @leading-relaxed ${isMe ? "@bg-primary @text-black @font-semibold @rounded-tr-none" : "@bg-bg-secondary @border @border-bg-tertiary/40 @text-slate-100 @rounded-tl-none"}`}
-                            >
-                              {msg.content}
-                            </div>
-                            <span
-                              className={`@text-[8px] @text-slate-500 @mt-0.5 ${isMe ? "@text-right" : ""}`}
-                            >
-                              {new Date(msg.createdAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="@h-full @flex @items-center @justify-center @text-[11px] @text-slate-500">
-                      Link active. Write message below.
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-
-                {/* Input block inside Active Chat */}
-                <div className="@flex @gap-1.5 @pt-2 @border-t @border-bg-tertiary/30">
-                  <input
-                    type="text"
-                    placeholder="Type transmission..."
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                    className="@flex-1 @rounded-lg @bg-bg-secondary @border @border-bg-tertiary/50 @px-2.5 @py-1.5 @text-xs @placeholder-slate-500 focus:@outline-none focus:@border-primary @text-slate-100"
-                  />
+        />
+      ) : (
+        <div className="@w-[340px] @h-[480px] @animate-slide-up">
+          <ChatShell
+            variant="floating"
+            title="Comms"
+            live
+            className="@h-full"
+            bodyRef={listRef}
+            headerExtra={
+              inThread ? (
+                <div className="@flex @min-w-0 @items-center @gap-1.5 @border-l @border-white/10 @pl-2">
                   <button
-                    onClick={handleSendMessage}
-                    disabled={sendMsg.isLoading}
-                    className="@px-3 @py-1.5 @rounded-lg @bg-primary hover:@bg-primary-light @text-black @font-bold @text-xs @transition disabled:@opacity-50 disabled:@cursor-not-allowed"
+                    onClick={() => {
+                      setActivePartner(null);
+                      setActiveConvId(null);
+                    }}
+                    className="@text-slate-400 hover:@text-slate-200 @text-sm @font-bold"
+                    aria-label="Back to contacts"
                   >
-                    Send
+                    ←
                   </button>
+                  <PlayerMention
+                    name={activePartner.name}
+                    label={activePartner.displayName}
+                    avatar={avatarOf(activePartner.name)}
+                    size={18}
+                    className="@max-w-[150px] @text-xs @font-bold @text-slate-100"
+                  />
                 </div>
-              </div>
+              ) : undefined
+            }
+            actions={
+              <button
+                onClick={() => setIsOpen(false)}
+                className="@px-1 @text-slate-400 @transition hover:@text-white"
+                aria-label="Close chat"
+              >
+                ✕
+              </button>
+            }
+            footer={
+              inThread ? (
+                <ChatComposer
+                  onSend={handleSend}
+                  sending={sendMsg.isLoading}
+                  placeholder="Type transmission…"
+                />
+              ) : (
+                <div className="@text-center">
+                  <Link
+                    href="/social"
+                    className="@text-[11px] @font-bold @text-primary hover:@underline"
+                  >
+                    Open Tactical Console Hub →
+                  </Link>
+                </div>
+              )
+            }
+          >
+            {inThread ? (
+              /* DM thread — shared renderer */
+              <ChatMessageList
+                messages={activeConvHistory?.messages ?? []}
+                currentPlayerId={currentPlayer.id}
+                partnerAvatar={avatarOf(activePartner.name)}
+                partnerName={activePartner.displayName}
+                emptyLabel="Link active. Write message below."
+              />
             ) : (
-              /* Contacts List */
+              /* Contacts list */
               <div className="@flex @flex-col @gap-3">
-                {/* Collapsible Alerts */}
                 {notifications && notifications.length > 0 && (
-                  <div className="@rounded-lg @bg-primary-dark/15 @border @border-primary-dark/30 @p-2">
-                    <p className="@text-[9px] @font-bold @uppercase @tracking-wider @text-primary @mb-1.5 flex @items-center">
+                  <div className="@rounded-lg @border @border-primary-dark/30 @bg-primary-dark/15 @p-2">
+                    <p className="@mb-1.5 @flex @items-center @text-[9px] @font-bold @uppercase @tracking-wider @text-primary">
                       🚨 REQUESTS ({notifications.length})
                     </p>
                     <div className="@flex @flex-col @gap-1.5">
@@ -253,14 +245,14 @@ export default function QuickChatWidget() {
                         return (
                           <div
                             key={notif.id}
-                            className="@text-[10px] @bg-bg-primary @p-1.5 @rounded @border @border-bg-tertiary/30 @flex @items-center @justify-between"
+                            className="@flex @items-center @justify-between @rounded @border @border-bg-tertiary/30 @bg-bg-primary @p-1.5 @text-[10px]"
                           >
-                            <span className="@truncate @max-w-[120px] @text-slate-300">
+                            <span className="@max-w-[120px] @truncate @text-slate-300">
                               @{payload.senderName}
                             </span>
                             <Link
                               href="/social"
-                              className="@text-primary hover:underline @font-bold @text-[9px]"
+                              className="@text-[9px] @font-bold @text-primary hover:@underline"
                             >
                               Review →
                             </Link>
@@ -271,23 +263,21 @@ export default function QuickChatWidget() {
                   </div>
                 )}
 
-                {/* Tab select */}
                 <div className="@flex @border-b @border-bg-tertiary/40 @text-[10px] @font-bold @uppercase @tracking-wider">
                   <button
                     onClick={() => setActiveTab("friends")}
-                    className={`@flex-1 @pb-1 @border-b-2 @text-center @transition ${activeTab === "friends" ? "@border-primary @text-primary" : "@border-transparent @text-slate-400"}`}
+                    className={`@flex-1 @border-b-2 @pb-1 @text-center @transition ${activeTab === "friends" ? "@border-primary @text-primary" : "@border-transparent @text-slate-400"}`}
                   >
                     Friends
                   </button>
                   <button
                     onClick={() => setActiveTab("recents")}
-                    className={`@flex-1 @pb-1 @border-b-2 @text-center @transition ${activeTab === "recents" ? "@border-primary @text-primary" : "@border-transparent @text-slate-400"}`}
+                    className={`@flex-1 @border-b-2 @pb-1 @text-center @transition ${activeTab === "recents" ? "@border-primary @text-primary" : "@border-transparent @text-slate-400"}`}
                   >
                     Recents
                   </button>
                 </div>
 
-                {/* Contacts Body */}
                 <div className="@flex @flex-col @gap-1">
                   {activeTab === "friends" ? (
                     friendsList && friendsList.length > 0 ? (
@@ -295,19 +285,29 @@ export default function QuickChatWidget() {
                         <div
                           key={friend.id}
                           onClick={() => handleOpenDM(friend)}
-                          className="@flex @items-center @gap-2 @px-2 @py-1.5 @rounded-lg @cursor-pointer hover:@bg-bg-secondary/40 @transition @border @border-transparent"
+                          className="@flex @cursor-pointer @items-center @gap-2 @rounded-lg @border @border-transparent @px-2 @py-1.5 @transition hover:@bg-bg-secondary/40"
                         >
-                          <span className="@h-2 @w-2 @rounded-full @bg-emerald-500 @shadow-[0_0_4px_rgba(16,185,129,0.5)]"></span>
-                          <div className="@flex @flex-col @min-w-0">
-                            <span className="@text-xs @font-semibold @text-slate-100 @truncate">
-                              {friend.displayName}
-                            </span>
+                          <span className="@relative @shrink-0">
+                            <UserAvatar
+                              name={friend.displayName}
+                              size={28}
+                              {...avatarImageProps(avatarOf(friend.name))}
+                            />
+                            <span className="@absolute @-bottom-0.5 @-right-0.5 @h-2 @w-2 @rounded-full @border @border-bg-primary @bg-emerald-500" />
+                          </span>
+                          <div className="@flex @min-w-0 @flex-col">
+                            <PlayerMention
+                              name={friend.name}
+                              label={friend.displayName}
+                              hideAvatar
+                              className="@text-xs @font-semibold @text-slate-100"
+                            />
                             <span className="@text-[9px] @text-slate-500">@{friend.name}</span>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <p className="@text-[10px] @text-slate-500 @text-center @py-4">
+                      <p className="@py-4 @text-center @text-[10px] @text-slate-500">
                         No friends found.
                       </p>
                     )
@@ -316,35 +316,34 @@ export default function QuickChatWidget() {
                       <div
                         key={player.id}
                         onClick={() => handleOpenDM(player)}
-                        className="@flex @items-center @gap-2 @px-2 @py-1.5 @rounded-lg @cursor-pointer hover:@bg-bg-secondary/40 @transition"
+                        className="@flex @cursor-pointer @items-center @gap-2 @rounded-lg @px-2 @py-1.5 @transition hover:@bg-bg-secondary/40"
                       >
-                        <span className="@h-2 @w-2 @rounded-full @bg-slate-500"></span>
-                        <div className="@flex @flex-col @min-w-0">
-                          <span className="@text-xs @font-semibold @text-slate-100 @truncate">
-                            {player.displayName}
-                          </span>
+                        <UserAvatar
+                          name={player.displayName}
+                          size={28}
+                          className="@shrink-0"
+                          {...avatarImageProps(avatarOf(player.name))}
+                        />
+                        <div className="@flex @min-w-0 @flex-col">
+                          <PlayerMention
+                            name={player.name}
+                            label={player.displayName}
+                            hideAvatar
+                            className="@text-xs @font-semibold @text-slate-100"
+                          />
                           <span className="@text-[9px] @text-slate-500">@{player.name}</span>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <p className="@text-[10px] @text-slate-500 @text-center @py-4">
+                    <p className="@py-4 @text-center @text-[10px] @text-slate-500">
                       No recent combatants.
                     </p>
                   )}
                 </div>
-
-                <div className="@text-center @pt-2 @border-t @border-bg-tertiary/30">
-                  <Link
-                    href="/social"
-                    className="@text-[10px] @text-primary hover:underline @font-bold"
-                  >
-                    Open Tactical Console Hub →
-                  </Link>
-                </div>
               </div>
             )}
-          </div>
+          </ChatShell>
         </div>
       )}
     </div>

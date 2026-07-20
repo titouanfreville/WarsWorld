@@ -1,0 +1,153 @@
+// Start-of-turn banner (the ADW-style "Day N" strip overlaid on the board when a turn begins). Pure
+// presentation, driven by the BE day counter + start-of-turn report (see TurnStartBanner.tsx /
+// useTurnBanner.ts). Non-interactive. Horizontal: the acting CO's mugshot + an army-accent bar on the
+// left, then "DAY N" over a details line. One in-hold-out animation timed to the hook's hold before it
+// unmounts. Honors prefers-reduced-motion (bottom of file).
+
+.ww-turn {
+  // Accent is set inline per acting army (see TurnStartBanner); the glow derives from it.
+  --ww-turn-accent: #43d9e4;
+  --ww-turn-glow: color-mix(in srgb, var(--ww-turn-accent) 45%, transparent);
+}
+
+.ww-turn__card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: clamp(0.75rem, 2.4vw, 1.4rem);
+  padding: clamp(0.55rem, 2.2vh, 1rem) clamp(1rem, 3.2vw, 1.9rem);
+  background: rgba(4, 11, 44, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-left: 4px solid var(--ww-turn-accent); // ADW-style accent stripe
+  border-radius: 0.6rem;
+  box-shadow:
+    0 0 32px var(--ww-turn-glow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(2px);
+  // in (slide up + fade) → hold → out (fade). Timed just under the hook's 3s hold so it's gone by unmount.
+  animation: ww-turn-card 2.7s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.ww-turn__portrait {
+  height: clamp(56px, 11vh, 104px);
+  width: auto;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 10px var(--ww-turn-glow));
+}
+
+.ww-turn__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.ww-turn__day {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-family: "RussoOne", sans-serif;
+  font-size: clamp(1.75rem, 5.5vw, 3.25rem);
+  line-height: 1;
+  color: #f8fafc;
+  text-shadow:
+    0 0 18px var(--ww-turn-glow),
+    0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.ww-turn__day-word {
+  font-family: system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 0.34em;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.ww-turn__sub {
+  font-family: system-ui, sans-serif;
+  font-size: clamp(0.72rem, 1.9vw, 1rem);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ww-turn-accent);
+}
+
+// Animated funds counter (own turn): green while rolling up on income, red while paying repairs,
+// gold once settled (see AnimatedFunds in TurnStartBanner).
+.ww-turn__funds {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  font-family: "RussoOne", sans-serif;
+  font-size: clamp(0.95rem, 2.6vw, 1.5rem);
+  line-height: 1;
+  transition: color 0.18s ease;
+
+  &.is-up {
+    color: #4ade80;
+  }
+  &.is-down {
+    color: #f87171;
+  }
+  &.is-done {
+    color: #fbbf24;
+  }
+}
+
+.ww-turn__funds-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.ww-turn__funds-unit {
+  font-size: 0.6em;
+  opacity: 0.8;
+}
+
+.ww-turn__note {
+  font-family: system-ui, sans-serif;
+  font-size: clamp(0.6rem, 1.5vw, 0.8rem);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.55);
+}
+
+/* Losses (units gone to fuel-out) read red — the one bad-news line among the upkeep summary. */
+.ww-turn__note--loss {
+  color: rgba(248, 113, 113, 0.9);
+}
+
+@keyframes ww-turn-card {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ww-turn__card {
+    animation: ww-turn-fade 2.7s ease both;
+  }
+
+  @keyframes ww-turn-fade {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    14%,
+    78% {
+      opacity: 1;
+    }
+  }
+}

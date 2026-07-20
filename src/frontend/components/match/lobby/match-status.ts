@@ -22,7 +22,11 @@ type LobbyPlayer = {
   id: string;
   ready?: boolean;
   hasCurrentTurn?: boolean;
-  status?: "alive" | "routed" | "captured";
+  status?: "alive" | "routed" | "captured" | "resigned";
+  // Authoritative per-player outcome, stamped by the engine when the match finalizes. Preferred over
+  // `status` for a finished match: an admin force-outcome sets `result` but leaves both armies
+  // "alive", so deriving win/loss from alive-ness alone would mislabel a forced result.
+  result?: "won" | "lost" | "drawn";
 };
 
 export type LobbyMatch = {
@@ -57,16 +61,41 @@ export function deriveLobbyStatus(
 
   if (viewer !== undefined) {
     if (isFinished(match)) {
-      // A draw is what the BE's game-over derivation reports as no winning team (winnerTeamIndex
-      // null) — e.g. a simultaneous double-elimination: the match is finished with nobody still
-      // "alive". Detect the same way here so the lobby doesn't mislabel a draw as a defeat.
+      // Prefer the authoritative stamped result. A forced outcome (admin) sets `result` while leaving
+      // both armies "alive", so the alive-status heuristic below would mislabel it — the winner's
+      // opponent would read "victory". `result` is what `deriveGameOver` itself reads for a finished
+      // match, so this keeps the card in step with the board.
+      if (viewer.result === "won") {
+        return "victory";
+      }
+      if (viewer.result === "lost") {
+        return "defeat";
+      }
+      if (viewer.result === "drawn") {
+        return "draw";
+      }
+
+      // The viewer has no stamped result. If ANY player does, this is a result-stamped match with an
+      // anomalous viewer row — `stampOutcome` writes every player's result in one pass, so it isn't
+      // reachable today, but don't fall through to the alive-status heuristic (which would read a
+      // still-"alive" forced-loser as a victory). Conservatively: not a win.
+      if (match.players.some((player) => player.result !== undefined)) {
+        return "defeat";
+      }
+
+      // Fallback for genuinely pre-result rows (nobody stamped — finished before the column existed).
+      // A draw is what the BE's game-over derivation reports as no winning team (winnerTeamIndex null)
+      // — e.g. a simultaneous double-elimination: finished with nobody still "alive". Same test here.
       const anyoneAlive = match.players.some((player) => player.status === "alive");
 
       if (!anyoneAlive) {
         return "draw";
       }
 
-      return viewer.status === "routed" || viewer.status === "captured" ? "defeat" : "victory";
+      // Anything other than "alive" is a defeat — the same test `deriveGameOver` uses to decide a
+      // team is out. Keyed off "alive" rather than listing the losing statuses so a newly added one
+      // (resigned, and later a timed-out player) can't silently fall through to "victory".
+      return viewer.status === "alive" ? "victory" : "defeat";
     }
 
     if (match.state === "setup") {

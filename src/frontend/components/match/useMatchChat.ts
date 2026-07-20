@@ -1,4 +1,5 @@
 "use client";
+import type { CoAvatar } from "frontend/utils/sprites/avatar";
 import { trpc } from "frontend/utils/trpc-client";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -18,6 +19,8 @@ export type ChatMessage = {
   id: string;
   senderId: string;
   senderName: string;
+  /** Raw routing handle (un-stripped) for the sender's profile link. */
+  senderHandle: string;
   content: string;
 };
 
@@ -42,6 +45,24 @@ export function useMatchChat({ matchId, playerId, players, isOpen, activeChannel
     [players],
   );
   const nameOf = (id: string): string => nameById.get(id) ?? id;
+
+  // Raw handle (with any [dev] prefix) for the profile URL — distinct from the stripped display name.
+  const handleById = useMemo(
+    () => new Map(players.map((player) => [player.id, player.name])),
+    [players],
+  );
+  const handleOf = (id: string): string => handleById.get(id) ?? id;
+
+  // Resolve the roster's chosen avatars once, keyed by handle, so each message can show a portrait.
+  const rosterNames = useMemo(() => players.map((player) => player.name), [players]);
+  const cards = trpc.players.cards.useQuery(
+    { names: rosterNames },
+    { enabled: rosterNames.length > 0, staleTime: 5 * 60 * 1000 },
+  );
+  const avatarByHandle = useMemo(
+    () => new Map((cards.data ?? []).map((card) => [card.name, card.avatar])),
+    [cards.data],
+  );
 
   // Latest channel/open/active in refs so the (once-established) subscription handler reads current
   // values instead of the closure it was created with.
@@ -87,6 +108,7 @@ export function useMatchChat({ matchId, playerId, players, isOpen, activeChannel
         id: message.id,
         senderId: message.senderId,
         senderName: nameOf(message.senderId),
+        senderHandle: handleOf(message.senderId),
         content: message.content,
       })),
     }));
@@ -131,6 +153,7 @@ export function useMatchChat({ matchId, playerId, players, isOpen, activeChannel
                 id: event.messageId,
                 senderId: event.senderId,
                 senderName: stripDev(event.senderName),
+                senderHandle: handleOf(event.senderId),
                 content: event.content,
               },
             ],
@@ -167,5 +190,7 @@ export function useMatchChat({ matchId, playerId, players, isOpen, activeChannel
     unread,
     hasTeamChannel: channels.team != null,
     ready: activeConversationId !== undefined,
+    // Resolve a sender's chosen avatar at render time (fills in once the roster cards load).
+    avatarForHandle: (handle: string): CoAvatar | null => avatarByHandle.get(handle) ?? null,
   };
 }

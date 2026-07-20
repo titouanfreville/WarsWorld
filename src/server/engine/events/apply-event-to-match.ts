@@ -7,11 +7,14 @@ import { applyAttackEvent } from "server/engine/events/handlers/attack/applyAtta
 import { applyBuildEvent } from "server/engine/events/handlers/build";
 import { applyCOPowerEvent } from "server/engine/events/handlers/coPower";
 import { applyDeleteEvent } from "server/engine/events/handlers/delete";
+import { applyDevToolEvent } from "server/engine/events/handlers/dev-tool";
+import { applyAdminToolEvent } from "server/engine/events/handlers/admin-tool";
 import { applyLaunchMissileEvent } from "server/engine/events/handlers/launchMissile";
 import { applyMatchStartEvent } from "server/engine/events/handlers/match-start";
 import { applyMoveEvent } from "server/engine/events/handlers/move";
 import { applyPassTurnEvent } from "server/engine/events/handlers/passTurn";
 import { applyRepairEvent } from "server/engine/events/handlers/repair";
+import { applyPlayerEliminatedEvent } from "server/engine/events/handlers/surrender";
 import { applyUnloadNoWaitEvent } from "server/engine/events/handlers/unload/unloadNoWait";
 import { applyUnloadWaitEvent } from "server/engine/events/handlers/unload/unloadWait";
 
@@ -46,6 +49,18 @@ export const applyMainEventToMatch = (
     }
     case "matchStart": {
       applyMatchStartEvent(match, event);
+      break;
+    }
+    case "devTool": {
+      applyDevToolEvent(match, event);
+      break;
+    }
+    case "adminTool": {
+      applyAdminToolEvent(match, event);
+      break;
+    }
+    case "player-eliminated": {
+      applyPlayerEliminatedEvent(match, event);
       break;
     }
     default: {

@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { hashPassword } from "server/hashPassword";
 import { prisma } from "server/prisma/prisma-client";
-import { authMiddleware } from "server/trpc/middleware/auth";
+import { optionalAuthMiddleware } from "server/trpc/middleware/auth";
 import { playerWithoutCurrentMiddleware } from "server/trpc/middleware/player";
 import { playerBaseProcedure, publicBaseProcedure, router } from "server/trpc/trpc-setup";
 import { signUpSchema } from "server/auth/schemas";
@@ -9,8 +9,14 @@ import { preferencesSchema } from "server/players/schemas";
 import { z } from "zod";
 
 export const userRouter = router({
+  /**
+   * "Who am I?" — must stay callable ANONYMOUSLY, answering `user: undefined` rather than throwing.
+   * The client calls it before it can know whether it's logged in, and `ProvidePlayers` only selects
+   * a player when `data.user` is present, so a 401 here costs the user their player selection
+   * entirely: no name, no history, no playerId to start a game.
+   */
   me: publicBaseProcedure
-    .use(authMiddleware)
+    .use(optionalAuthMiddleware)
     .use(playerWithoutCurrentMiddleware)
     .query(({ ctx }) => {
       return {

@@ -1,5 +1,14 @@
+import type { Rank } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { MatchQueue, toleranceAt, unfairnessOf, type Ticket } from "server/matchmaking/queue";
+import { REMATCH_BASE_GAP_SEC } from "server/matchmaking/constants";
+import {
+  MatchQueue,
+  MAX_RANK_GAP,
+  rematchOk,
+  toleranceAt,
+  unfairnessOf,
+  type Ticket,
+} from "server/matchmaking/queue";
 import { defaultSkill } from "server/ranking/skill";
 
 /**
@@ -22,13 +31,34 @@ const ticket = (playerId: string, skill: { mu: number; sigma: number }, waitedSe
   ruleset: "standard",
   mode: "duel",
   ranked: true,
+  // Default: no settled rank, so the rank band doesn't apply and pairing rests on MMR alone. The
+  // rank-band tests below opt in explicitly.
+  rank: null,
+  // Default: no recent opponents, so the rematch hold never fires. Opt in per-test.
+  recentOpponents: {},
   enqueuedAt: NOW - waitedSec * 1000,
+});
+
+/** A ranked ticket that DOES carry a settled rank, for the rank-band tests. */
+const ranked = (playerId: string, rank: Rank, waitedSec = 0, mu = 25): Ticket => ({
+  ...ticket(playerId, settled(mu), waitedSec),
+  rank,
 });
 
 describe("toleranceAt", () => {
   it("starts at the base and widens with wait", () => {
     expect(toleranceAt(ticket("a", defaultSkill(), 0), NOW)).toBeCloseTo(0.12, 5);
-    expect(toleranceAt(ticket("a", defaultSkill(), 10), NOW)).toBeCloseTo(0.24, 5); // .12 + .012*10
+    expect(toleranceAt(ticket("a", defaultSkill(), 60), NOW)).toBeGreaterThan(0.12);
+  });
+
+  /** Exponential-in-time: the tolerance is a log of wait, so each equal wait buys less than the last. */
+  it("widens with diminishing returns — leniency costs exponentially more time", () => {
+    const at = (s: number) => toleranceAt(ticket("a", defaultSkill(), s), NOW);
+    const firstStep = at(25) - at(0);
+    const secondStep = at(50) - at(25);
+
+    expect(secondStep).toBeLessThan(firstStep);
+    expect(secondStep).toBeGreaterThan(0); // still climbing, just slower
   });
 
   /** 0.5 is the maximum possible unfairness, so this is what makes "eventually pairs with anyone" true. */
@@ -133,5 +163,123 @@ describe("MatchQueue pairing", () => {
     const removed = q.remove("A");
     expect(removed?.enqueuedAt).toBe(NOW - 42_000);
     expect(q.has("A")).toBe(false);
+  });
+});
+
+/**
+ * The rank band (ranked only). Both players carry a settled rank, MMR is held identical so the MMR
+ * gate never interferes, and we watch the band: ±1 at first, widening on its own (slow) clock, hard-
+ * capped. Active ranks in ladder order: cadet, private, lieutenant, captain, marechal.
+ */
+describe("rank band", () => {
+  it("pairs neighbouring ranks immediately", () => {
+    const q = new MatchQueue();
+    q.add(ranked("A", "private"));
+    q.add(ranked("B", "lieutenant")); // one step away
+
+    expect(q.pair(NOW)).toHaveLength(1);
+  });
+
+  it("won't pair two ranks apart at first — the band starts at ±1", () => {
+    const q = new MatchQueue();
+    q.add(ranked("A", "private"));
+    q.add(ranked("B", "captain")); // two steps away
+
+    expect(q.pair(NOW)).toHaveLength(0);
+    expect(q.size()).toBe(2);
+  });
+
+  it("pairs two ranks apart once the (slow) rank clock has widened", () => {
+    const q = new MatchQueue();
+    q.add(ranked("A", "private", 200)); // waited past the first rank-widen step
+    q.add(ranked("B", "captain", 200));
+
+    expect(q.pair(NOW)).toHaveLength(1);
+  });
+
+  it("never pairs beyond the hard cap, however long the wait", () => {
+    const q = new MatchQueue();
+    // cadet ↔ marechal spans the whole ladder (4 steps), past MAX_RANK_GAP (3).
+    q.add(ranked("A", "cadet", 100_000));
+    q.add(ranked("B", "marechal", 100_000));
+
+    expect(MAX_RANK_GAP).toBeLessThan(4);
+    expect(q.pair(NOW)).toHaveLength(0);
+  });
+
+  it("ignores the band when a side has no settled rank (placements / casual)", () => {
+    const q = new MatchQueue();
+    // A is placing (rank null); B is a marechal. The band can't apply, so MMR alone decides — and
+    // MMR is identical, so they pair at once despite the rank chasm.
+    q.add({ ...ranked("A", "marechal"), rank: null });
+    q.add(ranked("B", "marechal"));
+
+    expect(q.pair(NOW)).toHaveLength(1);
+  });
+});
+
+/**
+ * Anti-rematch by recency. After finishing a game, two players are held apart, the hold relaxing as
+ * they wait — so you meet old opponents first and only rematch a recent one when the pool leaves no
+ * fresher choice. Never a permanent block.
+ */
+describe("rematchOk", () => {
+  const played = (
+    playerId: string,
+    opponentId: string,
+    finishedMs: number,
+    waitedSec = 0,
+  ): Ticket => ({
+    ...ticket(playerId, settled(25), waitedSec),
+    recentOpponents: { [opponentId]: finishedMs },
+  });
+
+  it("allows a pair with no shared recent game", () => {
+    expect(rematchOk(ticket("A", settled(25)), ticket("B", settled(25)), NOW)).toBe(true);
+  });
+
+  it("holds off an opponent you just finished with, at zero wait", () => {
+    const a = played("A", "B", NOW - 10_000); // finished 10s ago
+    expect(rematchOk(a, ticket("B", settled(25)), NOW)).toBe(false);
+  });
+
+  it("allows an opponent you finished with longer ago than the base gap", () => {
+    const a = played("A", "B", NOW - (REMATCH_BASE_GAP_SEC + 60) * 1000);
+    expect(rematchOk(a, ticket("B", settled(25)), NOW)).toBe(true);
+  });
+
+  it("reads the history from either side (symmetric)", () => {
+    const b = played("B", "A", NOW - 10_000); // B is the one carrying the record
+    expect(rematchOk(ticket("A", settled(25)), b, NOW)).toBe(false);
+  });
+
+  it("relaxes with wait: requeue right after a game and the rematch frees up as you keep waiting", () => {
+    // Model a requeue: they finished AND re-joined at the same moment, then time passes.
+    const at = (waitedSec: number) => {
+      const finished = NOW - waitedSec * 1000;
+      const a = { ...played("A", "B", finished, waitedSec) };
+      const b = { ...ticket("B", settled(25), waitedSec), recentOpponents: { A: finished } };
+      return rematchOk(a, b, NOW);
+    };
+
+    expect(at(60)).toBe(false); // a minute after finishing — still held
+    expect(at(300)).toBe(true); // five minutes on — freed up
+  });
+
+  it("keeps a just-finished pair apart in a live pairing pass, then lets them meet once they've waited", () => {
+    const mk = (id: string, other: string, waitedSec: number): Ticket => {
+      const finished = NOW - waitedSec * 1000;
+      return { ...ticket(id, settled(25), waitedSec), recentOpponents: { [other]: finished } };
+    };
+
+    const fresh = new MatchQueue();
+    fresh.add(mk("A", "B", 0));
+    fresh.add(mk("B", "A", 0));
+    expect(fresh.pair(NOW)).toHaveLength(0); // just played → held apart
+
+    const waited = new MatchQueue();
+    waited.add(mk("A", "B", 600));
+    waited.add(mk("B", "A", 600));
+    expect(waited.pair(NOW)).toHaveLength(1); // long wait → hold relaxed, they pair
   });
 });

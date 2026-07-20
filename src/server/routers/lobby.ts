@@ -8,6 +8,7 @@ import {
   inviteSchema,
   kickSchema,
   respondInviteSchema,
+  setMapSchema,
   withLobbyIdSchema,
 } from "server/lobby/schemas";
 
@@ -35,6 +36,9 @@ export const lobbyRouter = router({
     .mutation(({ input, ctx }) =>
       lobby.assignTeam(input.lobbyId, ctx.currentPlayer.id, input.team, input.slotWithinTeam),
     ),
+  setMap: playerBaseProcedure
+    .input(setMapSchema)
+    .mutation(({ input, ctx }) => lobby.setMap(input.lobbyId, ctx.currentPlayer.id, input.mapId)),
   invite: playerBaseProcedure
     .input(inviteSchema)
     .mutation(({ input, ctx }) =>

@@ -13,8 +13,9 @@ import {
   samePosition,
   visualHP,
 } from "frontend/components/match/match-view";
+import { FRAME_ALIAS, pipeSeamFrameName } from "frontend/components/match/hud/terrain-sprite";
 import type { FederatedPointerEvent, Resource } from "pixi.js";
-import { AnimatedSprite, Container, Sprite, Texture } from "pixi.js";
+import { AnimatedSprite, Container, Graphics, Sprite, Texture } from "pixi.js";
 import type { LoadedSpriteSheet } from "../load-spritesheet";
 
 /**
@@ -37,11 +38,14 @@ const tileSprite = (
   match: MatchView,
   tile: MatchTile | MatchChangeableTile,
   spriteSheets: LoadedSpriteSheet,
+  position: BoardPosition,
 ): Sprite => {
   const variant = weatherTileVariant(match.currentWeather);
 
   if (!("playerSlot" in tile)) {
-    let spriteName: string = tile.type;
+    // The atlas spells a few tiles differently from the engine (`pipeSeam` → `pipeseam-*.png`);
+    // without the alias the key misses and the tile draws as an empty sprite.
+    let spriteName: string = FRAME_ALIAS[tile.type] ?? tile.type;
 
     if ("fired" in tile && tile.fired) {
       spriteName = "usedSilo";
@@ -49,6 +53,10 @@ const tileSprite = (
 
     if ("variant" in tile) {
       spriteName += `-${tile.variant}`;
+    } else if (tile.type === "pipeSeam" && "hp" in tile) {
+      const mapTile = match.map.tiles[position[1]][position[0]];
+
+      spriteName = pipeSeamFrameName(tile.hp, "variant" in mapTile ? mapTile.variant : null);
     }
 
     const { textures } = spriteSheets.neutral;
@@ -99,24 +107,110 @@ export const renderMapFromView = (match: MatchView, spriteSheets: LoadedSpriteSh
 
   for (let y = 0; y < match.map.tiles.length; y++) {
     for (let x = 0; x < match.map.tiles[y].length; x++) {
-      const sprite = tileSprite(match, getTileAt(match, [x, y]), spriteSheets);
+      const tile = getTileAt(match, [x, y]);
+      const sprite = tileSprite(match, tile, spriteSheets, [x, y]);
 
       sprite.anchor.set(0, 1); // render from the bottom, not the top
       sprite.x = x * baseTileSize;
       sprite.y = (y + 1) * baseTileSize;
       sprite.zIndex = y;
+      // Named so an effect can address one tile after a rebuild — the capture flourish shrinks the
+      // property sprite (scale.y off its anchored base, so it sinks) while it's being captured.
+      sprite.name = `tile-${x}-${y}`;
 
-      if (fogVisible !== null && !fogVisible.has(`${x},${y}`)) {
+      const fogged = fogVisible !== null && !fogVisible.has(`${x},${y}`);
+
+      if (fogged) {
         sprite.tint = FOG_TINT; // multiplicative dim of the whole tile sprite (base + tall top)
       }
 
       mapContainer.addChild(sprite);
+
+      // A damaged pipe seam carries its health right on the tile, in the same digit sprites and the
+      // same corner a unit uses — a seam is shot like a unit, so it reads like one. Full health shows
+      // nothing (as with units, no badge means untouched), and a seam you have no vision of shows
+      // nothing either: its condition is intel you haven't scouted.
+      // hp < 1 is a BROKEN seam — plain ground now, with no health left to report.
+      if (tile.type === "pipeSeam" && "hp" in tile && tile.hp >= 1 && !fogged) {
+        const seamHp = Math.ceil(tile.hp / 10);
+
+        if (seamHp < 10) {
+          mapContainer.addChild(
+            createIcon(
+              spriteSheets,
+              x * baseTileSize + 8,
+              y * baseTileSize + 8,
+              `health-${seamHp}.png`,
+            ),
+          );
+        }
+      }
     }
   }
 
   mapContainer.sortableChildren = true;
 
   return mapContainer;
+};
+
+// Frames per texture swap for the supply badge: ~0.8s each at 60fps — a readable pulse, not a flicker.
+const SUPPLY_BLINK_SPEED = 0.02;
+
+/**
+ * The low-supply badge, drawn in the unit's free TOP-RIGHT corner (capture owns bottom-left, the HP
+ * digit bottom-right, cargo top-left). `supply` is the engine's verdict — the client neither knows
+ * the maximums nor compares against them (see maskUnitForViewer / engine rules/supply.ts) — and is
+ * null whenever the consumables behind it are masked from this viewer, so a fogged enemy shows nothing.
+ *
+ * Always animates, so the warning draws the eye whether the unit is short on one thing or both:
+ * - low on ONE — the icon blinks against a transparent frame (icon ↔ blank);
+ * - low on BOTH — the two icons alternate in the one corner, since two 8px icons don't read on a
+ *   16px tile side by side.
+ * It's an AnimatedSprite so pixi drives the cycle on its own shared ticker and disposes of it with
+ * the container — unit containers are rebuilt on every render, so a hand-rolled ticker handler here
+ * would leak one per render.
+ *
+ * Returns null when the unit is fine, or when the icons are missing from the spritesheet.
+ */
+const createSupplyIcon = (
+  spriteSheet: LoadedSpriteSheet,
+  x: number,
+  y: number,
+  supply: NonNullable<MatchUnit["supply"]>,
+): AnimatedSprite | null => {
+  const names: string[] = [];
+
+  if (supply.lowFuel) {
+    names.push("lowfuel.png");
+  }
+
+  if (supply.lowAmmo) {
+    names.push("lowammo.png");
+  }
+
+  const textures = names
+    .map((name) => spriteSheet.icons?.textures[name])
+    .filter((texture): texture is Texture<Resource> => texture !== undefined);
+
+  if (textures.length === 0) {
+    return null;
+  }
+
+  // A lone icon gets a transparent second frame so it blinks on/off instead of sitting static; two
+  // already alternate against each other. Either way there are ≥2 frames to animate.
+  const frames = textures.length === 1 ? [textures[0], Texture.EMPTY] : textures;
+
+  const icon = new AnimatedSprite(frames);
+  icon.x = x;
+  icon.y = y;
+  icon.width = 8;
+  icon.height = 8;
+  icon.eventMode = "static";
+  icon.zIndex = 999;
+  icon.animationSpeed = SUPPLY_BLINK_SPEED;
+  icon.play();
+
+  return icon;
 };
 
 const createIcon = (
@@ -189,6 +283,18 @@ export const renderUnitFromView = (
     unitContainer.addChild(createIcon(spriteSheets, spriteX + 8, spriteY + 8, `health-${hp}.png`));
   }
 
+  // Low fuel/ammo warning, top-right. Null for a unit whose consumables this viewer can't read, and
+  // `undefined` for a render-only phantom the optimistic view casts into being (see ghostBuiltUnit) —
+  // that one is outside the type system's reach, so treat any absence as "nothing to warn about"
+  // rather than trusting the declared shape and taking the whole board down with a TypeError.
+  if (unit.supply !== null && unit.supply !== undefined) {
+    const supplyIcon = createSupplyIcon(spriteSheets, spriteX + 8, spriteY, unit.supply);
+
+    if (supplyIcon !== null) {
+      unitContainer.addChild(supplyIcon);
+    }
+  }
+
   // Cargo indicator: a transport shows a mini sprite of each unit it carries in its top-left corner,
   // so it's clear it's loaded and WHICH units are inside (they belong to the same owner/army).
   const cargoTypes: MatchUnit["type"][] = [];
@@ -252,6 +358,22 @@ export const renderUnitsFromView = (
  * A translucent overlay marking a set of tiles (e.g. a unit's reachable tiles). Positioned exactly
  * like the map tiles so it lines up; caller adds it to the map container so units still render on top.
  */
+/** Alpha of the wash laid over each highlighted tile — low enough to read the terrain underneath. */
+const HIGHLIGHT_FILL_ALPHA = 0.25;
+/** Alpha of the outline traced around the region's rim. Bright: it's what gives the raised read. */
+const HIGHLIGHT_EDGE_ALPHA = 0.85;
+const HIGHLIGHT_EDGE_WIDTH = 1;
+
+/**
+ * Paint a set of tiles as a single raised plate: a translucent wash over every tile, plus a bright
+ * outline traced around the region's RIM only (an edge is drawn where the neighbouring tile isn't in
+ * the set). Outlining the rim rather than each tile is what reads as one contiguous area lifted off
+ * the board, instead of a grid of separate squares.
+ *
+ * Movement and attack ranges differ only by `color` — same geometry, same treatment — and the board
+ * draws the selected unit's movement through this very function, so selection and right-click
+ * inspection share one visual language by construction.
+ */
 export const renderHighlightTiles = (
   positions: readonly BoardPosition[],
   color: string,
@@ -260,17 +382,57 @@ export const renderHighlightTiles = (
   container.zIndex = 1000; // above the map tiles (which use zIndex = y), below the units container
   container.name = "v2-highlights";
 
-  for (const [x, y] of positions) {
-    const sprite = new Sprite(Texture.WHITE);
-    sprite.tint = color;
-    sprite.alpha = 0.4;
-    sprite.width = baseTileSize;
-    sprite.height = baseTileSize;
-    sprite.anchor.set(0, 1);
-    sprite.x = x * baseTileSize;
-    sprite.y = (y + 1) * baseTileSize;
-    container.addChild(sprite);
+  if (positions.length === 0) {
+    return container;
   }
+
+  const inRegion = new Set(positions.map(([x, y]) => `${x},${y}`));
+  const graphics = new Graphics();
+
+  graphics.beginFill(color, HIGHLIGHT_FILL_ALPHA);
+
+  for (const [x, y] of positions) {
+    graphics.drawRect(x * baseTileSize, y * baseTileSize, baseTileSize, baseTileSize);
+  }
+
+  graphics.endFill();
+
+  // `alignment: 0` keeps the stroke inside the tile, so the rim can't bleed onto the neighbour.
+  graphics.lineStyle({
+    width: HIGHLIGHT_EDGE_WIDTH,
+    color,
+    alpha: HIGHLIGHT_EDGE_ALPHA,
+    alignment: 0,
+  });
+
+  for (const [x, y] of positions) {
+    const left = x * baseTileSize;
+    const top = y * baseTileSize;
+    const right = left + baseTileSize;
+    const bottom = top + baseTileSize;
+
+    if (!inRegion.has(`${x},${y - 1}`)) {
+      graphics.moveTo(left, top);
+      graphics.lineTo(right, top);
+    }
+
+    if (!inRegion.has(`${x},${y + 1}`)) {
+      graphics.moveTo(left, bottom);
+      graphics.lineTo(right, bottom);
+    }
+
+    if (!inRegion.has(`${x - 1},${y}`)) {
+      graphics.moveTo(left, top);
+      graphics.lineTo(left, bottom);
+    }
+
+    if (!inRegion.has(`${x + 1},${y}`)) {
+      graphics.moveTo(right, top);
+      graphics.lineTo(right, bottom);
+    }
+  }
+
+  container.addChild(graphics);
 
   return container;
 };

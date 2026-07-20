@@ -6,6 +6,7 @@ import { playerSlotForUnitsSchema } from "server/core/schemas/player-slot";
 import { positionSchema } from "server/core/schemas/position";
 import { buildMatchFullView } from "server/engine/previews/match-view";
 import {
+  adminMatchBaseProcedure,
   matchBaseProcedure,
   playerBaseProcedure,
   playerInMatchBaseProcedure,
@@ -67,7 +68,8 @@ export const lifecycleRouter = router({
       matchLifecycleUsecase.switchOptions(match, player, input),
     ),
 
-  adminUnwaitUnit: matchBaseProcedure
+  /** Was named "admin" but ran on `matchBaseProcedure` — any player in the match could call it. */
+  adminUnwaitUnit: adminMatchBaseProcedure
     .input(z.object({ position: positionSchema }))
     .mutation(({ input, ctx }) => matchLifecycleUsecase.adminUnwaitUnit(ctx.match, input.position)),
 });

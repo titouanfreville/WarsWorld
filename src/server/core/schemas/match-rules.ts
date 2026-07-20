@@ -32,6 +32,19 @@ export const matchRulesSchema = z.object({
    * creation is unaffected; the spawn path falls back to a default when unset.
    */
   pickSeconds: z.number().int().positive().optional(),
+  /**
+   * Opts this match into the testing tools, which is what lets a `tester` use them here (a `dev` or
+   * `admin` doesn't need the opt-in). Chosen at creation and frozen once the match leaves `setup` —
+   * otherwise a player could switch cheats on mid-game.
+   *
+   * Never true on a ranked match; match creation refuses that combination outright so it can't be
+   * persisted, rather than relying on every read path to re-check.
+   *
+   * Optional rather than `.default(false)`, matching `pickSeconds` above: a default would make the
+   * field required on the inferred *output* type and force every existing rules constructor (seed,
+   * matchmaking, test scenarios) to name it. Absent means off, which is the safe reading.
+   */
+  testingTools: z.boolean().optional(),
 });
 
 export type MatchRules = z.infer<typeof matchRulesSchema>;

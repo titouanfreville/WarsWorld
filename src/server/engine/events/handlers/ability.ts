@@ -8,6 +8,13 @@ import type { UnitWrapper } from "server/engine/entities/unit";
 import type { ApplySubEvent, SubActionToEvent } from "server/engine/events/handler-types";
 
 function willCaptureTile(unit: UnitWrapper<"infantry" | "mech">): boolean {
+  /* Dev tool: capture completes in one action, exactly like Sami's SCOP below. Deliberately routed
+   * through the real capture path so HQ-capture elimination and the capture-limit victory check
+   * still fire — a tool that flipped tile ownership directly would skip both. */
+  if (unit.player.data.devModifiers?.directCapture === true) {
+    return true;
+  }
+
   let capturePoints = unit.data.currentCapturePoints ?? 20;
 
   if (unit.player.data.coId.name === "sami") {
@@ -197,7 +204,12 @@ export const applyAbilityEvent: ApplySubEvent<AbilityEvent> = (match, event, fro
         unit.data.currentCapturePoints = 20;
       }
 
-      if (unit.player.data.coId.name === "sami") {
+      // NOTE: this mirrors `willCaptureTile` above, which predicts the same outcome for the event's
+      // elimination reason. The two compute capture points independently and MUST agree — changing
+      // one alone makes the predicted and applied captures diverge.
+      if (unit.player.data.devModifiers?.directCapture === true) {
+        unit.data.currentCapturePoints = 0; // dev tool: insta capture, as Sami's SCOP does below
+      } else if (unit.player.data.coId.name === "sami") {
         if (unit.player.data.COPowerState === "super-co-power") {
           unit.data.currentCapturePoints = 0; // insta capture
         } else {

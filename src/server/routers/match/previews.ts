@@ -122,23 +122,76 @@ const buildWeapons = (unit: UnitWrapper) => {
 };
 
 /**
+ * The detail readout for a PIPE SEAM — the one piece of terrain that carries HP and can be shot.
+ * Same card, different shape (`kind: "terrain"`): no movement, consumables or weapons, just the
+ * health the client needs to judge whether one more hit breaks it, plus the tile's own cover.
+ *
+ * Visibility defers to the engine's vision, as the board does — it just happens that seams are
+ * currently visible to everyone always (Vision registers every seam like an owned property), so the
+ * gate never bites today. It stays because the rule belongs to the engine, not to this readout: if
+ * seam vision ever narrows, the card must narrow with it. Throws when the tile isn't a seam at all,
+ * which is how "nothing inspectable here" reaches the client (the card closes on error).
+ */
+export const buildPipeSeamDetails = (match: MatchWrapper, viewerId: string, position: Position) => {
+  const tile = match.getTile(position);
+
+  if (tile.type !== "pipeSeam") {
+    throw new DispatchableError("There's nothing to inspect there");
+  }
+
+  const viewerTeam = match.getPlayerById(viewerId)?.team;
+
+  if (viewerTeam !== undefined && !viewerTeam.isPositionVisible(position)) {
+    throw new DispatchableError("You can't see that tile");
+  }
+
+  const mapTile = match.map.data.tiles[position[1]][position[0]];
+
+  return {
+    kind: "terrain" as const,
+    displayName: "Pipe Seam",
+    // Seam HP rides the same 0-100 scale as a unit's (see applyAttackEvent), so it reads as the same
+    // 1-10 health digit the board draws on units — one health vocabulary across the board.
+    hp: tile.hp,
+    visualHp: Math.ceil(tile.hp / 10),
+    terrain: {
+      type: tile.type,
+      defenseStars: getTerrainDefenseStars(tile.type),
+      // The seam's live state (`changeableTiles`) carries only hp — its connection variant, which
+      // picks the art, is on the STATIC map tile underneath.
+      variant: "variant" in mapTile ? mapTile.variant : null,
+      playerSlot: null,
+    },
+  };
+};
+
+/**
  * The stats a unit-detail card renders. Reference stats (max fuel/ammo, movement, vision, range) are
- * public knowledge from the unit's type, so they're always sent; current consumables (fuel/ammo) are
- * only sent for the viewer's OWN units — an opponent must not learn how much fuel/ammo yours has left
- * (matching AW), and vice-versa. HP is public in AW, so it's always included.
+ * public knowledge from the unit's type, so they're always sent. HP and the current consumables
+ * (fuel/ammo) are whatever the SINGLE masking rule says this viewer may read — see maskUnitForViewer:
+ * HP is public unless the unit is Sonja's, and consumables are public outside fog but secret under it.
+ *
+ * `terrain` describes the tile the unit stands on, and `isIndirect` says whether it fires without
+ * moving. Both are engine-derived on purpose: the card renders them, and the inspect overlay keys its
+ * "full" view off `isIndirect` (an indirect can't move-and-fire, so it shows movement only). The
+ * client must not infer either from the range numbers — that would be rules knowledge on the FE.
  */
 export const buildUnitDetails = (
   unit: UnitWrapper,
   isOwn: boolean,
   viewerTeam: TeamWrapper | null,
 ) => {
-  // Whether HP is masked from the viewer is decided by the SINGLE masking rule the board uses:
-  // maskUnitForViewer returns `stats: "hidden"` for a unit whose HP the viewer can't read (an enemy
-  // Sonja unit today). Routing through it keeps this card and the board in lock-step if the rule
-  // ever changes. For a hidden-HP unit the card shows "?"; own units always show real HP.
-  const hpHidden = maskUnitForViewer(unit, viewerTeam).stats === "hidden";
+  const tile = unit.getTile();
+  // What this viewer may read is decided ONCE, by the same rule the board uses — this card must not
+  // hold a second opinion about who sees what, or the two drift. `stats: "hidden"` is a Sonja unit
+  // (no HP, no consumables); a fogged enemy keeps its HP but drops fuel/ammo; otherwise it's all there.
+  const masked = maskUnitForViewer(unit, viewerTeam);
+  const hpHidden = masked.stats === "hidden";
 
   return {
+    // Discriminator: this card also describes attackable TERRAIN (a pipe seam), which has HP but
+    // none of a unit's stats. The client branches on it instead of sniffing for absent fields.
+    kind: "unit" as const,
     type: unit.data.type,
     displayName: unit.properties.displayName,
     isOwn,
@@ -151,11 +204,23 @@ export const buildUnitDetails = (
     maxFuel: unit.properties.initialFuel,
     // `in` narrows the property union inline (a boolean alias wouldn't narrow it).
     maxAmmo: "initialAmmo" in unit.properties ? unit.properties.initialAmmo : null,
-    // Consumables leak intel about an enemy's remaining reach/firepower — own units only.
-    fuel: isOwn ? unit.getFuel() : null,
-    ammo: isOwn ? unit.getAmmo() : null,
+    // Read the masked view, not the live unit: outside fog an enemy's consumables are public (you can
+    // infer them by watching it move anyway), under fog they're secret along with the unit itself.
+    fuel: masked.stats === "hidden" ? null : (masked.stats.fuel ?? null),
+    ammo: masked.stats === "hidden" ? null : (masked.stats.ammo ?? null),
     // Weapons + the unit classes each can hit — public, type-derived (no per-unit intel).
     weapons: buildWeapons(unit),
+    // An indirect fires from where it stands; a direct unit moves and strikes. Drives the overlay.
+    isIndirect: unit.isIndirect(),
+    // The tile underfoot — terrain kind, the defense it grants, and enough of the tile's own data for
+    // the client to find its art (connection variant, owning slot). Public: the map is common
+    // knowledge, and `match.full` already sends every tile with these fields.
+    terrain: {
+      type: tile.type,
+      defenseStars: getTerrainDefenseStars(tile.type),
+      variant: "variant" in tile ? tile.variant : null,
+      playerSlot: "playerSlot" in tile ? tile.playerSlot : null,
+    },
   };
 };
 
@@ -319,7 +384,10 @@ export const matchPreviewRouter = router({
       const unit = match.getUnit(input.unitPosition);
 
       if (unit === undefined) {
-        throw new DispatchableError("There's no unit there");
+        // A pipe seam is attackable terrain with its own HP — "half a unit": no movement, fuel or
+        // weapons, but a health bar you must be able to read before committing a shot at it. It has
+        // no unit to inspect, so it answers here rather than needing its own endpoint.
+        return buildPipeSeamDetails(match, currentPlayer.id, input.unitPosition);
       }
 
       // Same visibility rule as `match.full`: a spectator (no team) sees every non-concealed unit;

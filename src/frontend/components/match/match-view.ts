@@ -84,3 +84,21 @@ export const ownsSlot = (player: MatchPlayer, playerSlot: number): boolean =>
  */
 export const visualHP = (unit: MatchUnit): number | undefined =>
   unit.stats === "hidden" ? undefined : Math.ceil(unit.stats.hp / 10);
+
+/**
+ * The most recent CO-power activation the BE sent on `match.full` (fog-masked positions). Null when
+ * no power is active this turn. The board plays the activation cinematic + special-target flourish
+ * once from it; the persistent per-unit aura reads each owner's power state instead (see below).
+ */
+export type PowerActivation = NonNullable<MatchView["powerActivation"]>;
+
+/**
+ * Whether the unit's owner currently has an active CO / super CO power — drives the persistent
+ * "under power" aura. Reads the public power summary (charge/state is public in AW), so it's correct
+ * for both the acting player and the opponent, and it naturally clears when the power ends.
+ */
+export const unitOwnerHasActivePower = (match: MatchView, unit: MatchUnit): boolean => {
+  const owner = getPlayerBySlot(match, unit.playerSlot);
+
+  return owner !== undefined && owner.power.state !== "no-power";
+};

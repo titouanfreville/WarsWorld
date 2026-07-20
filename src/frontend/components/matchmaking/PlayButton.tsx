@@ -2,12 +2,27 @@ import { RULESET_LABEL, RULESETS, useQueue, type Ruleset } from "frontend/contex
 import { useState } from "react";
 
 /**
- * The entry point into solo queue. A primary "Play ranked" button that opens a small league picker;
- * once searching, it flips to a live status pill (the docked widget owns the rest of the flow).
+ * A compact entry point into solo queue: a "Play ranked" button that opens a ruleset picker, then
+ * flips to a live status pill (the docked widget owns the rest of the flow). /play is the full
+ * surface; this is for headers.
  */
 export default function PlayButton() {
-  const { state, join, leave, joining } = useQueue();
+  const { state, join, leave, joining, joinError, dismissJoinError } = useQueue();
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // The server refuses a join it doesn't like ("finish your current match first"). Say so — a button
+  // that silently does nothing reads as broken.
+  if (joinError !== null) {
+    return (
+      <button
+        onClick={dismissJoinError}
+        title="Dismiss"
+        className="@rounded-lg @border @border-red-500/40 @bg-red-950/40 @px-3 @py-2 @text-xs @text-red-200 hover:@text-white"
+      >
+        {joinError} ✕
+      </button>
+    );
+  }
 
   if (state.phase !== "idle") {
     return (

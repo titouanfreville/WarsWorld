@@ -27,5 +27,11 @@ declare global {
     // Matchmaking map pick & ban:
     type PrismaMapPool = string[]; // Lobby.mapPool — candidate WWMap ids for the ban phase
     type PrismaBannedMapIds = string[]; // PlayerInLobby.bannedMapIds — this player's bans
+    // MatchPlayerStats.unitBreakdown — per-unit-type tallies (engine unit key → count/funds).
+    type PrismaUnitBreakdown = {
+      built: Record<string, number>;
+      lost: Record<string, number>;
+      damage: Record<string, number>;
+    };
   }
 }

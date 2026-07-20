@@ -1,4 +1,3 @@
-import CurrentPlayerSelect from "./CurrentPlayerSelect";
 import { NavItem } from "./NavItem";
 import NavLoginLogout from "./NavLoginLogout";
 
@@ -43,8 +42,7 @@ export function NavGroup({ setIsOpen, isOpen }: Props) {
           <NavItem key={item.text} text={item.text} location={item.location} />
         ))}
       </div>
-      <div className="@flex @h-12 @w-[15%] @justify-end @items-center @relative @gap-3">
-        <CurrentPlayerSelect />
+      <div className="@flex @h-12 @w-[15%] @justify-end @items-center @relative">
         <NavLoginLogout isOpen={isOpen} setIsOpen={setIsOpen} />
       </div>
     </>

@@ -49,12 +49,18 @@ export const getAvailableSubActions = (
     neighbourPositions.some((p) => isSamePosition(unit.data.position, p)),
   );
 
-  //check for wait / join / load (move validity
-  // already checked somewhere else)
-  //if loading / joining, there is only one menu option
-  if (match.getUnit(newPosition) === undefined || isSamePosition(newPosition, unit.data.position)) {
+  // Wait / Join / Load depends on whether a unit stands on the destination — but from the ACTING
+  // team's point of view, not the omniscient board. A fog-hidden / dived enemy sitting here must read
+  // as EMPTY (→ Wait, so the Attack option below is still computed): the menu must never leak an
+  // ambush, and the move simply traps on it at execution instead. Only a unit the team can actually
+  // SEE (its own — a visible enemy isn't a reachable destination) turns this into a Join / Load. In a
+  // non-fog game canSeeUnitAtPosition ≡ `getUnit(...) !== undefined`, so this is a no-op there.
+  const occupant = match.getUnit(newPosition);
+  const seesOccupant = occupant !== undefined && unit.player.team.canSeeUnitAtPosition(newPosition);
+
+  if (!seesOccupant || isSamePosition(newPosition, unit.data.position)) {
     menuOptions.set(AvailableSubActions.Wait, { type: "wait" });
-  } else if (match.getUnit(newPosition)?.data.type === unit.data.type) {
+  } else if (occupant.data.type === unit.data.type) {
     menuOptions.set(AvailableSubActions.Join, { type: "wait" });
     return menuOptions;
   } else {

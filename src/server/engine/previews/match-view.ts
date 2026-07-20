@@ -64,11 +64,62 @@ export const buildMatchFullView = (match: MatchWrapper, currentPlayerId: string)
     rules: match.rules,
     status: match.status,
     turn: match.turn,
-    // Sonja hides her units' HP/fuel/ammo from opponents even without fog; mask enemy Sonja units
-    // here (own team sees them unchanged) so the board never renders her true HP. See maskUnitForViewer.
+    // Per-viewer masked units (see maskUnitForViewer, the single rule): Sonja hides her units'
+    // HP/fuel/ammo from opponents even without fog, and under fog an enemy's cargo and consumables are
+    // secret too (its HP is not — a unit you can see, you can read). Each unit also carries `supply`,
+    // the engine-derived low-fuel/low-ammo flag the board badges from, null wherever the consumables
+    // behind it are masked. Own units pass through unchanged.
     units: visibleUnits.map((u) => maskUnitForViewer(u, viewerTeam ?? null)),
     fogOfWar,
     visibleTiles,
     gameOver,
+    // Start-of-turn summary (day + repaired/refuelled/crashed units) — only handed to the player whose
+    // turn it actually is, and only about their own (always-visible) units, so it leaks nothing under
+    // fog. The client plays the start-round animation from it; null otherwise. See turnStartReport.
+    turnStart: match.turnStartReport?.playerId === currentPlayerId ? match.turnStartReport : null,
+    // Fuel-out crashes from the latest upkeep — sent to BOTH viewers, unlike `turnStart` above, because
+    // a unit going down is public in AW and the opponent should see it happen rather than notice it
+    // missing. Under fog, masked to tiles this viewer can currently see, so a crash never reveals a
+    // unit whose position was secret. That filter is self-correcting: vision is recalculated after the
+    // units are removed, so one that was the only source of vision on its own tile drops itself.
+    crashes:
+      match.turnStartReport === null
+        ? null
+        : {
+            day: match.turnStartReport.day,
+            // Whose units went down — lets the client honour an "own units only" animation preference.
+            playerId: match.turnStartReport.playerId,
+            positions:
+              fogOfWar && viewerTeam !== undefined
+                ? match.turnStartReport.crashed.filter((position) =>
+                    viewerTeam.isPositionVisible(position),
+                  )
+                : match.turnStartReport.crashed,
+          },
+    // The latest CO-power activation — sent to BOTH viewers (power activation is public in AW) so the
+    // opponent also sees the cinematic. The affected UNITS can leak hidden info, so they're fog-masked
+    // to tiles this viewer can see; under fog off / no team, all pass through.
+    powerActivation:
+      match.powerActivationReport === null
+        ? null
+        : {
+            ...match.powerActivationReport,
+            affectedUnits:
+              fogOfWar && viewerTeam !== undefined
+                ? match.powerActivationReport.affectedUnits.filter((affected) =>
+                    viewerTeam.isPositionVisible(affected.position),
+                  )
+                : match.powerActivationReport.affectedUnits,
+            signature:
+              match.powerActivationReport.signature === null ||
+              !(fogOfWar && viewerTeam !== undefined)
+                ? match.powerActivationReport.signature
+                : {
+                    ...match.powerActivationReport.signature,
+                    epicenters: match.powerActivationReport.signature.epicenters.filter(
+                      (epicenter) => viewerTeam.isPositionVisible(epicenter),
+                    ),
+                  },
+          },
   };
 };

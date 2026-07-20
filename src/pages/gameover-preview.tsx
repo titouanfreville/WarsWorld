@@ -1,4 +1,11 @@
 import { GameOverOverlay, type CoResult } from "frontend/components/match/hud/GameOverOverlay";
+import {
+  CO_SIGNATURE,
+  EFFECT_IDS,
+  PARTICLE_EFFECTS,
+  resolveEffectId,
+  type EffectId,
+} from "frontend/components/match/hud/particle-effects";
 import type { NextPageWithLayout } from "frontend/types/page";
 import { CO_NAMES } from "frontend/utils/sprites";
 import { useEffect, useMemo, useState } from "react";
@@ -69,6 +76,7 @@ function Stage({
   holdSeconds,
   onContinue,
   particles,
+  particleEffect,
 }: {
   gameOver: { viewerWon: boolean; winnerTeamIndex: number | null };
   cos: CoResult[];
@@ -76,6 +84,7 @@ function Stage({
   holdSeconds: number;
   onContinue: () => void;
   particles: boolean;
+  particleEffect: EffectId | undefined;
 }) {
   const [secondsLeft, setSecondsLeft] = useState(holdSeconds);
 
@@ -104,6 +113,7 @@ function Stage({
       gameOver={gameOver}
       cos={cos}
       particles={particles}
+      particleEffect={particleEffect}
       secondsLeft={showCountdown ? Math.max(0, secondsLeft) : undefined}
       onContinue={showCountdown ? onContinue : undefined}
     />
@@ -147,6 +157,7 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
   const [holdSeconds, setHoldSeconds] = useState(20);
   const [backdrop, setBackdrop] = useState("Board navy");
   const [showParticles, setShowParticles] = useState(true);
+  const [particleEffect, setParticleEffect] = useState<EffectId | undefined>(undefined);
   const [nonce, setNonce] = useState(0);
 
   const replay = () => setNonce((n) => n + 1);
@@ -164,9 +175,14 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
 
   // Remount the stage whenever the config or the replay nonce changes → animation restarts.
   const stageKey = useMemo(
-    () => `${JSON.stringify(players)}|${showCountdown}|${holdSeconds}|${showParticles}|${nonce}`,
-    [players, showCountdown, holdSeconds, showParticles, nonce],
+    () =>
+      `${JSON.stringify(players)}|${showCountdown}|${holdSeconds}|${showParticles}|${particleEffect ?? "-"}|${nonce}`,
+    [players, showCountdown, holdSeconds, showParticles, particleEffect, nonce],
   );
+
+  // What actually plays for the viewer, given the pick + their CO's signature (for the info line).
+  const resolvedEffect = resolveEffectId(viewer?.name, particleEffect);
+  const viewerHasSignature = viewer?.name !== undefined && CO_SIGNATURE[viewer.name] !== undefined;
 
   const setPlayer = (index: number, patch: Partial<PreviewPlayer>) =>
     setPlayers((prev) => prev.map((player, i) => (i === index ? { ...player, ...patch } : player)));
@@ -313,6 +329,35 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
           />
           Animated FX (confetti/gold on win, ash/embers on lose)
         </label>
+        {showParticles && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ opacity: 0.75, marginBottom: 4 }}>Your pick (player preference)</div>
+            <select
+              style={{ ...input, width: "100%" }}
+              value={particleEffect ?? ""}
+              onChange={(event) =>
+                setParticleEffect(
+                  event.target.value === "" ? undefined : (event.target.value as EffectId),
+                )
+              }
+            >
+              <option value="">(none — generic default)</option>
+              {EFFECT_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {PARTICLE_EFFECTS[id].label}
+                </option>
+              ))}
+            </select>
+            <div style={{ opacity: 0.6, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>
+              Playing: <b>{resolvedEffect}</b>
+              {viewerHasSignature
+                ? ` — ${viewer?.name}'s signature overrides your pick`
+                : particleEffect
+                  ? " — your pick"
+                  : " — default"}
+            </div>
+          </div>
+        )}
 
         <label style={label}>Backdrop</label>
         <div>
@@ -372,6 +417,7 @@ const GameOverPreviewPage: NextPageWithLayout = () => {
             holdSeconds={holdSeconds}
             onContinue={replay}
             particles={showParticles}
+            particleEffect={particleEffect}
           />
         </div>
       </div>

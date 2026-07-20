@@ -45,6 +45,13 @@ type QueueContextValue = {
   join: (choice: QueueChoice) => void;
   leave: () => void;
   joining: boolean;
+  /**
+   * Why the last join was refused, or null. The server owns queue eligibility (you can't queue while
+   * a match is live, or twice at once) and says so in plain language — so surface it verbatim rather
+   * than swallowing it. Without this the button looks broken: it fires, it's rejected, nothing moves.
+   */
+  joinError: string | null;
+  dismissJoinError: () => void;
 };
 
 const QueueContext = createContext<QueueContextValue | null>(null);
@@ -132,9 +139,14 @@ export function ProvideQueue({ children }: { children: ReactNode }) {
       state,
       // `playerBaseProcedure` merges `withPlayerIdSchema` into every input, so playerId rides along
       // even though the procedure authorises off `ctx.currentPlayer`.
-      join: (choice) => joinM.mutate({ ...choice, playerId }),
+      join: (choice) => {
+        joinM.reset(); // clear a previous refusal so the next attempt starts clean
+        joinM.mutate({ ...choice, playerId });
+      },
       leave: () => leaveM.mutate({ playerId }),
       joining: joinM.isLoading,
+      joinError: joinM.error?.message ?? null,
+      dismissJoinError: () => joinM.reset(),
     }),
     [state, joinM, leaveM, playerId],
   );

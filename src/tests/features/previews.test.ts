@@ -524,7 +524,7 @@ describe("unitDetails exposure", () => {
     expect(buildUnitDetails(apc, true, match.getPlayerBySlot(0)!.team).weapons).toEqual([]);
   });
 
-  it("withholds an enemy unit's current fuel/ammo but still reports public reference stats + HP", () => {
+  it("reports an enemy unit's current fuel/ammo OUTSIDE fog — they're public knowledge there", () => {
     const match = createTestMatch({
       tiles: roadRow(3),
       players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
@@ -535,10 +535,44 @@ describe("unitDetails exposure", () => {
 
     expect(details.isOwn).toBe(false);
     expect(details.hp).toBe(100); // HP is public in AW
-    expect(details.fuel).toBeNull(); // current consumables withheld from the opponent
+    // Consumables are only secret under fog: out of it you watch the unit move and can infer them.
+    // Asserted against the unit's SEEDED values (not its maxima) so a stripped field can't pass.
+    expect(details.fuel).toBe(50);
+    expect(details.ammo).toBe(5);
+    expect(details.maxFuel).toBe(unitPropertiesMap.tank.initialFuel); // reference stats stay public
+    expect(details.maxAmmo).toBe(unitPropertiesMap.tank.initialAmmo);
+  });
+
+  it("withholds an enemy unit's current fuel/ammo UNDER fog, but still reports its HP", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const enemyTank = addUnit(match.getPlayerBySlot(1)!, "tank", [2, 0]);
+
+    const details = buildUnitDetails(enemyTank, false, match.getPlayerBySlot(0)!.team);
+
+    expect(details.isOwn).toBe(false);
+    expect(details.hp).toBe(100); // fog hides the unit, not the health of one you can see
+    expect(details.fuel).toBeNull(); // the unit is a secret under fog, so its supply is too
     expect(details.ammo).toBeNull();
     expect(details.maxFuel).toBe(unitPropertiesMap.tank.initialFuel); // reference stats stay public
     expect(details.maxAmmo).toBe(unitPropertiesMap.tank.initialAmmo);
+  });
+
+  it("always reports the viewer's OWN consumables, fog or not", () => {
+    const match = createTestMatch({
+      tiles: roadRow(3),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const ownTank = addUnit(match.getPlayerBySlot(0)!, "tank", [0, 0]);
+
+    const details = buildUnitDetails(ownTank, true, match.getPlayerBySlot(0)!.team);
+
+    expect(details.fuel).toBe(50);
+    expect(details.ammo).toBe(5);
   });
 
   it("masks the HP of an enemy whose HP is hidden (Sonja), via the shared maskUnitForViewer rule", () => {

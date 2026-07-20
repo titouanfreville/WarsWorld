@@ -1,0 +1,206 @@
+// CO-power activation cinematic (the AW/DoR "power launch" splash overlaid on the board when a CO
+// power fires). Pure presentation, driven by the BE power-activation report (see PowerActivationSplash
+// .tsx / usePowerAnimation.ts). Non-interactive. A dark scrim + accent ray-burst dims the board, the
+// activating CO's art sweeps in from the side, and a diagonal banner carries the power label + name.
+// One in-hold-out cycle timed just under the hook's hold before it unmounts. Honors
+// prefers-reduced-motion (bottom of file).
+
+.ww-power {
+  // Accent is set inline per activating army (see PowerActivationSplash); the glow derives from it.
+  --ww-power-accent: #43d9e4;
+  --ww-power-glow: color-mix(in srgb, var(--ww-power-accent) 55%, transparent);
+}
+
+// Dark vignette that dims the board under the cinematic, brightest toward the CO art side.
+.ww-power__scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 68% 50%, rgba(4, 11, 44, 0.35), rgba(2, 5, 20, 0.82) 70%);
+  animation: ww-power-scrim 3.2s ease both;
+}
+
+// Accent-tinted ray burst behind the CO art — slow rotation reads as energy without distracting.
+.ww-power__rays {
+  position: absolute;
+  top: 50%;
+  right: 16%;
+  width: 90vmin;
+  height: 90vmin;
+  translate: 50% -50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--ww-power-glow) 8deg,
+    transparent 16deg,
+    transparent 45deg,
+    var(--ww-power-glow) 53deg,
+    transparent 61deg,
+    transparent 90deg,
+    var(--ww-power-glow) 98deg,
+    transparent 106deg,
+    transparent 180deg,
+    var(--ww-power-glow) 188deg,
+    transparent 196deg,
+    transparent 270deg,
+    var(--ww-power-glow) 278deg,
+    transparent 286deg
+  );
+  mask-image: radial-gradient(circle, black 30%, transparent 68%);
+  opacity: 0.5;
+  animation: ww-power-rays 3.2s linear both;
+}
+
+.ww-power__art {
+  position: absolute;
+  right: clamp(2%, 8vw, 12%);
+  bottom: 0;
+  height: min(86vh, 640px);
+  width: auto;
+  filter: drop-shadow(0 0 26px var(--ww-power-glow));
+  transform-origin: bottom right;
+  animation: ww-power-art 3.2s cubic-bezier(0.16, 0.84, 0.3, 1) both;
+}
+
+// Diagonal banner carrying the label + power name; sweeps in from the left, holds, slides out.
+.ww-power__banner {
+  position: absolute;
+  left: 0;
+  top: 46%;
+  translate: 0 -50%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: clamp(0.6rem, 2.4vh, 1.15rem) clamp(1.4rem, 6vw, 4rem) clamp(0.6rem, 2.4vh, 1.15rem)
+    clamp(1rem, 4vw, 2.4rem);
+  background: linear-gradient(
+    100deg,
+    rgba(4, 11, 44, 0.9) 0%,
+    rgba(4, 11, 44, 0.72) 78%,
+    transparent 100%
+  );
+  border-top: 2px solid var(--ww-power-accent);
+  border-bottom: 2px solid var(--ww-power-accent);
+  box-shadow: 0 0 34px var(--ww-power-glow);
+  transform: skewX(-8deg);
+  animation: ww-power-banner 3.2s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.ww-power__kind {
+  font-family: system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(0.72rem, 2vw, 1.05rem);
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--ww-power-accent);
+  text-shadow: 0 0 14px var(--ww-power-glow);
+}
+
+.ww-power__name {
+  font-family: "RussoOne", sans-serif;
+  font-size: clamp(2rem, 7vw, 4.5rem);
+  line-height: 0.95;
+  color: #f8fafc;
+  text-shadow:
+    0 0 22px var(--ww-power-glow),
+    0 3px 0 rgba(0, 0, 0, 0.45);
+}
+
+.ww-power__who {
+  font-family: system-ui, sans-serif;
+  font-size: clamp(0.66rem, 1.7vw, 0.92rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.66);
+}
+
+@keyframes ww-power-scrim {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ww-power-rays {
+  0% {
+    opacity: 0;
+    rotate: -30deg;
+  }
+  14% {
+    opacity: 0.5;
+  }
+  80% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    rotate: 90deg;
+  }
+}
+
+@keyframes ww-power-art {
+  0% {
+    opacity: 0;
+    transform: translateX(18%) scale(1.08);
+  }
+  16% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(6%) scale(1.02);
+  }
+}
+
+@keyframes ww-power-banner {
+  0% {
+    opacity: 0;
+    transform: skewX(-8deg) translateX(-40%);
+  }
+  16% {
+    opacity: 1;
+    transform: skewX(-8deg) translateX(0);
+  }
+  80% {
+    opacity: 1;
+    transform: skewX(-8deg) translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: skewX(-8deg) translateX(-16%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ww-power__scrim,
+  .ww-power__rays,
+  .ww-power__art,
+  .ww-power__banner {
+    animation: ww-power-fade 3.2s ease both;
+  }
+
+  .ww-power__banner {
+    transform: skewX(-8deg);
+  }
+
+  @keyframes ww-power-fade {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    16%,
+    80% {
+      opacity: 1;
+    }
+  }
+}

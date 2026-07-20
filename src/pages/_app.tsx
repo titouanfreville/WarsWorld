@@ -1,4 +1,5 @@
 "use client"; // This is a client component 👈🏽
+import { AdminFlyout } from "frontend/components/admin/AdminFlyout";
 import { Layout } from "frontend/components/layout";
 import MapBanScreen from "frontend/components/matchmaking/MapBanScreen";
 import QueueWidget from "frontend/components/matchmaking/QueueWidget";
@@ -42,6 +43,8 @@ const MyApp: AppType<{ session: Session | null }> = ({
           {/* Global, page-independent matchmaking surfaces (render only when active). */}
           <QueueWidget />
           <MapBanScreen />
+          {/* Global admin launcher — renders only for admins (server re-checks the capability). */}
+          <AdminFlyout />
         </ProvideQueue>
       </ProvidePlayers>
     </SessionProvider>

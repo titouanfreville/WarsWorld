@@ -45,6 +45,30 @@ export const buildPublicPowerSummary = (player: PlayerInMatchWrapper) => {
   };
 };
 
+/** A property's full capture bar — an insta-capture removes all of it in one action. */
+const CAPTURE_POINTS = 20;
+
+/**
+ * Effective capture points an infantry/mech removes per capture action — mirrors the engine's own
+ * `willCaptureTile` (ability handler) so the client can tell a COMPLETING capture from a partial one
+ * WITHOUT knowing any CO rules (it just checks `currentCapturePoints - captureRate <= 0`). Sami
+ * captures at 1.5x and insta-captures under his super CO power; the dev `directCapture` modifier
+ * insta-captures; everyone else removes their visual HP.
+ */
+const captureRateFor = (player: PlayerInMatchWrapper, visualHP: number): number => {
+  if (player.data.devModifiers?.directCapture === true) {
+    return CAPTURE_POINTS;
+  }
+
+  if (player.data.coId.name === "sami") {
+    return player.data.COPowerState === "super-co-power"
+      ? CAPTURE_POINTS
+      : Math.floor(visualHP * 1.5);
+  }
+
+  return visualHP;
+};
+
 /**
  * Build the turn snapshot for a player: everything the client needs to buffer this turn's simple
  * actions with no rules knowledge (see `src/frontend/CLAUDE.md`). Pure engine computation — no
@@ -247,8 +271,10 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
         unit.isInfantryOrMech() && "playerSlot" in tile && tile.playerSlot !== player.data.slot,
       currentCapturePoints:
         "currentCapturePoints" in unit.data ? (unit.data.currentCapturePoints ?? null) : null,
-      // Capture points removed per turn == the unit's visual HP.
-      captureRate: unit.getVisualHP(),
+      // Capture points removed per capture action — visual HP normally, but Sami (1.5x / insta under
+      // his super) and the dev directCapture modifier change it, so the client can spot a completing
+      // capture (e.g. Sami's super, a dev insta-capture) instead of mistaking it for a partial one.
+      captureRate: captureRateFor(player, unit.getVisualHP()),
     };
   });
 
@@ -318,7 +344,14 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
   return {
     funds: player.data.funds,
     units,
-    production: { priceTable, buildableTiles },
+    // `freeProduction` is a dev-tool modifier the client CAN'T derive (it's a rule): the build menu
+    // gates affordability by funds, so without this it would keep greying out units the server would
+    // now happily build for free. Told, not computed.
+    production: {
+      priceTable,
+      buildableTiles,
+      freeProduction: player.data.devModifiers?.freeProduction === true,
+    },
     power,
   };
 };

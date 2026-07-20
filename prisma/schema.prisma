@@ -67,15 +67,24 @@ enum UserState {
   banned
 }
 
+/// Capability roles. A user holds a SET of these (`User.roles`) — they are not a ladder.
+///
+/// `admin` short-circuits every capability check (see server/auth/capabilities.ts); that is the only
+/// implication between roles. `moderator` is orthogonal to `dev`/`tester`: it grants content/social
+/// moderation and NO power over game state.
 enum Role {
   admin
   moderator
+  /// dev tools in any non-ranked match
+  dev
+  /// dev tools only in a custom match that enabled `testingTools` in its rules
+  tester
 }
 
 model User {
   id            String    @id @default(cuid())
   state         UserState @default(active)
-  role          Role?
+  roles         Role[]    @default([])
   name          String?
   password      String?
   email         String?   @unique
@@ -85,6 +94,7 @@ model User {
   updatedAt     DateTime  @updatedAt
   identities    Player[]
   accounts      Account[]
+  devToolAudits DevToolAudit[]
 }
 
 model Account {
@@ -327,6 +337,11 @@ model MatchPlayerStats {
   incomeEarned  Int
   powersUsed    Int
 
+  /// [PrismaUnitBreakdown] per-unit-type tallies (built / lost / damage-dealt) — the EG review's
+  /// "by unit" sub-rows, already computed by buildMatchStats and kept here for career aggregation on
+  /// the profile. Null for matches finalized before this was tracked (run the unit-stats backfill).
+  unitBreakdown Json?
+
   @@id([matchId, playerId])
   @@index([playerId])
 }
@@ -370,6 +385,10 @@ model PlayerRank {
   /// 0..99 within a division. Unbounded at marechal, so the top of the ladder still sorts.
   merit    Int      @default(0)
   peakRank Rank?
+  /// Set by the admin visible-rank override: this rank is authoritative and must NOT be masked as
+  /// "placements", even while the hidden skill estimate (sigma) is still provisional. Normal play
+  /// leaves it false, so the placement gate governs everyone else exactly as before.
+  placementsExempt Boolean @default(false)
 
   @@id([playerId, mode])
 }
@@ -955,4 +974,42 @@ model Commendation {
 
   @@unique([matchId, fromId]) // one medal awarded per giver per match
   @@index([toId, medal]) // per-medal tallies for tier + prestige
+}
+
+// ─── Dev / admin tooling ────────────────────────────────────────────────────
+
+/// Security record of every privileged-tool use (dev, tester AND admin — no exemption).
+///
+/// This is deliberately NOT the in-match record: the tool's effect is an `Event` row, which is what
+/// replays into match state and what both players see. This table answers a different question —
+/// "who really did this, from where" — and must outlive the match.
+///
+/// Keyed on `userId` rather than `playerId` on purpose: a User owns many Players, and the threat
+/// this guards against is a stolen/impersonated account, which is a User-level event. `playerId` is
+/// kept alongside for in-match correlation but is nullable (admin tools aren't always match-scoped).
+model DevToolAudit {
+  id String @id @default(cuid())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  /// null for tools that aren't scoped to a single match (e.g. modify rank)
+  matchId  String?
+  playerId String?
+
+  /// the capability that authorised this call, as evaluated at call time
+  capability String
+  /// tool name, e.g. "addFunds" / "forceOutcome"
+  tool String
+  /// the validated action payload
+  payload Json
+
+  /// impersonation forensics — a stolen admin session usually shows up as a new origin
+  ip        String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([matchId])
 }

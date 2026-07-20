@@ -1,6 +1,7 @@
 import { getRandomWeather, getRandomWeatherDurationDays } from "server/engine/rules/weather";
 import type { PassTurnAction } from "server/core/schemas/action";
-import type { PassTurnEvent, Turn } from "server/engine/types/events";
+import type { Position } from "server/core/schemas/position";
+import type { PassTurnEvent, Turn, TurnStartReport } from "server/engine/types/events";
 import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
 import type { UnitWrapper } from "server/engine/entities/unit";
 import type { ApplyEvent, MainActionToEvent } from "server/engine/events/handler-types";
@@ -113,6 +114,11 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
    * - (done) refuel (property + apc/blackboat)
    */
 
+  // A turn change consumes the last power activation: the cinematic/one-shot flourish belongs to the
+  // turn it fired in. Clearing it here bounds the report to that turn so a reconnect can't replay a
+  // stale splash (the ongoing power effects live on via COPowerState, not this report).
+  match.powerActivationReport = null;
+
   for (const turn of event.turns) {
     // TODO when we pass multiple turns, getCurrentTurnPlayer relies on the just eliminated / previous player still having a turn
     // i'm just marking this in case this doesn't work as planned.
@@ -141,11 +147,38 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
       throw new Error("No next alive player");
     }
 
+    // A new day begins whenever the turn order wraps back to a player at or before the one who just
+    // played (getNextAlivePlayer walks slots modulo numberOfPlayers). Day 1 is set at match start;
+    // this advances it once per full round, skipping eliminated slots correctly.
+    if (nextTurnPlayer.data.slot <= lastTurnPlayer.data.slot) {
+      match.turn += 1;
+    }
+
     nextTurnPlayer.data.hasCurrentTurn = true;
     nextTurnPlayer.data.COPowerState = "no-power";
 
     updateWeather(nextTurnPlayer, turn.newWeather, turn.newWeatherDays);
-    nextTurnPlayer.data.funds += nextTurnPlayer.getFundsPerTurn();
+
+    // Capture the funds movement so the FE can animate it at turn start: income is added now, repair
+    // cost is deducted inside `propertyRepairAndResupply` below (refuel/resupply is free), so the
+    // spend is the drop from (banked + income) to the funds left after the upkeep loop.
+    const fundsBeforeUpkeep = nextTurnPlayer.data.funds;
+    const income = nextTurnPlayer.getFundsPerTurn();
+    nextTurnPlayer.data.funds += income;
+
+    // Snapshot fuel/visual-HP before upkeep so we can report which units the engine actually
+    // repaired/refuelled this turn (property repair, property/APC resupply). Net deltas are what the
+    // FE animates: fuel that ended higher = refuelled, HP that ended higher = repaired. Units that
+    // crash (removed below) simply drop out of the after-pass.
+    const upkeepBefore = new Map<UnitWrapper, { fuel: number; hp: number }>();
+
+    for (const unit of nextTurnPlayer.getUnits()) {
+      upkeepBefore.set(unit, { fuel: unit.getFuel(), hp: unit.getVisualHP() });
+    }
+
+    // Where each fuel-out happened. Recorded as it happens because a crashed unit is removed from the
+    // match immediately below — the diff pass that builds `repaired`/`refuelled` can't see it.
+    const crashed: Position[] = [];
 
     // update units
     for (const unit of nextTurnPlayer.getUnits()) {
@@ -165,6 +198,7 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
         if (unit.properties.facility !== "base" && unit.getFuel() <= 0) {
           // unit crashes
           // (has to be done here cause eagle copters consume 0 fuel per turn, but still crash if they start turn at 0 fuel)
+          crashed.push(unit.data.position);
           unit.remove();
         }
       }
@@ -177,6 +211,41 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
     if (turn.eliminationReason === "all-units-crashed") {
       nextTurnPlayer.data.status = "routed";
     }
+
+    // Record what the upkeep did to the player-now-on-turn's units, for the start-round animation.
+    // Overwritten each loop iteration (a multi-turn pass only happens on crash-eliminations); the
+    // final surviving player's report is the one that sticks. See MatchWrapper.turnStartReport.
+    const repaired: TurnStartReport["repaired"] = [];
+    const refuelled: TurnStartReport["refuelled"] = [];
+
+    for (const unit of nextTurnPlayer.getUnits()) {
+      const before = upkeepBefore.get(unit);
+
+      if (before === undefined) {
+        continue;
+      }
+
+      const hpGained = unit.getVisualHP() - before.hp;
+
+      if (hpGained > 0) {
+        repaired.push({ position: unit.data.position, hp: hpGained });
+      }
+
+      if (unit.getFuel() > before.fuel) {
+        refuelled.push(unit.data.position);
+      }
+    }
+
+    match.turnStartReport = {
+      day: match.turn,
+      playerId: nextTurnPlayer.data.id,
+      repaired,
+      refuelled,
+      crashed,
+      income,
+      repairSpent: fundsBeforeUpkeep + income - nextTurnPlayer.data.funds,
+      fundsAfter: nextTurnPlayer.data.funds,
+    };
   }
 
   for (const team of match.teams) {

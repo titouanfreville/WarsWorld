@@ -34,9 +34,7 @@ type WeatherSetting = (typeof WEATHER_OPTIONS)[number]["value"];
 /** Create a lobby (the pre-room) and jump into it. Replaces the old direct-to-match create flow. */
 export default function CreateLobby({ currentPlayer, onCreated }: Props) {
   const router = useRouter();
-  const { data: maps, isLoading } = trpc.map.getAll.useQuery();
 
-  const [mapId, setMapId] = useState("");
   const [mode, setMode] = useState<Mode>("duel");
   const [fogOfWar, setFogOfWar] = useState(false);
   const [weatherSetting, setWeatherSetting] = useState<WeatherSetting>("clear");
@@ -48,10 +46,8 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
     },
   });
 
-  const selectedMapId = mapId !== "" ? mapId : (maps?.[0]?.id ?? "");
-
   const submit = () => {
-    if (currentPlayer === undefined || selectedMapId === "") {
+    if (currentPlayer === undefined) {
       return;
     }
 
@@ -62,7 +58,7 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
       // host actually picked rather than asking them the same question twice. (A custom game can mix
       // axes the queue rulesets keep separate; fog is the one worth surfacing.)
       ruleset: fogOfWar ? "fog" : "standard",
-      mapId: selectedMapId,
+      // No map here — the host picks it in the lobby room (see setMap), never at invite time.
       isRanked: false,
       rules: {
         bannedUnitTypes: [],
@@ -83,27 +79,8 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
   return (
     <div className="@flex @w-full @flex-col @gap-4">
       <p className="@py-0 @text-slate-400">
-        Create a lobby, assemble your teams, then start the general pick.
+        Create a lobby, pick your map and assemble your teams there, then start the general pick.
       </p>
-
-      <label className="@flex @flex-col @gap-1">
-        <span className="@text-sm @font-semibold @text-slate-300">Map</span>
-        {isLoading ? (
-          <p className="@py-0">Loading maps…</p>
-        ) : (
-          <select
-            className="@rounded @bg-bg-primary @px-3 @py-2 @text-white @outline @outline-1 @outline-bg-tertiary"
-            value={selectedMapId}
-            onChange={(e) => setMapId(e.target.value)}
-          >
-            {maps?.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.numberOfPlayers}p)
-              </option>
-            ))}
-          </select>
-        )}
-      </label>
 
       <label className="@flex @flex-col @gap-1">
         <span className="@text-sm @font-semibold @text-slate-300">Mode</span>

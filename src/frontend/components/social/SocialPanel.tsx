@@ -1,7 +1,14 @@
+import { ChatComposer } from "frontend/components/chat/ChatComposer";
+import { ChatMessageList } from "frontend/components/chat/ChatMessageList";
+import { ChatShell } from "frontend/components/chat/ChatShell";
+import { useChatAutoscroll } from "frontend/components/chat/useChatAutoscroll";
+import UserAvatar from "frontend/components/navbar/UserAvatar";
+import { PlayerMention } from "frontend/components/PlayerMention";
 import { usePlayers } from "frontend/context/players";
 import { parseNotificationPayload } from "frontend/utils/notification-payload";
+import { avatarImageProps, type CoAvatar } from "frontend/utils/sprites/avatar";
 import { trpc } from "frontend/utils/trpc-client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function SocialPanel() {
   const { currentPlayer } = usePlayers();
@@ -17,7 +24,6 @@ export default function SocialPanel() {
 
   // Forms & Edit States
   const [searchQuery, setSearchQuery] = useState("");
-  const [messageInput, setMessageInput] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
 
@@ -46,6 +52,29 @@ export default function SocialPanel() {
       { enabled: activeConvId !== null, refetchInterval: 3000 },
     );
 
+  // Resolve chosen avatars for everyone shown (friends, recents, the open DM partner), keyed by handle.
+  const cardNames = useMemo(() => {
+    const names = new Set<string>();
+    (friendsList ?? []).forEach((friend) => names.add(friend.name));
+    (recentsList ?? []).forEach((player) => names.add(player.name));
+
+    if (activePartner !== null) {
+      names.add(activePartner.name);
+    }
+
+    return [...names];
+  }, [friendsList, recentsList, activePartner]);
+
+  const { data: cards } = trpc.players.cards.useQuery(
+    { names: cardNames },
+    { enabled: cardNames.length > 0, staleTime: 5 * 60 * 1000 },
+  );
+  const avatarByName = useMemo(
+    () => new Map((cards ?? []).map((card) => [card.name, card.avatar])),
+    [cards],
+  );
+  const avatarOf = (name: string): CoAvatar | null => avatarByName.get(name) ?? null;
+
   // Social actions
   const sendRequest = trpc.social.sendFriendRequest.useMutation({
     onSuccess: () => {
@@ -73,7 +102,6 @@ export default function SocialPanel() {
 
   const sendMsg = trpc.social.sendMessage.useMutation({
     onSuccess: () => {
-      setMessageInput("");
       void refetchConvHistory();
     },
   });
@@ -106,6 +134,13 @@ export default function SocialPanel() {
 
   const markRead = trpc.social.markConversationRead.useMutation();
 
+  // Dismiss a notification (mark it read so it drops off the unread inbox). The FRIEND_REQUEST
+  // notifications auto-clear when you Accept/Decline; FRIEND_ACCEPT ones have no action, so this is
+  // the only way to clear them.
+  const dismissNotif = trpc.social.markNotificationRead.useMutation({
+    onSuccess: () => void refetchNotifications(),
+  });
+
   // Real-time Event Subscription
   trpc.social.onSocialEvent.useSubscription(
     { playerId: pId },
@@ -125,10 +160,7 @@ export default function SocialPanel() {
   );
 
   // Auto Scroll to Chat bottom
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeConvHistory?.messages]);
+  const listRef = useChatAutoscroll<HTMLDivElement>([activeConvHistory?.messages]);
 
   // Advance the read cursor (and notify the others) once per open / new message — via an explicit
   // mutation, so it doesn't fire on every history refetch the way the old query side effect did.
@@ -155,13 +187,15 @@ export default function SocialPanel() {
     startDM.mutate({ playerId: pId, targetPlayerName: friend.name });
   };
 
-  const handleSendMessage = () => {
-    if (messageInput.trim() === "" || activeConvId === null) {
+  const handleSend = (content: string) => {
+    if (activeConvId === null) {
       return;
     }
 
-    sendMsg.mutate({ playerId: pId, conversationId: activeConvId, content: messageInput });
+    sendMsg.mutate({ playerId: pId, conversationId: activeConvId, content });
   };
+
+  const inThread = activePartner !== null && activeConvId !== null;
 
   return (
     <div className="@grid @grid-cols-1 laptop:@grid-cols-[280px_1fr] @gap-4 @w-full @h-[650px] @overflow-hidden">
@@ -182,11 +216,24 @@ export default function SocialPanel() {
                       key={notif.id}
                       className="@flex @flex-col @gap-1 @bg-bg-primary @p-2 @rounded @border @border-bg-tertiary/40"
                     >
-                      <span className="@text-[10px] @font-semibold @text-slate-300">
-                        {notif.type === "FRIEND_REQUEST"
-                          ? `${payload.senderName} requested your friendship.`
-                          : `Friend request approved!`}
-                      </span>
+                      <div className="@flex @items-start @justify-between @gap-2">
+                        <span className="@text-[10px] @font-semibold @text-slate-300">
+                          {notif.type === "FRIEND_REQUEST"
+                            ? `${payload.senderName} requested your friendship.`
+                            : `Friend request approved!`}
+                        </span>
+                        <button
+                          onClick={() =>
+                            dismissNotif.mutate({ playerId: pId, notificationId: notif.id })
+                          }
+                          disabled={dismissNotif.isLoading}
+                          aria-label="Dismiss notification"
+                          title="Dismiss"
+                          className="@flex-none @text-slate-500 hover:@text-slate-200 @text-[11px] @leading-none @transition disabled:@opacity-50"
+                        >
+                          ✕
+                        </button>
+                      </div>
                       {notif.type === "FRIEND_REQUEST" && (
                         <div className="@flex @gap-1.5 @mt-1">
                           <button
@@ -275,11 +322,21 @@ export default function SocialPanel() {
                       className={`@flex @items-center @justify-between @px-2.5 @py-2 @rounded-lg @cursor-pointer @transition @border ${activePartner?.id === friend.id ? "@bg-bg-secondary @border-bg-tertiary" : "@border-transparent hover:@bg-bg-secondary/40"}`}
                     >
                       <div className="@flex @items-center @gap-2 @min-w-0">
-                        <span className="@h-2 @w-2 @rounded-full @bg-emerald-500 @shadow-[0_0_6px_rgba(16,185,129,0.5)] @flex-none"></span>
+                        <span className="@relative @flex-none">
+                          <UserAvatar
+                            name={friend.displayName}
+                            size={30}
+                            {...avatarImageProps(avatarOf(friend.name))}
+                          />
+                          <span className="@absolute @-bottom-0.5 @-right-0.5 @h-2 @w-2 @rounded-full @border @border-bg-primary @bg-emerald-500" />
+                        </span>
                         <div className="@flex @flex-col @min-w-0">
-                          <span className="@text-xs @font-semibold @text-slate-100 @truncate">
-                            {friend.displayName}
-                          </span>
+                          <PlayerMention
+                            name={friend.name}
+                            label={friend.displayName}
+                            hideAvatar
+                            className="@text-xs @font-semibold @text-slate-100"
+                          />
                           <span className="@text-[10px] @text-slate-500 @truncate">
                             @{friend.name}
                           </span>
@@ -304,13 +361,24 @@ export default function SocialPanel() {
                       key={player.id}
                       className="@flex @items-center @justify-between @px-2.5 @py-2 @rounded-lg hover:@bg-bg-secondary/30"
                     >
-                      <div className="@flex @flex-col @min-w-0">
-                        <span className="@text-xs @font-semibold @text-slate-100 @truncate">
-                          {player.displayName}
-                        </span>
-                        <span className="@text-[9px] @text-slate-500 @truncate">
-                          @{player.name}
-                        </span>
+                      <div className="@flex @min-w-0 @items-center @gap-2">
+                        <UserAvatar
+                          name={player.displayName}
+                          size={30}
+                          className="@flex-none"
+                          {...avatarImageProps(avatarOf(player.name))}
+                        />
+                        <div className="@flex @flex-col @min-w-0">
+                          <PlayerMention
+                            name={player.name}
+                            label={player.displayName}
+                            hideAvatar
+                            className="@text-xs @font-semibold @text-slate-100"
+                          />
+                          <span className="@text-[9px] @text-slate-500 @truncate">
+                            @{player.name}
+                          </span>
+                        </div>
                       </div>
                       <button
                         onClick={() =>
@@ -335,9 +403,12 @@ export default function SocialPanel() {
 
         {/* Identity block */}
         <div className="@pt-3 @border-t @border-bg-tertiary/40 @flex @items-center @gap-3">
-          <div className="@h-7 @w-7 @rounded-full @bg-primary @text-black @font-bold @flex @items-center @justify-center @text-xs">
-            {(currentPlayer.displayName[0] ?? "?").toUpperCase()}
-          </div>
+          <UserAvatar
+            name={currentPlayer.displayName}
+            size={28}
+            className="@flex-none"
+            {...avatarImageProps(currentPlayer.preferences?.avatar ?? null)}
+          />
           <div className="@min-w-0">
             <p className="@text-xs @font-bold @text-slate-100 @truncate">
               {currentPlayer.displayName}
@@ -349,187 +420,144 @@ export default function SocialPanel() {
         </div>
       </div>
 
-      {/* RIGHT CHAT AREA */}
-      <div className="@flex @flex-col @justify-between @rounded-xl @bg-bg-primary/95 @border @border-bg-tertiary/30 @h-full @overflow-hidden">
-        {activePartner !== null && activeConvId !== null ? (
-          <>
-            {/* Header */}
-            <div className="@px-4 @py-3 @border-b @border-bg-tertiary/40 @flex @items-center @justify-between @bg-bg-secondary/40">
-              <div className="@flex @items-center @gap-3 @min-w-0">
-                <span className="@h-2 @w-2 @rounded-full @bg-emerald-500 @shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                <div className="@min-w-0">
-                  <p className="@text-sm @font-bold @text-slate-100 @truncate">
-                    {activePartner.displayName}
-                  </p>
-                  <p className="@text-[10px] @text-slate-400">Direct Secure Comm-Link</p>
-                </div>
-              </div>
-              <div className="@flex @gap-2">
-                <button
-                  onClick={() =>
-                    mutePlayer.mutate({ playerId: pId, targetPlayerId: activePartner.id })
-                  }
-                  className="@text-[10px] @px-2.5 @py-1 @rounded-md @border @border-bg-tertiary @text-slate-300 hover:@bg-bg-secondary @transition"
-                >
-                  🔇 Mute
-                </button>
-                <button
-                  onClick={() =>
-                    blockPlayer.mutate({ playerId: pId, targetPlayerId: activePartner.id })
-                  }
-                  className="@text-[10px] @px-2.5 @py-1 @rounded-md @border @border-red-900/30 @text-red-400 hover:@bg-red-950/20 @transition"
-                >
-                  🚫 Block
-                </button>
-              </div>
-            </div>
-
-            {/* Conversation Messages */}
-            <div className="@flex-1 @p-4 @overflow-y-auto @flex @flex-col @gap-3">
-              {activeConvHistory && activeConvHistory.messages.length > 0 ? (
-                activeConvHistory.messages.map((msg) => {
-                  const isMe = msg.senderId === currentPlayer.id;
-                  const isEdited = msg.editedAt !== null;
-
-                  // Viewed receipt calculation
-                  const allOthersRead = activeConvHistory.participants
-                    .filter((p) => p.playerId !== msg.senderId)
-                    .every(
-                      (p) => new Date(p.lastReadAt).getTime() >= new Date(msg.createdAt).getTime(),
-                    );
-
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`@flex @gap-3.5 @max-w-[80%] ${isMe ? "@ml-auto @justify-end" : ""}`}
-                    >
-                      {!isMe && (
-                        <div className="@h-7 @w-7 @rounded-full @bg-bg-tertiary @text-slate-100 @flex @items-center @justify-center @text-[11px] @font-bold @flex-none">
-                          {(activePartner.displayName[0] ?? "?").toUpperCase()}
-                        </div>
-                      )}
-                      <div className="@flex @flex-col @gap-1">
-                        {editingMessageId === msg.id ? (
-                          <div className="@bg-bg-secondary @p-2 @rounded-xl @border @border-primary/50 @flex @flex-col @gap-2">
-                            <input
-                              type="text"
-                              value={editingContent}
-                              onChange={(e) => setEditingContent(e.target.value)}
-                              className="@bg-bg-primary @border @border-bg-tertiary @rounded-md @px-2 @py-1 @text-xs @text-slate-100 focus:@outline-none focus:@border-primary"
-                            />
-                            <div className="@flex @gap-1.5 @justify-end">
-                              <button
-                                onClick={() =>
-                                  editMsg.mutate({
-                                    playerId: pId,
-                                    messageId: msg.id,
-                                    content: editingContent,
-                                  })
-                                }
-                                disabled={editMsg.isLoading}
-                                className="@px-2.5 @py-1 @bg-primary @text-black @rounded-md @text-[10px] @font-bold hover:@bg-primary-light @transition disabled:@opacity-50 disabled:@cursor-not-allowed"
-                              >
-                                Save
-                              </button>
-                              <button
-                                onClick={() => setEditingMessageId(null)}
-                                className="@px-2.5 @py-1 @bg-bg-tertiary @text-slate-300 @rounded-md @text-[10px]"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="@relative @group">
-                            <div
-                              className={`@px-3.5 @py-2 @rounded-xl @shadow-sm @text-xs @leading-relaxed ${isMe ? "@bg-primary @text-black @font-semibold @rounded-tr-none" : "@bg-bg-secondary @border @border-bg-tertiary/40 @text-slate-100 @rounded-tl-none"}`}
-                            >
-                              {msg.content}
-                            </div>
-
-                            {isMe && (
-                              <div className="@absolute @right-0 @top-[-20px] @hidden group-hover:@flex @gap-1.5 @bg-bg-secondary @border @border-bg-tertiary @rounded-md @px-1.5 @py-0.5 @text-[9px]">
-                                <button
-                                  onClick={() => {
-                                    setEditingMessageId(msg.id);
-                                    setEditingContent(msg.content);
-                                  }}
-                                  className="@text-slate-400 hover:@text-primary @transition"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    deleteMsg.mutate({ playerId: pId, messageId: msg.id })
-                                  }
-                                  disabled={deleteMsg.isLoading}
-                                  className="@text-slate-400 hover:@text-red-400 @transition disabled:@opacity-50 disabled:@cursor-not-allowed"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        <div
-                          className={`@flex @items-center @gap-1.5 @text-[9px] @text-slate-500 ${isMe ? "@justify-end" : ""}`}
-                        >
-                          <span>
-                            {new Date(msg.createdAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          {isEdited && <span className="@italic">(edited)</span>}
-                          {isMe && allOthersRead && (
-                            <span className="@text-primary @font-bold">✓✓ Viewed</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="@h-full @flex @items-center @justify-center @text-xs @text-slate-500 @text-center">
-                  Secure link ready. Send a transmission line below.
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Input Form */}
-            <div className="@p-3 @border-t @border-bg-tertiary/40 @bg-bg-secondary/10 @flex @items-center @gap-2.5">
-              <input
-                type="text"
-                placeholder={`Type transmission to ${activePartner.displayName}...`}
-                value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                className="@flex-1 @rounded-lg @bg-bg-secondary @border @border-bg-tertiary/50 @px-3.5 @py-2.5 @text-xs @placeholder-slate-500 focus:@outline-none focus:@border-primary @text-slate-100"
-              />
+      {/* RIGHT CHAT AREA — shared docked chat shell */}
+      {inThread ? (
+        <ChatShell
+          variant="docked"
+          title="Comm-Link"
+          live
+          bodyRef={listRef}
+          headerExtra={
+            <PlayerMention
+              name={activePartner.name}
+              label={activePartner.displayName}
+              avatar={avatarOf(activePartner.name)}
+              size={18}
+              className="@max-w-[160px] @text-xs @font-bold @text-slate-100"
+            />
+          }
+          actions={
+            <>
               <button
-                onClick={handleSendMessage}
-                disabled={sendMsg.isLoading}
-                className="@h-9 @px-4 @rounded-lg @bg-primary hover:@bg-primary-light @text-black @font-bold @text-xs @shadow-sm @active:scale-95 @transition disabled:@opacity-50 disabled:@cursor-not-allowed"
+                onClick={() =>
+                  mutePlayer.mutate({ playerId: pId, targetPlayerId: activePartner.id })
+                }
+                className="@text-[10px] @px-2.5 @py-1 @rounded-md @border @border-bg-tertiary @text-slate-300 hover:@bg-bg-secondary @transition"
               >
-                Transmit
+                🔇 Mute
               </button>
-            </div>
-          </>
-        ) : (
-          <div className="@h-full @flex @flex-col @items-center @justify-center @p-6 @text-center @gap-3">
-            <span className="@text-4xl @opacity-80">📡</span>
-            <div>
-              <p className="@text-xs @font-bold @text-slate-300">No Target Active</p>
-              <p className="@text-[10px] @text-slate-500 @max-w-[280px] @mt-1 @leading-relaxed">
-                Choose a friend from the left dashboard, then click to activate an encrypted
-                communication pipeline.
-              </p>
-            </div>
+              <button
+                onClick={() =>
+                  blockPlayer.mutate({ playerId: pId, targetPlayerId: activePartner.id })
+                }
+                className="@text-[10px] @px-2.5 @py-1 @rounded-md @border @border-red-900/30 @text-red-400 hover:@bg-red-950/20 @transition"
+              >
+                🚫 Block
+              </button>
+            </>
+          }
+          footer={
+            <ChatComposer
+              onSend={handleSend}
+              sending={sendMsg.isLoading}
+              placeholder={`Type transmission to ${activePartner.displayName}…`}
+              sendLabel="Transmit"
+            />
+          }
+        >
+          <ChatMessageList
+            messages={activeConvHistory?.messages ?? []}
+            currentPlayerId={currentPlayer.id}
+            partnerAvatar={avatarOf(activePartner.name)}
+            partnerName={activePartner.displayName}
+            emptyLabel="Secure link ready. Send a transmission line below."
+            renderEditing={(msg) =>
+              editingMessageId === msg.id ? (
+                <div className="@flex @flex-col @gap-2 @rounded-xl @border @border-primary/50 @bg-bg-secondary @p-2">
+                  <input
+                    type="text"
+                    value={editingContent}
+                    onChange={(e) => setEditingContent(e.target.value)}
+                    className="@rounded-md @border @border-bg-tertiary @bg-bg-primary @px-2 @py-1 @text-xs @text-slate-100 focus:@border-primary focus:@outline-none"
+                  />
+                  <div className="@flex @justify-end @gap-1.5">
+                    <button
+                      onClick={() =>
+                        editMsg.mutate({
+                          playerId: pId,
+                          messageId: msg.id,
+                          content: editingContent,
+                        })
+                      }
+                      disabled={editMsg.isLoading}
+                      className="@rounded-md @bg-primary @px-2.5 @py-1 @text-[10px] @font-bold @text-black @transition hover:@bg-primary-light disabled:@cursor-not-allowed disabled:@opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingMessageId(null)}
+                      className="@rounded-md @bg-bg-tertiary @px-2.5 @py-1 @text-[10px] @text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null
+            }
+            renderActions={(msg, isMe) =>
+              isMe ? (
+                <div className="@absolute @right-0 @top-[-20px] @hidden @gap-1.5 @rounded-md @border @border-bg-tertiary @bg-bg-secondary @px-1.5 @py-0.5 @text-[9px] group-hover:@flex">
+                  <button
+                    onClick={() => {
+                      setEditingMessageId(msg.id);
+                      setEditingContent(msg.content);
+                    }}
+                    className="@text-slate-400 @transition hover:@text-primary"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => deleteMsg.mutate({ playerId: pId, messageId: msg.id })}
+                    disabled={deleteMsg.isLoading}
+                    className="@text-slate-400 @transition hover:@text-red-400 disabled:@cursor-not-allowed disabled:@opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : null
+            }
+            renderMeta={(msg, isMe) => {
+              const isEdited = msg.editedAt !== null;
+              const allOthersRead =
+                activeConvHistory?.participants
+                  .filter((p) => p.playerId !== msg.senderId)
+                  .every(
+                    (p) => new Date(p.lastReadAt).getTime() >= new Date(msg.createdAt).getTime(),
+                  ) ?? false;
+
+              return (
+                <>
+                  {isEdited && <span className="@italic">(edited)</span>}
+                  {isMe && allOthersRead && (
+                    <span className="@font-bold @text-primary">✓✓ Viewed</span>
+                  )}
+                </>
+              );
+            }}
+          />
+        </ChatShell>
+      ) : (
+        <div className="@flex @h-full @flex-col @items-center @justify-center @gap-3 @rounded-xl @bg-bg-primary/95 @p-6 @text-center @outline @outline-1 @outline-bg-tertiary/40">
+          <span className="@text-4xl @opacity-80">📡</span>
+          <div>
+            <p className="@text-xs @font-bold @text-slate-300">No Target Active</p>
+            <p className="@text-[10px] @text-slate-500 @max-w-[280px] @mt-1 @leading-relaxed">
+              Choose a friend from the left dashboard, then click to activate an encrypted
+              communication pipeline.
+            </p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

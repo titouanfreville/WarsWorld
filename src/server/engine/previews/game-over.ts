@@ -24,6 +24,27 @@ export const deriveGameOver = (
     return null; // not started — no outcome yet
   }
 
+  // A `finished` match is over by decree, and the winner is whatever was STAMPED — read it from the
+  // results, don't re-derive from alive-status. An admin force-outcome finishes the match while
+  // leaving both armies alive, so the alive-status test below would wrongly say "still contested".
+  // Natural endings pass through here identically (finalize stamps results + flips status together),
+  // so this is one consistent path, not a special case. `finalizeIfGameOver` runs BEFORE the flip
+  // (it guards status === "playing"), so the "did the match just end" check still uses the test below.
+  if (match.status === "finished") {
+    const winnerTeam = match.teams.find((team) =>
+      team.players.some((player) => player.data.result === "won"),
+    );
+    const winnerTeamIndex = winnerTeam?.index ?? null;
+
+    return {
+      winnerTeamIndex,
+      viewerWon:
+        winnerTeamIndex !== null &&
+        viewerTeam !== undefined &&
+        viewerTeam.index === winnerTeamIndex,
+    };
+  }
+
   const teamsInPlay = match.teams.filter(teamInPlay);
 
   if (teamsInPlay.length > 1) {

@@ -105,6 +105,12 @@ export class EndgameUsecase {
         producedFunds: Math.round(player.producedFunds),
         incomeEarned: Math.round(player.incomeEarned),
         powersUsed: player.powersUsed,
+        // The per-unit-type sub-rows the EG review already computed — kept for career aggregation.
+        unitBreakdown: {
+          built: player.builtByUnit,
+          lost: player.lostByUnit,
+          damage: player.damageByUnit,
+        },
       };
 
       await tx.matchPlayerStats.upsert({
@@ -118,6 +124,28 @@ export class EndgameUsecase {
       where: { id: matchId },
       data: { days: stats.days, durationMs, statsAt: new Date() },
     });
+  }
+
+  /**
+   * Backfill the per-unit breakdown onto already-finalized matches (rows written before the column
+   * existed). Re-runs the same replay and updates ONLY `unitBreakdown` — it does not touch the guarded
+   * `statsAt` or any scalar, so it's safe to run repeatedly. Used by the unit-stats backfill script.
+   */
+  async backfillUnitBreakdown(matchId: string): Promise<void> {
+    const { stats } = await this.analyse(this.db, matchId);
+
+    for (const player of stats.players) {
+      await this.db.matchPlayerStats.updateMany({
+        where: { matchId, playerId: player.playerId },
+        data: {
+          unitBreakdown: {
+            built: player.builtByUnit,
+            lost: player.lostByUnit,
+            damage: player.damageByUnit,
+          },
+        },
+      });
+    }
   }
 
   async summary(matchId: string) {

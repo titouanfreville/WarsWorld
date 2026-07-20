@@ -105,7 +105,25 @@ class FakeDb {
       this.members.filter((m) => m.lobbyId === where.lobbyId),
   };
 
-  matchPlayer = { findFirst: async () => null };
+  /** Live matches this player sits in, as (playerId, isRanked) — drives the one-ranked-at-a-time gate. */
+  activeMatches: { playerId: string; isRanked: boolean }[] = [];
+  matchPlayer = {
+    findFirst: async ({
+      where,
+    }: {
+      where: { playerId: string; match?: { isRanked?: boolean } };
+    }) => {
+      const wantRanked = where.match?.isRanked;
+      const hit = this.activeMatches.find(
+        (m) =>
+          m.playerId === where.playerId && (wantRanked === undefined || m.isRanked === wantRanked),
+      );
+
+      return hit === undefined ? null : { matchId: "existing" };
+    },
+    // Recent-opponents lookup at join. These tests set up no finished-match history, so it's empty.
+    findMany: async () => [] as unknown[],
+  };
   playerInfraction = {
     createMany: async ({ data }: { data: typeof FakeDb.prototype.infractions }) => {
       this.infractions.push(...data);
@@ -126,6 +144,8 @@ const ticket = (playerId: string, mu = 25): Ticket => ({
   ruleset: "standard",
   mode: "duel",
   ranked: true,
+  rank: null,
+  recentOpponents: {},
   enqueuedAt: NOW,
 });
 
@@ -142,6 +162,8 @@ const spawner = () => {
 
 const rater = {
   getSkills: async (ids: string[]) => new Map(ids.map((id) => [id, defaultSkill()])),
+  // These tests exercise the queue/ready-check plumbing, not the rank band — everyone places.
+  rankFor: async () => null,
 };
 
 /** Capture queue events for a player over the test's lifetime. */
@@ -252,7 +274,45 @@ describe("matchmaking usecase", () => {
     expect(events.B.at(-1)).toMatchObject({ type: "dismissed" });
   });
 
-  it("forbids declining a normal (non-lenient) ranked ready-check", async () => {
+  /**
+   * The AFK bug: a missed check is not a rejection, so it must NOT cool the pair down — otherwise, in
+   * a two-player pool, the player who stepped away can never rematch the one opponent available.
+   */
+  it("leaves no rematch cooldown after a timeout — the pair can meet again at once", async () => {
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+
+    await usecase.acceptReadyCheck(lobbyId, "A"); // B goes AFK
+    await internals(usecase).onReadyDeadline(lobbyId);
+
+    queue.add(ticket("B", 25.3)); // B comes back and re-queues
+    await usecase.tick();
+
+    expect(queue.size()).toBe(0); // both pulled straight into a fresh ready-check — no cooldown
+  });
+
+  it("DOES cool the pair down after an explicit decline", async () => {
+    const casualTicket = (playerId: string, mu = 25) => ({
+      ...ticket(playerId, mu),
+      ranked: false,
+    });
+    queue.add(casualTicket("A"));
+    queue.add(casualTicket("B", 35)); // wide casual gap → lenient → declinable
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+
+    await usecase.declineReadyCheck(lobbyId, "B");
+
+    queue.add(casualTicket("B", 35)); // B re-queues immediately
+    await usecase.tick();
+
+    expect(queue.has("A")).toBe(true); // still waiting — the just-declined pair is on cooldown
+    expect(queue.has("B")).toBe(true);
+  });
+
+  it("forbids declining a normal (non-lenient) ready-check", async () => {
     queue.add(ticket("A"));
     queue.add(ticket("B", 25.3)); // near-even → not lenient
     await usecase.tick();
@@ -263,9 +323,24 @@ describe("matchmaking usecase", () => {
     expect(db.infractions).toHaveLength(0);
   });
 
-  it("lenient (wide-gap) decline is allowed, writes no infraction, and requeues the other player", async () => {
-    queue.add(ticket("A"));
-    queue.add(ticket("B", 35)); // ~95% favourite → past LENIENT_GAP
+  /** The wide-gap escape hatch is casual-only. A lopsided RANKED check is still a commitment. */
+  it("never makes a ranked wide-gap check lenient — no free decline", async () => {
+    queue.add(ticket("A")); // ranked (helper default)
+    queue.add(ticket("B", 35)); // ~95% favourite, but ranked
+
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+
+    expect(db.lobbies.get(lobbyId)!.readyCheckLenient).toBe(false);
+    expect(events.A.at(-1)).toMatchObject({ type: "ready-check-started", lenient: false });
+    await expect(usecase.declineReadyCheck(lobbyId, "B")).rejects.toThrow();
+  });
+
+  const casual = (playerId: string, mu = 25) => ({ ...ticket(playerId, mu), ranked: false });
+
+  it("casual wide-gap decline is allowed, writes no infraction, and requeues the other player", async () => {
+    queue.add(casual("A"));
+    queue.add(casual("B", 35)); // ~95% favourite → past LENIENT_GAP, and casual → lenient
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
     expect(db.lobbies.get(lobbyId)!.readyCheckLenient).toBe(true);
@@ -278,8 +353,8 @@ describe("matchmaking usecase", () => {
   });
 
   it("forbids declining once you've accepted", async () => {
-    queue.add(ticket("A"));
-    queue.add(ticket("B", 35)); // lenient, so decline would otherwise be allowed
+    queue.add(casual("A"));
+    queue.add(casual("B", 35)); // lenient, so decline would otherwise be allowed
     await usecase.tick();
     const lobbyId = firstLobbyId(db);
 
@@ -311,5 +386,58 @@ describe("matchmaking usecase", () => {
       usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: true }),
     ).rejects.toThrow();
     expect(usecase.status("A")).toMatchObject({ inQueue: true, mode: "duel", ranked: true });
+  });
+
+  /**
+   * One ranked match at a time, and ONLY ranked. This is correspondence: concurrent games are the
+   * product (Your Games → Live is a list of them), so a blanket "finish your current match first"
+   * would break it. Ranked is the exception — each concurrent ranked game would be paired against
+   * the same mu, so the second one's opponent was chosen on information the first invalidated.
+   */
+  describe("one ranked match at a time", () => {
+    it("blocks a ranked join while a ranked match is live", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: true });
+
+      await expect(
+        usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: true }),
+      ).rejects.toThrow(/ranked match/i);
+      expect(queue.has("A")).toBe(false);
+    });
+
+    it("does NOT block a casual join while a ranked match is live", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: true });
+
+      await usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: false });
+      expect(queue.has("A")).toBe(true);
+    });
+
+    it("does NOT let a casual match block a ranked join", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: false });
+
+      await usecase.joinQueue("A", { mode: "duel", ruleset: "standard", ranked: true });
+      expect(queue.has("A")).toBe(true);
+    });
+
+    it("lets a player stack casual queues alongside live casual games", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: false });
+      db.activeMatches.push({ playerId: "A", isRanked: false });
+
+      await usecase.joinQueue("A", { mode: "ffa", ruleset: "highFunds", ranked: false });
+      expect(queue.has("A")).toBe(true);
+    });
+
+    // The Play page reads eligibility to grey the ranked cards out BEFORE the click. It must agree
+    // with the join guard: block only on a live ranked match, and be blind to casual ones.
+    it("eligibility reports the live ranked match so the client can disable the buttons", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: true });
+
+      expect(await usecase.eligibility("A")).toEqual({ activeRankedMatchId: "existing" });
+    });
+
+    it("eligibility is clear when only casual matches are live", async () => {
+      db.activeMatches.push({ playerId: "A", isRanked: false });
+
+      expect(await usecase.eligibility("A")).toEqual({ activeRankedMatchId: null });
+    });
   });
 });

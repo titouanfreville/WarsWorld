@@ -18,6 +18,7 @@ export const vonBoltAWDS: COProperties = {
       description:
         "Creates a lightning bolt that strikes a position and deals 3 HP of damage and immobilizes all units at distance 2 or less from the center. The strike position is decided randomly between most HP or most value in damages, subtracting own units hp/value.",
       stars: 10,
+      signatureEffect: "lightning",
       calculatePositions: (player) => {
         // vb and rachel share missile position calculations. vb can either get the hp or the value position (random).
         const missilePositions = getMissilePositions(player);

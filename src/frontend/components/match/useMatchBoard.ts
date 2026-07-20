@@ -1,4 +1,4 @@
-import { getCurrentTurnPlayer } from "frontend/components/match/match-view";
+import { getCurrentTurnPlayer, getTileAt } from "frontend/components/match/match-view";
 import { applyBufferedActions } from "frontend/components/match/optimistic-view";
 import type { TurnSnapshot } from "frontend/components/match/turn-snapshot-view";
 import {
@@ -7,6 +7,7 @@ import {
   nextPendingAction,
   optimisticActions,
 } from "frontend/utils/action-queue";
+import { formatAdminToolEffect, formatDevToolEffect } from "frontend/components/match/dev-actions";
 import { createLogger } from "frontend/utils/logger";
 import { trpc } from "frontend/utils/trpc-client";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -49,10 +50,52 @@ export function useMatchBoard({ matchId, playerId }: Params) {
     null,
   );
 
+  // System lines for dev/admin tool use, shown in chat. Transient — the durable record is the Event
+  // log — so a plain capped list, newest last. `id` is a monotonic key for React (no timestamps in
+  // the engine's world, and two lines can share a tick).
+  const [systemLog, setSystemLog] = useState<{ id: number; text: string }[]>([]);
+  const systemLineIdRef = useRef(0);
+
+  const pushSystemLine = (text: string) => {
+    systemLineIdRef.current += 1;
+    const id = systemLineIdRef.current;
+    // Cap the buffer so a long match can't grow it without bound.
+    setSystemLog((prev) => [...prev, { id, text }].slice(-50));
+  };
+
   const matchQuery = trpc.match.full.useQuery({ matchId, playerId });
   const match = matchQuery.data;
 
   const isMyTurn = match !== undefined && getCurrentTurnPlayer(match)?.id === playerId;
+
+  // The subscription callback is created once and would close over a stale `isMyTurn`; read turn
+  // ownership through a ref so an opponent-move event is classified against the live turn.
+  const isMyTurnRef = useRef(isMyTurn);
+  isMyTurnRef.current = isMyTurn;
+
+  // The latest authoritative view, for the subscription callback: an HQ-capture event names the
+  // reason but not the destroyed units, so the handler reads the PRE-capture view (still current at
+  // event time — the refetch it triggers hasn't landed) to find the eliminated player's units.
+  const matchRef = useRef(match);
+  matchRef.current = match;
+
+  // Fog-masked paths of opponent moves seen live this refetch cycle, drained by the board on the next
+  // authoritative update to slide those units (own moves animate from the optimistic buffer instead).
+  // The BE already masks each path per viewer (event-to-emittable's `shownPath`), so this just keeps
+  // what it's handed; a fully-hidden move arrives empty and is ignored.
+  const opponentMovePathsRef = useRef<[number, number][][]>([]);
+
+  // Tiles where a unit was just destroyed (combat kill or self-destruct), drained by the board on the
+  // next authoritative update to play an explosion before the unit vanishes. Unlike moves this isn't
+  // turn-gated — a kill is animated whether it was ours or the opponent's — and it's already fog-safe:
+  // the BE only sends a dead unit's position when this viewer can see the tile.
+  const destroyedPositionsRef = useRef<[number, number][]>([]);
+
+  // Tiles where a capture ability fired, drained by the board on the next authoritative update to play
+  // a capture flourish. Over-captures (every infantry/mech/apc/etc. ability lands here) — the board
+  // filters to real captures by unit type in the new view, since only infantry/mech capture. Fog-safe:
+  // the BE only sends the ability's position when this viewer can see the capturing tile.
+  const capturePositionsRef = useRef<[number, number][]>([]);
 
   const snapshotQuery = trpc.match.previews.turnSnapshot.useQuery(
     { matchId, playerId },
@@ -80,7 +123,83 @@ export function useMatchBoard({ matchId, playerId }: Params) {
   trpc.action.onEvent.useSubscription(
     { playerId, matchId },
     {
-      onData() {
+      onData(event) {
+        // Dev/admin tool use is announced in chat — every player sees what was done, which is the
+        // point of it being an event rather than a silent mutation. The line is transient (the
+        // durable record is the Event log + DevToolAudit), so it lives in local state, not the DB
+        // chat. `actorName` and the resolved `effect` are already on the wire; this only formats.
+        if (event.type === "devTool") {
+          pushSystemLine(`${event.actorName} (DEV) ${formatDevToolEffect(event.effect)}`);
+        } else if (event.type === "adminTool") {
+          pushSystemLine(`${event.actorName} (ADMIN) ${formatAdminToolEffect(event.effect)}`);
+        }
+
+        // Opponent move seen live: keep its (already fog-masked) path so the board can slide the unit
+        // when the refetch below lands. Only off our own turn — our own moves echo back here too, but
+        // they already animate from the optimistic buffer, so re-animating them would double up. A
+        // single-tile or empty path isn't a visible slide, so there's nothing to keep.
+        if (event.type === "move" && !isMyTurnRef.current && event.path.length >= 2) {
+          opponentMovePathsRef.current.push(
+            event.path.map((position): [number, number] => [position[0], position[1]]),
+          );
+        }
+
+        // Unit destruction: a combat kill rides on the move event's attack sub-event (attacker and/or
+        // defender at HP 0), and a self-destruct is a `delete`. In each case the BE only includes the
+        // dead unit's position when this viewer can see the tile, so keeping whatever it sends stays
+        // fog-safe. The board plays an explosion there on the refetch that removes the unit.
+        if (event.type === "move" && event.subEvent.type === "attack") {
+          for (const participant of [event.subEvent.attacker, event.subEvent.defender]) {
+            if (participant?.HP === 0 && participant.position !== undefined) {
+              destroyedPositionsRef.current.push([
+                participant.position[0],
+                participant.position[1],
+              ]);
+            }
+          }
+        } else if (event.type === "delete") {
+          destroyedPositionsRef.current.push([event.position[0], event.position[1]]);
+        }
+
+        // Capture flourish (OPPONENT only): an infantry/mech capturing a property fires an `ability`
+        // sub-event, and its (fog-masked) final path position is the tile being captured. Other unit
+        // abilities (apc supply, black bomb, stealth toggle) also land here — the board discards them by
+        // unit type, since only infantry/mech capture. Own captures are driven from the action buffer
+        // instead (so the flourish shares its move slide's clock), so ignore our own echoed ability here
+        // — off our turn is the opponent's capture. A fully-hidden ability has no shown position.
+        if (event.type === "move" && event.subEvent.type === "ability" && !isMyTurnRef.current) {
+          const capturePosition = event.path.at(-1);
+
+          if (capturePosition !== undefined) {
+            capturePositionsRef.current.push([capturePosition[0], capturePosition[1]]);
+          }
+        }
+
+        // HQ/lab capture eliminates the captured player and removes ALL their units at once. The event
+        // carries the reason but not the positions, so derive them: the captured tile's owner in the
+        // pre-capture view is the eliminated player, and every unit of theirs the viewer can currently
+        // see blows up (units outside vision are already absent here, so this stays fog-safe).
+        if (
+          event.type === "move" &&
+          event.subEvent.type === "ability" &&
+          event.subEvent.eliminationReason === "hq-or-labs-captured"
+        ) {
+          const previous = matchRef.current;
+          const hqPosition = event.path.at(-1);
+
+          if (previous !== undefined && hqPosition !== undefined) {
+            const capturedTile = getTileAt(previous, [hqPosition[0], hqPosition[1]]);
+
+            if ("playerSlot" in capturedTile && capturedTile.playerSlot >= 0) {
+              for (const unit of previous.units) {
+                if (unit.playerSlot === capturedTile.playerSlot) {
+                  destroyedPositionsRef.current.push([unit.position[0], unit.position[1]]);
+                }
+              }
+            }
+          }
+        }
+
         void utils.match.full.invalidate({ matchId, playerId });
         void utils.match.previews.turnSnapshot.invalidate({ matchId, playerId });
       },
@@ -172,5 +291,9 @@ export function useMatchBoard({ matchId, playerId }: Params) {
     actionMutation,
     onActionError,
     trapNotice,
+    systemLog,
+    opponentMovePathsRef,
+    destroyedPositionsRef,
+    capturePositionsRef,
   };
 }

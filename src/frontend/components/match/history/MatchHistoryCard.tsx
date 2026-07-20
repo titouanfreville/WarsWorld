@@ -41,7 +41,10 @@ type Props = {
   match: {
     id: string;
     map: { name: string; numberOfPlayers: number };
-    players: (HistoryPlayer & { status?: "alive" | "routed" | "captured" })[];
+    players: (HistoryPlayer & {
+      status?: "alive" | "routed" | "captured" | "resigned";
+      result?: "won" | "lost" | "drawn";
+    })[];
     state: string;
     /** Day count. Real for finished rows now that `Match.days` is persisted (was hardcoded 0). */
     turn: number;

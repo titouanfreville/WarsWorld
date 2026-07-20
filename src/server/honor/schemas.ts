@@ -12,3 +12,8 @@ export const awardMedalSchema = z.object({
 export const honorStandingSchema = z.object({
   playerId: z.string(),
 });
+
+/** The viewer's own commendation for a match (finished or not) — reflects it back on the EG panel. */
+export const myAwardSchema = z.object({
+  matchId: z.string(),
+});

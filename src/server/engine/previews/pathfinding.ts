@@ -148,8 +148,12 @@ export const getAttackableTiles = (
     const visited = makeVisitedMatrix(match.map);
 
     for (const [pos] of accessibleNodes.entries()) {
-      if (match.getUnit(pos) !== undefined && !isSamePosition(pos, unit.data.position)) {
-        //another unit occupies this spot so we can't move to it to attack
+      // Only a unit the acting team can SEE blocks stopping here to attack. A fog-hidden / dived enemy
+      // on this tile must NOT drop it as an attack-from position — that would leak the ambush and hide
+      // a legal-looking attack; the move traps on it at execution instead. In a non-fog game this is
+      // identical to the old `getUnit(pos) !== undefined` check (every ordinary unit is visible).
+      if (unit.player.team.canSeeUnitAtPosition(pos) && !isSamePosition(pos, unit.data.position)) {
+        //another (visible) unit occupies this spot so we can't move to it to attack
         //(compare by value: an explicit `fromPosition` is a fresh tuple, so `!==` would wrongly
         // treat the unit's own tile as occupied and drop its neighbours — breaking in-place attack)
         continue;

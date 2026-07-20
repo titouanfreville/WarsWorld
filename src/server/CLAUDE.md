@@ -81,6 +81,17 @@ Rules (ported from the Python/Go skeletons):
 - **Features never import each other** — only `core` (the kernel) and `adapters`. `engine` is the
   one feature that owns game logic; other features reach engine results through transport, not by
   importing `engine`.
+  - **Exception — match-play orchestration.** The impure orchestrators that drive the pure engine
+    while doing the I/O it can't (`matches`/`match-action`, `dev-tools`, `admin-tools`) MAY import
+    `engine` internals (handlers, entities, `event-to-emittable`, `finalize`). They can't live _in_
+    `engine` (it must stay Prisma-free) and can't reach it "through transport" (transport calls into
+    them). This is the ONE carve-out — unrelated features (auth, articles, ranking, maps, players)
+    still may not touch `engine`. Their own cross-feature needs go through a narrow injected
+    interface, never a direct import (see `AdminUsecase`'s `QueuePairer`/`LobbyForcer`, and
+    `finish-match.ts` taking `applyMatchResult`/`persistStats` as deps).
+  - `adapters` is **root-level infra** (`src/server/adapters`), NOT part of `core`: `core` imports
+    nothing, adapters sit _outside_ it. "A feature imports `core` and `adapters`" means it may reach
+    that root-level infra — `engine` included — not that adapters live inside the kernel.
 
 ### The game engine feature
 

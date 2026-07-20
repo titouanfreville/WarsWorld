@@ -254,6 +254,26 @@ export const mainEventToEmittables = (
         }
       });
     }
+    case "devTool": {
+      /* Unfiltered to every team on purpose: dev-tool use is announced, so there's nothing to hide
+       * behind fog — the tester's opponent is told exactly what was done. `playerUpdate` carries the
+       * resulting player state (funds, meter, modifiers) so clients don't re-derive it, same as the
+       * attack path. */
+      return teamsWithSpectator.map((team) => ({
+        ...event,
+        playerUpdate: match.getAllPlayers().map((p) => p.data),
+        teamIndex: team.index,
+      }));
+    }
+    case "adminTool": {
+      /* Unfiltered, like `devTool`: an admin deciding a match is announced to everyone in it. No
+       * `playerUpdate` — the outcome reaches clients as the `matchEnd` emit the usecase sends once
+       * the result is durably committed, exactly as a natural ending does. */
+      return teamsWithSpectator.map((team) => ({
+        ...event,
+        teamIndex: team.index,
+      }));
+    }
     default: {
       return teamsWithSpectator.map((team) => ({
         ...event,

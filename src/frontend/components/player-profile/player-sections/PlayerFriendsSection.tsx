@@ -1,66 +1,45 @@
-import type { Army } from "shared/schemas/army";
-import type { CO } from "shared/schemas/co";
+import { trpc } from "frontend/utils/trpc-client";
 import { PlayerFriendLink } from "../PlayerFriendLink";
 
-type Player = {
-  name: string;
-  favArmy: Army;
-  favCO: CO;
-};
+/**
+ * The friends panel, on real `players.friends` data — the profile owner's accepted friends, each a
+ * portrait + handle linking to their profile.
+ */
+export function PlayerFriendSection({ name }: { name: string }) {
+  const { data: friends, isLoading } = trpc.players.friends.useQuery(
+    { name },
+    { enabled: name !== "" },
+  );
 
-const friends: Player[] = [
-  {
-    name: "Master Chief",
-    favArmy: "orange-star",
-    favCO: "adder",
-  },
-  {
-    name: "Alm",
-    favArmy: "green-earth",
-    favCO: "andy",
-  },
-  {
-    name: "Professor Layton",
-    favArmy: "blue-moon",
-    favCO: "grit",
-  },
-  {
-    name: "Griffith",
-    favArmy: "yellow-comet",
-    favCO: "kanbei",
-  },
-  {
-    name: "Yukimura204254 Echoes and Knuckles",
-    favArmy: "black-hole",
-    favCO: "lash",
-  },
-  {
-    name: "The Arbiter",
-    favArmy: "blue-moon",
-    favCO: "javier",
-  },
-  {
-    name: "Grimm Guy",
-    favArmy: "yellow-comet",
-    favCO: "grimm",
-  },
-];
-
-export function PlayerFriendSection() {
   return (
-    <section className="@w-full @min-h-full @bg-black/60 @pb-8 @p-6 @my-4">
-      <h3 className="@font-russoOne @uppercase @text-2xl smallscreen:@text-3xl">Friends</h3>
-      <div className="@flex @flex-col @w-full @py-6 @space-y-1">
-        {friends.map((friend) => {
-          return (
-            <PlayerFriendLink
-              key={friend.name}
-              friendName={friend.name}
-              friendFavArmy={friend.favArmy}
-              friendFavCO={friend.favCO}
-            />
-          );
-        })}
+    <section className="@my-4 @overflow-hidden @border @border-primary/25 @bg-black/60 [clip-path:polygon(0_0,100%_0,100%_100%,3%_100%,0_94%)]">
+      <div className="@flex @items-center @gap-2 @border-b @border-primary/20 @bg-gradient-to-r @from-bg-secondary/60 @to-transparent @px-4 @py-2.5">
+        <span className="@h-3 @w-1 @bg-primary" />
+        <h3 className="@font-russoOne @text-sm @uppercase @tracking-wider @text-white">Friends</h3>
+        {friends && friends.length > 0 && (
+          <span className="@ml-auto @font-russoOne @text-sm @text-primary-light">
+            {friends.length}
+          </span>
+        )}
+      </div>
+
+      <div className="@p-2">
+        {isLoading && <p className="@px-2 @py-3 @text-sm @text-white/40">Loading…</p>}
+        {friends && friends.length === 0 && (
+          <p className="@px-2 @py-3 @text-sm @text-white/40">No friends yet.</p>
+        )}
+        {friends && friends.length > 0 && (
+          <div className="@flex @flex-col @gap-0.5">
+            {friends.map((friend) => (
+              <PlayerFriendLink
+                key={friend.name}
+                name={friend.name}
+                avatar={friend.avatar}
+                favouriteCO={friend.favouriteCO}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

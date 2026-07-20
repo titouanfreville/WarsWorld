@@ -11,6 +11,8 @@ import { mapRouter } from "./maps";
 import { articleRouter } from "./article";
 import { systemRouter } from "./system";
 import { userRouter } from "./user";
+import { playersRouter } from "./players";
+import { adminRouter } from "./admin";
 
 export const appRouter = router({
   // Match play: lifecycle at `match.*`, previews at `match.previews.*`, champ-select at `match.pick.*`.
@@ -26,6 +28,8 @@ export const appRouter = router({
   article: articleRouter,
   system: systemRouter,
   user: userRouter,
+  players: playersRouter,
+  admin: adminRouter,
 });
 
 export type AppRouter = typeof appRouter;

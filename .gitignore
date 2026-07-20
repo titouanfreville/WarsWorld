@@ -3,7 +3,8 @@
 /.idea
 
 # secrets
-.env
+.env*
+!.env.example
 
 # generated files
 /.next
@@ -13,3 +14,7 @@
 # https://www.typescriptlang.org/tsconfig#tsBuildInfoFile
 tsconfig.tsbuildinfo
 prisma/migrations/20230510171142_amogus/migration.sql
+
+.ai
+.omc
+.moonlight-local

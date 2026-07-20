@@ -55,3 +55,12 @@ export const formatMatchDate = (value: Date | string | null | undefined): string
 
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 };
+
+/**
+ * A wall-clock time (hours:minutes) for a chat/message timestamp. `undefined` locale means "use the
+ * runtime default" — in the browser that's the navigator's locale and timezone — so the format
+ * follows the viewer's own settings without the component choosing. Like `formatMatchDate` it's
+ * timezone-dependent, so its tests pin `process.env.TZ`.
+ */
+export const formatClockTime = (value: Date | string): string =>
+  new Date(value).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });

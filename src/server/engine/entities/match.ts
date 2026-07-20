@@ -9,6 +9,7 @@ import type { Tile } from "server/core/schemas/tile";
 import type { WWUnit } from "server/core/schemas/unit";
 import type { Weather } from "server/core/schemas/weather";
 import type { ChangeableTile } from "server/core/schemas/tile-state";
+import type { PowerActivationReport, TurnStartReport } from "server/engine/types/events";
 import {
   createNeutralPlayerInMatch,
   type PlayerInMatch,
@@ -38,6 +39,20 @@ export class MatchWrapper<
   private currentWeather: Weather = "clear";
   public playerToRemoveWeatherEffect: PlayerInMatchWrapper | null = null;
   public weatherDaysLeft = 0;
+  /**
+   * The latest start-of-turn report (day + repaired/refuelled units), set by applyPassTurnEvent for
+   * the player whose turn is beginning. Transient derived state — re-populated on event-log replay,
+   * never persisted directly. The FE reads it (fog-safe, own-units-only) to play the start-round
+   * animation. Null until the first pass-turn.
+   */
+  public turnStartReport: TurnStartReport | null = null;
+  /**
+   * The most recent CO-power activation, set by applyCOPowerEvent and cleared at the next pass-turn.
+   * Transient derived state (rebuilt on replay, like {@link turnStartReport}); the FE reads it
+   * (fog-masked positions) to play the activation cinematic + on-board effects. Null until a power
+   * is used, and null again once the activating player's next turn begins.
+   */
+  public powerActivationReport: PowerActivationReport | null = null;
   public teams: TeamWrapper[] = [];
   private neutralPlayer: PlayerInMatchWrapper;
   /**
@@ -132,7 +147,10 @@ export class MatchWrapper<
       const isBrokenPipeSeam = "hp" in foundChangeableTile && foundChangeableTile.hp < 1;
 
       if (isBrokenPipeSeam) {
-        const tile = this.getTile(position);
+        // The STATIC map tile, read directly — a broken seam's orientation comes from the map's own
+        // pipe variant. Calling `getTile` here would re-find this same changeable tile and recurse
+        // forever (every lookup on a destroyed seam blew the stack).
+        const tile = this.map.data.tiles[position[1]][position[0]];
 
         if ("variant" in tile && tile.variant === "top-bottom") {
           return {

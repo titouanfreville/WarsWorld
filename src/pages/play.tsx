@@ -38,9 +38,19 @@ function Seats({ seats, teamed, active }: { seats: number; teamed: boolean; acti
   );
 }
 
-function QueueCard({ queue, mode }: { queue: PlayQueue; mode: GameMode }) {
+function QueueCard({
+  queue,
+  mode,
+  blockedReason,
+}: {
+  queue: PlayQueue;
+  mode: GameMode;
+  /** Why this queue can't be joined right now (e.g. a ranked match is already live), or null. */
+  blockedReason: string | null;
+}) {
   const { state, join, joining } = useQueue();
   const searching = state.phase === "searching";
+  const blocked = blockedReason !== null;
 
   return (
     <div
@@ -62,11 +72,14 @@ function QueueCard({ queue, mode }: { queue: PlayQueue; mode: GameMode }) {
         </span>
       </div>
 
-      <div className="@flex @items-center @justify-end @pt-4">
+      <div className="@flex @items-center @justify-between @gap-3 @pt-4">
+        {/* The server re-checks on join; disabling here just spares the player a click that would
+            bounce. Say why — a greyed button with no reason reads as a bug. */}
+        <p className="@py-0 @text-[0.7rem] @leading-tight @text-amber-400/80">{blockedReason}</p>
         <button
-          disabled={joining || searching}
+          disabled={joining || searching || blocked}
           onClick={() => join({ mode, ruleset: queue.ruleset, ranked: queue.ranked })}
-          className={`@rounded-lg @px-4 @py-2 @text-xs @font-semibold @uppercase @tracking-wide @transition disabled:@opacity-40 ${
+          className={`@flex-none @rounded-lg @px-4 @py-2 @text-xs @font-semibold @uppercase @tracking-wide @transition disabled:@cursor-not-allowed disabled:@opacity-40 ${
             queue.ranked
               ? "@bg-primary @font-russoOne @text-black hover:@brightness-110"
               : "@border @border-bg-tertiary @text-slate-300 hover:@border-primary hover:@text-white"
@@ -82,6 +95,7 @@ function QueueCard({ queue, mode }: { queue: PlayQueue; mode: GameMode }) {
 export default function Play() {
   const router = useRouter();
   const { currentPlayer } = usePlayers();
+  const { joinError, dismissJoinError } = useQueue();
   const [createOpen, setCreateOpen] = useState(false);
 
   // `playerBaseProcedure` merges `withPlayerIdSchema` into every input, so playerId rides along even
@@ -90,6 +104,15 @@ export default function Play() {
     { playerId: currentPlayer?.id ?? "" },
     { enabled: currentPlayer !== undefined },
   );
+
+  // One ranked match at a time — grey the ranked queues out while one is live rather than letting the
+  // click bounce off the server guard. Casual queues are never blocked.
+  const { data: eligibility } = trpc.matchmaking.eligibility.useQuery(
+    { playerId: currentPlayer?.id ?? "" },
+    { enabled: currentPlayer !== undefined },
+  );
+  const rankedBlocked =
+    eligibility?.activeRankedMatchId != null ? "Finish your current ranked match first." : null;
 
   const mode: RailMode = isRailMode(router.query.mode) ? router.query.mode : "duel";
 
@@ -113,6 +136,25 @@ export default function Play() {
             Pick a mode, pick a queue. We&apos;ll find you an opponent.
           </p>
         </header>
+
+        {/* The server owns queue eligibility ("finish your current match first", "already queued")
+            and says so in plain language. One banner, not one per card: a refusal is about YOU, not
+            about the queue that happened to be clicked. */}
+        {joinError !== null && (
+          <div
+            role="alert"
+            className="@mb-4 @flex @items-center @justify-between @gap-3 @rounded-lg @border @border-red-500/40 @bg-red-950/40 @px-4 @py-2.5"
+          >
+            <p className="@py-0 @text-sm @text-red-200">{joinError}</p>
+            <button
+              onClick={dismissJoinError}
+              aria-label="Dismiss"
+              className="@flex-none @text-xs @font-semibold @text-red-300/70 hover:@text-white"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         <div className="@grid @gap-6 desktop:@grid-cols-[220px_1fr_260px]">
           {/* mode rail */}
@@ -190,7 +232,12 @@ export default function Play() {
                     </p>
                     <div className="@mb-6 @grid @gap-3 laptop:@grid-cols-2">
                       {queues.ranked.map((queue) => (
-                        <QueueCard key={queue.ruleset} queue={queue} mode={mode} />
+                        <QueueCard
+                          key={queue.ruleset}
+                          queue={queue}
+                          mode={mode}
+                          blockedReason={rankedBlocked}
+                        />
                       ))}
                     </div>
                   </>
@@ -201,7 +248,7 @@ export default function Play() {
                 </p>
                 <div className="@grid @gap-3 laptop:@grid-cols-2">
                   {queues.casual.map((queue) => (
-                    <QueueCard key={queue.ruleset} queue={queue} mode={mode} />
+                    <QueueCard key={queue.ruleset} queue={queue} mode={mode} blockedReason={null} />
                   ))}
                 </div>
 

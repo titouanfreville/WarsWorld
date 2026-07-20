@@ -13,6 +13,12 @@ export const matchmakingRouter = router({
   ),
   status: playerBaseProcedure.query(({ ctx }) => matchmakingUsecase.status(ctx.currentPlayer.id)),
 
+  // Pre-flight for the Play page: is a ranked queue currently allowed? Lets the ranked cards disable
+  // themselves before the click. The join guard re-checks server-side, so this is a hint, not a gate.
+  eligibility: playerBaseProcedure.query(({ ctx }) =>
+    matchmakingUsecase.eligibility(ctx.currentPlayer.id),
+  ),
+
   // The per-player pre-lobby channel. Its teardown leaves the queue, so closing the tab / unmounting
   // the global widget removes the player — but page-to-page navigation keeps `_app` (and this
   // subscription) mounted, so browsing while queued does not.

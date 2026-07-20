@@ -12,6 +12,7 @@ import type { BoardPosition, MatchView } from "frontend/components/match/match-v
 import {
   getArmyForSlot,
   getPlayerById,
+  getTileAt,
   getUnitAt,
   samePosition,
   toMutablePath,
@@ -48,10 +49,15 @@ export type AttackForecastFocus = {
  * draws through the `BoardRenderer` passed in, so it stays agnostic of how highlights/menus/arrows
  * are actually rendered.
  *
- * Two optional callbacks surface board state to React for the HUD overlays (pure "events out", no
+ * Three optional callbacks surface board state to React for the HUD overlays (pure "events out", no
  * pixi coupling): `onAttackTargetFocus` fires while hovering a lit enemy attack target (drives the
  * floating combat-forecast box), `onUnitInspect` fires on a right-click that lands on a visible unit
- * (drives the unit-detail card). Both pass plain positions; React fetches the BE preview and renders.
+ * (drives the unit-detail card), and `onContextMenu` fires on a right-click on an empty tile (drives
+ * the board context menu). All pass plain positions; React fetches the BE data and renders.
+ *
+ * The context menu is React's rather than a pixi `createBoardMenu` because its entries are React
+ * concerns end-to-end — a typed-confirm modal, tRPC mutations, the same handlers the HUD already
+ * owns. Keeping it out of pixi is what stops the board from growing its own network layer.
  */
 export function createBoardController(deps: {
   view: MatchView;
@@ -64,6 +70,13 @@ export function createBoardController(deps: {
   renderer: BoardRenderer;
   onAttackTargetFocus?: (focus: AttackForecastFocus | null) => void;
   onUnitInspect?: (position: BoardPosition | null) => void;
+  onContextMenu?: (position: BoardPosition | null) => void;
+  /** Dev teleport: both positions picked, submit it. The BE re-validates them. */
+  onDevTeleport?: (from: BoardPosition, to: BoardPosition) => void;
+  /** The unit picked as the teleport source (null once it's submitted/cleared) — drives the banner. */
+  onTeleportPick?: (position: BoardPosition | null) => void;
+  /** Dev delete: remove ANY unit at this position, enemies included. */
+  onDevDeleteUnit?: (position: BoardPosition) => void;
 }): {
   resetInteraction: () => void;
   onTileClick: (pos: BoardPosition) => void;
@@ -71,7 +84,8 @@ export function createBoardController(deps: {
   onTileRightClick: (pos: BoardPosition) => void;
 } {
   const { view, spriteSheets, playerId, dispatchQueue, mapSize, refs, renderer } = deps;
-  const { onAttackTargetFocus, onUnitInspect } = deps;
+  const { onAttackTargetFocus, onUnitInspect, onContextMenu } = deps;
+  const { onDevTeleport, onTeleportPick, onDevDeleteUnit } = deps;
   const {
     selectionRef,
     stagedDestRef,
@@ -83,6 +97,9 @@ export function createBoardController(deps: {
     snapshotRef,
     priceTableRef,
     queueRef,
+    deleteModeRef,
+    teleportModeRef,
+    devDeleteModeRef,
   } = refs;
 
   const resetInteraction = () => {
@@ -359,7 +376,9 @@ export function createBoardController(deps: {
     const sheet = spriteSheets[army];
     // Own funds are always sent (only opponents' funds are nulled under fog), so coalesce defensively.
     const availableFunds = myPlayer.funds ?? 0;
-    const entries = buildableUnits(priceTable, facility, availableFunds);
+    // Dev free-production flag from the BE snapshot — makes every unit buildable regardless of funds.
+    const freeProduction = snapshotRef.current?.production.freeProduction ?? false;
+    const entries = buildableUnits(priceTable, facility, availableFunds, freeProduction);
 
     const unitSize = baseTileSize / 2;
     const elements = entries.map((entry, index) => {
@@ -389,11 +408,68 @@ export function createBoardController(deps: {
   const onTileClick = (pos: BoardPosition) => {
     const currentMatch = matchRef.current;
 
-    // Any left-click means the player is acting — dismiss the passive inspect card/overlay.
+    // Any left-click means the player is acting — dismiss the passive inspect card/overlay and the
+    // context menu. (Delete mode is deliberately NOT cleared here: it's a mode, and it survives the
+    // clicks it acts on until the player turns it off.)
     onUnitInspect?.(null);
+    onContextMenu?.(null);
 
     if (currentMatch === null || currentMatch.gameOver !== null) {
       return; // the match is decided — the board is read-only
+    }
+
+    // Delete mode short-circuits the normal click routing: while it's on, a click on one of the
+    // viewer's own units scraps it outright rather than selecting it. Enemy units and empty tiles are
+    // ignored (rather than falling through to a select/build) so a stray click can't quietly do
+    // something else while the player is in a destructive mode.
+    if (deleteModeRef.current) {
+      const myPlayer = getPlayerById(currentMatch, playerId);
+      const unitHere = getUnitAt(currentMatch, pos);
+
+      if (
+        myPlayer !== undefined &&
+        unitHere !== undefined &&
+        unitHere.playerSlot === myPlayer.slot
+      ) {
+        enqueue("delete", { type: "delete", position: [pos[0], pos[1]] });
+      }
+
+      return;
+    }
+
+    // Dev delete mode: like scrap mode above, but it reaches ANY unit — enemies included — through
+    // the dev endpoint rather than the normal `delete` action. Stays armed so several units can be
+    // removed in a row, and ignores clicks on empty tiles for the same reason scrap mode does.
+    if (devDeleteModeRef.current) {
+      if (getUnitAt(currentMatch, pos) !== undefined) {
+        onDevDeleteUnit?.([pos[0], pos[1]]);
+      }
+
+      return;
+    }
+
+    // Dev teleport mode, mirroring delete mode above: it short-circuits normal routing, and clicks
+    // that don't fit the mode are IGNORED rather than falling through to a select — a stray click
+    // must not quietly do something else while a dev mode is armed.
+    //
+    // Two clicks: any unit (ENEMY units included — unlike delete mode, this is a staff tool), then
+    // any destination. The BE re-validates both; the board just collects the two positions.
+    if (teleportModeRef.current !== null) {
+      const from = teleportModeRef.current.from;
+
+      if (from === null) {
+        if (getUnitAt(currentMatch, pos) !== undefined) {
+          teleportModeRef.current = { from: [pos[0], pos[1]] };
+          onTeleportPick?.([pos[0], pos[1]]);
+        }
+
+        return;
+      }
+
+      onDevTeleport?.(from, [pos[0], pos[1]]);
+      teleportModeRef.current = null;
+      onTeleportPick?.(null);
+      return;
     }
 
     const state: InteractionState = {
@@ -516,11 +592,31 @@ export function createBoardController(deps: {
   // unit, own or enemy, so a player can read an enemy's movement reach and threat. The ranges come
   // from the BE (via the card's query) and are painted by React; the controller just signals which
   // unit. A fogged/concealed unit isn't in the view, so it can't be probed this way.
+  //
+  // On an EMPTY tile it opens the board context menu — but only when there was nothing to cancel.
+  // Cancelling stays right-click's first duty: with a unit selected or a missile armed, a right-click
+  // anywhere just clears, exactly as before, and the menu is offered on the next (now idle) click.
   const onTileRightClick = (pos: BoardPosition) => {
     const currentMatch = matchRef.current;
     const unitHere = currentMatch === null ? undefined : getUnitAt(currentMatch, pos);
+    const wasInteracting = selectionRef.current !== null || missileArmRef.current !== null;
+
     resetInteraction();
-    onUnitInspect?.(unitHere !== undefined ? pos : null);
+
+    // A pipe seam has HP and can be shot, so it inspects like a unit even though no unit stands
+    // there — that health is what you're deciding against when you aim at it.
+    const seamHere =
+      currentMatch !== null && getTileAt(currentMatch, pos).type === "pipeSeam" ? pos : undefined;
+
+    if (unitHere !== undefined || seamHere !== undefined) {
+      onContextMenu?.(null); // inspecting a unit and holding a tile menu open at once reads as noise
+      onUnitInspect?.(pos);
+
+      return;
+    }
+
+    onUnitInspect?.(null);
+    onContextMenu?.(wasInteracting ? null : pos);
   };
 
   return { resetInteraction, onTileClick, onTileHover, onTileRightClick };

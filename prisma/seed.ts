@@ -87,11 +87,20 @@ async function main() {
 
   const hashedPassword = await hashPassword("secret");
 
+  /**
+   * The seeded local user holds every role, so dev tools and the admin screens are reachable
+   * out of the box.
+   *
+   * This is a SEED — it only ever runs against a local dev database. Roles are no longer implicit:
+   * the app used to stamp every user `admin` in the JWT callback, which meant production users were
+   * admins too. Granting them here, on one seeded row, keeps local convenience without that.
+   */
   const { id: userId } = await prisma.user.create({
     data: {
       name: "development_user",
       password: hashedPassword,
       email: "development@example.com",
+      roles: ["admin", "moderator", "dev", "tester"],
     },
   });
 

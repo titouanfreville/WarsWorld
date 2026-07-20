@@ -35,7 +35,8 @@
     "redundant-code": "npx jscpd --ignore node_modules,dist,public,.next --reporters consoleFull .",
     "update-depencencies": "npx npm-check-updates -i",
     "fix-paths": "fix-esm-import-path  dist ",
-    "install-utils": "npm install $(jq -r '.utilsDependencies | to_entries | .[] | \"\\(.key)@\\(.value)\"' package.json)"
+    "install-utils": "npm install $(jq -r '.utilsDependencies | to_entries | .[] | \"\\(.key)@\\(.value)\"' package.json)",
+    "backfill:unit-stats": "tsx prisma/scripts/backfill-unit-stats.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -82,6 +83,7 @@
     "@types/eslint": "^9.6.1",
     "@types/node": "^20.11.10",
     "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.3.7",
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
     "@types/yargs": "^17.0.33",

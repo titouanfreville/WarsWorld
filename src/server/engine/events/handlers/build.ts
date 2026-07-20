@@ -30,7 +30,12 @@ export const buildActionToEvent: MainActionToEvent<BuildAction> = (match, action
   const modifiedCost = player.getHook("buildCost")?.(cost, match);
   const effectiveCost = modifiedCost ?? cost;
 
-  if (effectiveCost > player.data.funds) {
+  /* `freeProduction` must be checked identically here and in the debit below: this check and that
+   * deduction are required to agree on the price (see applyBuildEvent), so skipping one alone would
+   * drive funds negative. */
+  const isFreeProduction = player.data.devModifiers?.freeProduction === true;
+
+  if (!isFreeProduction && effectiveCost > player.data.funds) {
     throw new DispatchableError("You don't have enough funds to build this unit");
   }
 
@@ -163,8 +168,14 @@ export const applyBuildEvent = (match: MatchWrapper, event: BuildEvent) => {
   const { cost } = unitPropertiesMap[event.unitType];
   const effectiveCost = player.getHook("buildCost")?.(cost, match) ?? cost;
 
-  player.data.funds -= effectiveCost;
+  /* Mirrors the `freeProduction` branch in buildActionToEvent — the two must agree on the price. */
+  if (player.data.devModifiers?.freeProduction !== true) {
+    player.data.funds -= effectiveCost;
+  }
+
   player.addUnwrappedUnit(createUnitFromBuildEvent(player.data.slot, event));
+  /* A pinned type covers units built later, not just those alive when the lock was set. */
+  match.getUnit(event.position)?.applyDevPins();
   // Mark that this player has produced a unit — this arms the "no units left = defeat" rule at the
   // turn boundary (see applyPassTurnEvent). Before the first build, an empty board isn't a loss.
   player.data.hasBuiltUnit = true;

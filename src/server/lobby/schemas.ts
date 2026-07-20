@@ -5,7 +5,9 @@ import { matchRulesSchema } from "server/core/schemas/match-rules";
 export const createLobbySchema = z.object({
   mode: gameModeSchema,
   ruleset: rulesetSchema,
-  mapId: z.string(),
+  // Optional at creation — the host picks the map in the lobby's setup panel (see setMap), the same
+  // room where invitees are added, so a map is never asked for at invite time.
+  mapId: z.string().min(1).optional(),
   isRanked: z.boolean().default(false),
   // teamMapping in here is a placeholder; the real mapping is derived from seat assignments at spawn.
   rules: matchRulesSchema,
@@ -13,6 +15,10 @@ export const createLobbySchema = z.object({
 export type CreateLobbyInput = z.infer<typeof createLobbySchema>;
 
 export const withLobbyIdSchema = z.object({ lobbyId: z.string() });
+
+export const setMapSchema = withLobbyIdSchema.extend({
+  mapId: z.string().min(1),
+});
 
 export const assignTeamSchema = withLobbyIdSchema.extend({
   // null = move to the unassigned bench

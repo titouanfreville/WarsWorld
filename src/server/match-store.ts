@@ -109,8 +109,13 @@ export class MatchStore {
 
     const rawMatches = await prisma.match.findMany({
       where: {
+        // BOTH terminal statuses are excluded, not just `finished`. A `cancelled` match (pick phase
+        // abandoned / timed out) is over too — loading it into the LIVE store made it show up in the
+        // games list as a playable match you could enter, because the store is the source of the
+        // "your live matches" list. `finished` and `cancelled` are the two dead states; everything
+        // else (setup / playing) is live.
         status: {
-          not: "finished",
+          notIn: ["finished", "cancelled"],
         },
       },
       include: {

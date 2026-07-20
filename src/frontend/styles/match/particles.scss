@@ -33,12 +33,11 @@
 }
 
 .ww-pf__p.is-gold {
-  top: auto;
-  bottom: 20%;
   border-radius: 50%;
-  box-shadow: 0 0 6px 1px rgba(251, 191, 36, 0.8);
-  animation-name: ww-pf-twinkle;
-  animation-timing-function: ease-in-out;
+  box-shadow: 0 0 9px 2px rgba(251, 191, 36, 0.9);
+  // falls across the whole field (was pinned near the bottom + twinkling, so it read as invisible)
+  animation-name: ww-pf-fall;
+  animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
 

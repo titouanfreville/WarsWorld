@@ -150,13 +150,37 @@ export const authOptions: NextAuthOptions = {
 
       return baseUrl; // redirect callback
     },
-    jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user != undefined) {
         token.id = user.id;
       }
 
-      token.userRole = "admin";
+      /**
+       * Roles come from the DB and nowhere else.
+       *
+       * Re-read on sign-in and on an explicit session update rather than only when `user` is set:
+       * JWTs here are long-lived, so a role revoked in the DB must not stay live in an old token
+       * for the rest of its lifetime. This is the narrowest refresh that still bounds that window.
+       */
+      if (user != undefined || trigger === "update") {
+        const dbUser =
+          typeof token.id === "string"
+            ? await prisma.user.findUnique({
+                where: { id: token.id },
+                select: { roles: true },
+              })
+            : null;
+
+        token.roles = dbUser?.roles ?? [];
+      }
+
       return token;
+    },
+    session({ session, token }) {
+      /** Mirror onto the session so `ctx.session.user.roles` is the one source for capability checks. */
+      session.user.id = typeof token.id === "string" ? token.id : "";
+      session.user.roles = Array.isArray(token.roles) ? token.roles : [];
+      return session;
     },
   },
 };

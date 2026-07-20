@@ -71,7 +71,9 @@ Inner layers never import outer ones. `core` imports nothing outward; the `engin
 `core` (and `adapters`) but no transport or framework. **Features never import each other** — they
 share through `core`, and **only the `engine` feature owns game logic** (so e.g. `maps` gets its
 tiles from `core`, not from `engine`). Cross-feature needs go through a narrow usecase interface,
-not a direct import.
+not a direct import. (One carve-out: the match-play _orchestration_ features that drive the engine
+while doing its I/O — `matches`, `dev-tools`, `admin-tools` — may import `engine`; see
+[`src/server/CLAUDE.md`](src/server/CLAUDE.md). `adapters` is root-level infra, not part of `core`.)
 
 **Engine scope (strict):** the `engine` feature contains only things directly about the game itself
 and how it's presented to the user. Accounts, articles, preferences, ranking, and map _management_

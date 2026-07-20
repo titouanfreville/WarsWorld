@@ -48,8 +48,34 @@ export class UnitWrapper<
     return this.data.stats.fuel;
   }
 
+  /**
+   * The dev-tool pin for this unit's TYPE, if its owner set one. `undefined` on every normal match.
+   *
+   * Keyed by type on the owning player rather than stored on the unit: units have no stable id, and
+   * the unit schema doubles as map-authoring vocabulary (`PrismaUnits`).
+   */
+  private getPinnedVisualHp(): number | undefined {
+    return this.player.data.devModifiers?.hpLocks?.[this.data.type];
+  }
+
+  private getPinnedFuel(): number | undefined {
+    return this.player.data.devModifiers?.fuelLocks?.[this.data.type];
+  }
+
+  private getPinnedAmmo(): number | undefined {
+    return this.player.data.devModifiers?.ammoLocks?.[this.data.type];
+  }
+
   setFuel(newFuel: number) {
     if (this.data.stats === "hidden") {
+      return;
+    }
+
+    /* Pinned fuel ignores every write — this is the single chokepoint (`drainFuel` routes here). */
+    const pinnedFuel = this.getPinnedFuel();
+
+    if (pinnedFuel !== undefined) {
+      this.data.stats.fuel = clamp(0, pinnedFuel, this.properties.initialFuel);
       return;
     }
 
@@ -86,6 +112,16 @@ export class UnitWrapper<
       !("ammo" in this.data.stats) ||
       !("initialAmmo" in this.properties)
     ) {
+      return;
+    }
+
+    /* Pinned ammo ignores every write — the single chokepoint (`useOneAmmo` routes here), mirroring
+     * `setFuel`. Units without ammo never reach this branch (the guard above returns first), so a pin
+     * on a no-ammo type is a harmless no-op. */
+    const pinnedAmmo = this.getPinnedAmmo();
+
+    if (pinnedAmmo !== undefined) {
+      this.data.stats.ammo = clamp(0, pinnedAmmo, this.properties.initialAmmo);
       return;
     }
 
@@ -127,6 +163,10 @@ export class UnitWrapper<
       return;
     }
 
+    if (this.getPinnedVisualHp() !== undefined) {
+      return;
+    }
+
     this.data.stats.hp = Math.max(1, this.data.stats.hp - visualHpAmount * 10);
   }
 
@@ -140,15 +180,27 @@ export class UnitWrapper<
       return;
     }
 
+    /* A pin fixes HP in both directions: a pinned unit doesn't heal any more than it takes damage. */
+    if (this.getPinnedVisualHp() !== undefined) {
+      return;
+    }
+
     const newVisualHP = this.getVisualHP() + visualHpAmount;
     this.data.stats.hp = Math.min(10, newVisualHP) * 10;
   }
 
   /**
-   * Unit WILL die if hp is set to 0
+   * Unit WILL die if hp is set to 0 — UNLESS its type is pinned by a dev-tool HP lock.
+   *
+   * The pin has to short-circuit before the write, not just clamp it: reaching 0 here calls
+   * `remove()`, so guarding the value alone would still let a "locked" unit be destroyed.
    */
   setHp(newPreciseHp: number) {
     if (this.data.stats === "hidden") {
+      return;
+    }
+
+    if (this.getPinnedVisualHp() !== undefined) {
       return;
     }
 
@@ -156,6 +208,35 @@ export class UnitWrapper<
 
     if (this.data.stats.hp === 0) {
       this.remove();
+    }
+  }
+
+  /**
+   * Force this unit onto its type's pin, if there is one. Called when a lock is set (to sweep units
+   * that already exist) and when a unit is built (so later units join the pin) — a pin only means
+   * "all infantry are at 7HP" if both happen.
+   */
+  applyDevPins() {
+    if (this.data.stats === "hidden") {
+      return;
+    }
+
+    const pinnedVisualHp = this.getPinnedVisualHp();
+
+    if (pinnedVisualHp !== undefined) {
+      this.data.stats.hp = clamp(0, pinnedVisualHp, 10) * 10;
+    }
+
+    const pinnedFuel = this.getPinnedFuel();
+
+    if (pinnedFuel !== undefined) {
+      this.data.stats.fuel = clamp(0, pinnedFuel, this.properties.initialFuel);
+    }
+
+    const pinnedAmmo = this.getPinnedAmmo();
+
+    if (pinnedAmmo !== undefined && "ammo" in this.data.stats && "initialAmmo" in this.properties) {
+      this.data.stats.ammo = clamp(0, pinnedAmmo, this.properties.initialAmmo);
     }
   }
 

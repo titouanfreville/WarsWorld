@@ -1,25 +1,34 @@
 "use client";
+import { ChatComposer } from "frontend/components/chat/ChatComposer";
+import { ChatLauncher } from "frontend/components/chat/ChatLauncher";
+import { ChatShell } from "frontend/components/chat/ChatShell";
+import { useChatAutoscroll } from "frontend/components/chat/useChatAutoscroll";
 import { useMatchChat, type ChatChannel } from "frontend/components/match/useMatchChat";
+import { PlayerMention } from "frontend/components/PlayerMention";
 import { useEffect, useRef, useState } from "react";
 
 /**
- * In-match chat dock (bottom-left of the game shell). Collapsed, it's a small button with an unread
- * badge; open, it's a panel with **All** / **Team** channel tabs, the message list, and an input.
- * All data/plumbing lives in `useMatchChat` (built on the shared social conversation system); this is
- * presentation + local open/active-tab state.
+ * In-match chat dock (bottom-left of the game shell). Collapsed, it's the shared COMMS launcher with
+ * an unread badge; open, it's a `ChatShell` with **All** / **Team** channel tabs, the message list,
+ * and the shared composer. All data/plumbing lives in `useMatchChat` (built on the shared social
+ * conversation system); this is presentation + local open/active-tab state.
  */
 type Props = {
   matchId: string;
   playerId: string;
   players: { id: string; name: string }[];
+  /**
+   * Transient system lines (dev/admin tool use). Not chat messages — they aren't persisted (the
+   * durable record is the Event log), so they ride in from the board rather than `useMatchChat`.
+   */
+  systemLines?: { id: number; text: string }[];
 };
 
-export function MatchChat({ matchId, playerId, players }: Props) {
+export function MatchChat({ matchId, playerId, players, systemLines = [] }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeChannel, setActiveChannel] = useState<ChatChannel>("all");
-  const [draft, setDraft] = useState("");
 
-  const { messages, send, sending, unread, hasTeamChannel } = useMatchChat({
+  const { messages, send, sending, unread, hasTeamChannel, avatarForHandle } = useMatchChat({
     matchId,
     playerId,
     players,
@@ -27,15 +36,23 @@ export function MatchChat({ matchId, playerId, players }: Props) {
     activeChannel,
   });
 
-  const listRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useChatAutoscroll<HTMLDivElement>([messages, systemLines, isOpen, activeChannel]);
+
+  // Pop open when a dev/admin tool line lands while collapsed. The whole point of announcing tool use
+  // is that the opponent sees it, so a system line forces the panel the same way a new message does.
+  // Keyed on the NEWEST line's id (a monotonic counter), not the array length: the buffer caps at 50,
+  // so once it's full the length stops changing and a length check would never fire again — but every
+  // new line still gets a fresh, larger id.
+  const lastSystemId = systemLines[systemLines.length - 1]?.id;
+  const prevSystemIdRef = useRef(lastSystemId);
 
   useEffect(() => {
-    const el = listRef.current;
-
-    if (el !== null) {
-      el.scrollTop = el.scrollHeight;
+    if (!isOpen && lastSystemId !== undefined && lastSystemId !== prevSystemIdRef.current) {
+      setIsOpen(true);
     }
-  }, [messages, isOpen, activeChannel]);
+
+    prevSystemIdRef.current = lastSystemId;
+  }, [lastSystemId, isOpen]);
 
   const totalUnread = unread.all + unread.team;
 
@@ -52,11 +69,6 @@ export function MatchChat({ matchId, playerId, players }: Props) {
 
     prevUnreadRef.current = totalUnread;
   }, [totalUnread, isOpen]);
-
-  const submit = () => {
-    send(draft);
-    setDraft("");
-  };
 
   const tab = (channel: ChatChannel, label: string) => {
     const activeTab = channel === activeChannel;
@@ -79,100 +91,92 @@ export function MatchChat({ matchId, playerId, players }: Props) {
     );
   };
 
-  const hasUnread = totalUnread > 0;
-
   return (
     <div className="@relative @w-80 @max-w-[calc(100vw-2rem)]">
       {/* The panel pops UP above the bar so it never pushes the layout — it overlays the board's
           bottom edge only while you're actively reading/typing. */}
       {isOpen && (
-        <div className="@absolute @bottom-full @left-0 @mb-2 @flex @h-72 @w-full @flex-col @overflow-hidden @rounded-lg @bg-bg-primary/95 @shadow-2xl @shadow-black/60 @outline @outline-1 @outline-white/10 @backdrop-blur">
-          <header className="@flex @items-center @justify-between @gap-2 @border-b @border-white/10 @px-2 @py-1.5">
-            <div className="@flex @items-center @gap-1">
-              {tab("all", "All")}
-              {hasTeamChannel && tab("team", "Team")}
-            </div>
-            <button
-              type="button"
-              aria-label="Close chat"
-              className="@px-1 @text-slate-400 @transition hover:@text-white"
-              onClick={() => setIsOpen(false)}
-            >
-              ✕
-            </button>
-          </header>
-
-          <div ref={listRef} className="@flex-1 @space-y-1 @overflow-y-auto @px-2.5 @py-2 @text-sm">
-            {messages.length === 0 ? (
-              <p className="@py-0 @text-xs @italic @text-slate-600">No messages yet.</p>
-            ) : (
-              messages.map((message) => (
-                <p key={message.id} className="@py-0 @leading-snug">
-                  <span
-                    className={`@font-semibold ${
-                      message.senderId === playerId ? "@text-primary" : "@text-slate-300"
-                    }`}
+        <div className="@absolute @bottom-full @left-0 @mb-2 @h-72 @w-full">
+          <ChatShell
+            variant="floating"
+            title="Comms"
+            live
+            className="@h-full"
+            bodyRef={listRef}
+            headerExtra={
+              <div className="@flex @items-center @gap-1">
+                {tab("all", "All")}
+                {hasTeamChannel && tab("team", "Team")}
+              </div>
+            }
+            actions={
+              <button
+                type="button"
+                aria-label="Close chat"
+                className="@px-1 @text-slate-400 @transition hover:@text-white"
+                onClick={() => setIsOpen(false)}
+              >
+                ✕
+              </button>
+            }
+            footer={
+              <ChatComposer
+                onSend={send}
+                sending={sending}
+                placeholder={`Message ${activeChannel === "all" ? "everyone" : "your team"}…`}
+              />
+            }
+          >
+            <div className="@space-y-1 @text-sm">
+              {messages.length === 0 && systemLines.length === 0 ? (
+                <p className="@py-0 @text-xs @italic @text-slate-600">No messages yet.</p>
+              ) : (
+                messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className="@flex @items-center @gap-1.5 @py-0 @leading-snug"
                   >
-                    {message.senderName}:
-                  </span>{" "}
-                  <span className="@text-slate-100">{message.content}</span>
-                </p>
-              ))
-            )}
-          </div>
+                    <PlayerMention
+                      name={message.senderHandle}
+                      label={message.senderName}
+                      avatar={avatarForHandle(message.senderHandle)}
+                      interactive={false}
+                      className={`@shrink-0 @font-semibold ${
+                        message.senderId === playerId ? "@text-primary" : "@text-slate-300"
+                      }`}
+                    />
+                    <span className="@min-w-0 @text-slate-100">{message.content}</span>
+                  </div>
+                ))
+              )}
 
-          <div className="@flex @items-center @gap-2 @border-t @border-white/10 @p-2">
-            <input
-              className="@w-full @rounded @bg-black/30 @px-2.5 @py-1.5 @text-sm @outline @outline-1 @outline-white/10 placeholder:@text-slate-600"
-              value={draft}
-              maxLength={500}
-              placeholder={`Message ${activeChannel === "all" ? "everyone" : "your team"}…`}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submit();
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="@rounded @bg-primary @px-3 @py-1.5 @font-russoOne @text-[11px] @uppercase @tracking-wide @text-black @transition hover:@brightness-110 disabled:@opacity-40"
-              disabled={draft.trim() === "" || sending}
-              onClick={submit}
-            >
-              Send
-            </button>
-          </div>
+              {/* System lines show on BOTH channels — a tool affects the whole game, not one team —
+                  so they aren't filtered by `activeChannel`. Amber + a [System] tag sets them apart
+                  from real messages. */}
+              {systemLines.map((line) => (
+                <p
+                  key={`sys-${line.id}`}
+                  className="@py-0 @leading-snug @text-xs @text-amber-400/90"
+                >
+                  <span className="@font-semibold">[System]</span> {line.text}
+                </p>
+              ))}
+            </div>
+          </ChatShell>
         </div>
       )}
 
-      {/* Always-visible chat bar (sits in the gutter beside the minimap); toggles the panel. */}
-      <button
-        type="button"
-        className={`@flex @w-full @items-center @gap-2 @rounded-lg @px-3 @py-2 @font-russoOne @text-xs @uppercase @tracking-wide @shadow-lg @shadow-black/40 @outline @transition ${
-          hasUnread && !isOpen
-            ? "@animate-pulse @bg-primary/20 @text-white @outline-2 @outline-primary"
-            : "@bg-bg-primary/80 @text-slate-200 @outline-1 @outline-white/10 hover:@text-white"
-        }`}
-        onClick={() => setIsOpen((open) => !open)}
-        title={
-          isOpen
-            ? "Close chat"
-            : hasUnread
-              ? `${totalUnread} new message${totalUnread > 1 ? "s" : ""}`
-              : "Open chat"
-        }
-      >
-        {hasUnread && !isOpen && <span className="@h-2 @w-2 @rounded-full @bg-primary" />}
-        Chat
-        {hasUnread && !isOpen && (
-          <span className="@flex @h-4 @min-w-4 @items-center @justify-center @rounded-full @bg-primary @px-1 @text-[10px] @font-bold @text-black">
-            {totalUnread}
-          </span>
-        )}
-        <span className="@ml-auto @text-slate-400">{isOpen ? "▾" : "▴"}</span>
-      </button>
+      {/* Always-visible launcher (sits in the gutter beside the minimap); toggles the panel. */}
+      {isOpen ? (
+        <ChatLauncher shape="bar" label="Comms" live onClick={() => setIsOpen(false)} />
+      ) : (
+        <ChatLauncher
+          shape="bar"
+          label="Comms"
+          unread={totalUnread}
+          onClick={() => setIsOpen(true)}
+        />
+      )}
     </div>
   );
 }

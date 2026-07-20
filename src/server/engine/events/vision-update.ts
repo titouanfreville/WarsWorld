@@ -1,5 +1,5 @@
 import type { EmittableEvent } from "server/engine/types/events";
-import type { WWUnit } from "server/core/schemas/unit";
+import type { UnitView } from "server/core/schemas/unit";
 import type { MatchWrapper } from "server/engine/entities/match";
 import { maskUnitForViewer } from "server/engine/entities/team";
 import type { CapturableTile } from "server/core/schemas/tile-state";
@@ -38,7 +38,7 @@ export const fillDiscoveredUnitsAndProperties = (
       continue;
     }
 
-    const discoveredUnits: WWUnit[] = [];
+    const discoveredUnits: UnitView[] = [];
     const discoveredProperties: CapturableTile[] = [];
 
     for (const position of team.vision.getDiscoveredPositionsAndClear()) {

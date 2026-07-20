@@ -1,4 +1,4 @@
-import type { GameMode, PrismaClient, Ruleset } from "@prisma/client";
+import type { GameMode, PrismaClient, Rank, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { emitQueue } from "server/emitter/matchmaking-emitter";
@@ -16,6 +16,7 @@ import {
   MIN_MAP_POOL_SIZE,
   READY_SECONDS,
   READY_SECONDS_LENIENT,
+  REMATCH_LOOKBACK_MS,
   TICK_MS,
 } from "./constants";
 import { canBan, canVote, defaultRandomInt, rollMap, type PlayerBanVote } from "./map-ban";
@@ -29,6 +30,8 @@ type MatchSpawner = { spawnFromLobby(req: SpawnRequest): Promise<{ matchId: stri
 type Rater = {
   /** Skill pools by MODE — a fog duel and a standard duel move the same rating. */
   getSkills(playerIds: string[], mode: GameMode): Promise<Map<string, Skill>>;
+  /** The player's settled rank for a mode, or null while placing — bands ranked pairing. */
+  rankFor(playerId: string, mode: GameMode): Promise<Rank | null>;
 };
 
 /** Fisher–Yates over a copy. */
@@ -145,17 +148,35 @@ export class MatchmakingUsecase {
       throw new TRPCError({ code: "CONFLICT", message: "You're already in the queue" });
     }
 
-    const active = await this.db.matchPlayer.findFirst({
-      where: { playerId, match: { status: { in: ["setup", "playing"] } } },
-      select: { matchId: true },
-    });
-
-    if (active !== null) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Finish your current match first" });
+    // ONE RANKED MATCH AT A TIME — and only ranked.
+    //
+    // Wars World is correspondence: a turn takes days, and playing several matches at once is the
+    // point (Your Games → Live is a list of them). The original build blocked queueing while ANY
+    // match was live, custom games included, which contradicted that.
+    //
+    // But concurrent RANKED games are incoherent for a different reason than rating safety. Rating
+    // itself copes fine — `applyMatchResult` loads skill inside the finalize transaction, so
+    // simultaneous matches rate sequentially as they finish. The problem is PAIRING: each concurrent
+    // ranked game was matched against the same mu, so by the time the second finalizes, the opponent
+    // it chose was picked on information the first game has already invalidated. One at a time keeps
+    // what we paired on and what we rate on the same thing.
+    //
+    // Casual games never block anything, and never count toward this.
+    if (input.ranked && (await this.activeRankedMatch(playerId)) !== null) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Finish your current ranked match first — casual games don't count.",
+      });
     }
 
-    // Skill is per MODE — the ruleset the player queued for doesn't split it.
-    const skills = await this.ranking.getSkills([playerId], input.mode);
+    // Skill is per MODE — the ruleset the player queued for doesn't split it. Rank bands ranked
+    // pairing, and only ranked pairing: casual carries no rank (null → the band never applies).
+    // Recent opponents spread out rematches, both queues.
+    const [skills, rank, recentOpponents] = await Promise.all([
+      this.ranking.getSkills([playerId], input.mode),
+      input.ranked ? this.ranking.rankFor(playerId, input.mode) : Promise.resolve(null),
+      this.recentOpponents(playerId, input.mode),
+    ]);
 
     this.queue.add({
       playerId,
@@ -163,6 +184,8 @@ export class MatchmakingUsecase {
       ruleset: input.ruleset,
       ranked: input.ranked,
       skill: skills.get(playerId) ?? defaultSkill(),
+      rank,
+      recentOpponents,
       enqueuedAt: Date.now(),
     });
 
@@ -176,6 +199,154 @@ export class MatchmakingUsecase {
     }
 
     return { inQueue: false };
+  }
+
+  /** Whether this player currently holds a queue ticket — the admin force-match branch keys on it. */
+  isQueued(playerId: string): boolean {
+    return this.queue.has(playerId);
+  }
+
+  /**
+   * Drop a player's queue ticket if they hold one — used when the admin seats a still-queued player
+   * into a forced custom lobby instead, so the pairing tick can't also pair them. No-op if not queued.
+   */
+  dropFromQueue(playerId: string): void {
+    this.leaveQueue(playerId);
+  }
+
+  /**
+   * Admin force-match: pair two ALREADY-QUEUED players against each other, bypassing the pairing
+   * algorithm's fairness / rank-band / rematch filters. From here they run the normal ready-check →
+   * map pick&ban flow, so nothing downstream is special-cased. Both must hold a ticket AND share the
+   * same bucket (mode/ruleset/ranked): the lobby is stamped with A's bucket for both seats, so
+   * force-pairing overrides FAIRNESS, never the player's chosen mode or ranked/casual consent.
+   */
+  async forcePair(playerAId: string, playerBId: string): Promise<void> {
+    // A player can't be their own opponent: the two `queue.get` below would return the same ticket,
+    // slip past the undefined check, and hand `createReadyCheck` a lobby with two identical seats —
+    // a unique-constraint 500 that leaves the player dequeued with no match.
+    if (playerAId === playerBId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Can't pair a player against themselves",
+      });
+    }
+
+    const a = this.queue.get(playerAId);
+    const b = this.queue.get(playerBId);
+
+    if (a === undefined || b === undefined) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Both players must be in the queue to force a pairing",
+      });
+    }
+
+    // Same bucket only. `createReadyCheck` stamps the lobby with A's mode/ruleset/ranked for BOTH
+    // seats, so pairing a ranked ticket with a casual one would sign the casual player up for a ranked
+    // match (moving their real rating) they never queued for, and bypass the one-ranked-at-a-time
+    // invariant `joinQueue` enforces.
+    if (a.ranked !== b.ranked || a.mode !== b.mode || a.ruleset !== b.ruleset) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Both players must be queued for the same mode, ruleset and ranked/casual bucket",
+      });
+    }
+
+    // Remove before creating the ready-check — createReadyCheck owns them now, exactly as the pairing
+    // tick hands its pairs over.
+    this.queue.remove(playerAId);
+    this.queue.remove(playerBId);
+
+    let created: boolean;
+
+    try {
+      created = await this.createReadyCheck(a, b);
+    } catch (error) {
+      // An unexpected failure (e.g. a DB error building the lobby) would otherwise strand both players
+      // dequeued with no match. Put their tickets back before surfacing the error so a transient
+      // hiccup isn't a lost queue spot.
+      this.queue.add(a);
+      this.queue.add(b);
+      throw error;
+    }
+
+    if (!created) {
+      // Empty map pool: createReadyCheck already put both tickets back. Report the failure instead of
+      // letting `forceMatch` announce a phantom "pair formed" when no ready-check exists.
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "No eligible maps available right now; both players were returned to the queue",
+      });
+    }
+
+    logger.info(`[matchmaking] admin forced ready-check: ${playerAId} vs ${playerBId}`);
+  }
+
+  /**
+   * The live ranked match that blocks a new ranked queue, or null. One at a time (see `joinQueue`) —
+   * exposed so the client can grey the ranked buttons out ahead of the click instead of only
+   * learning on refusal. Casual matches are invisible to this by design.
+   */
+  async activeRankedMatch(playerId: string): Promise<string | null> {
+    const seat = await this.db.matchPlayer.findFirst({
+      where: {
+        playerId,
+        isSpectator: false,
+        match: { isRanked: true, status: { in: ["setup", "playing"] } },
+      },
+      select: { matchId: true },
+    });
+
+    return seat?.matchId ?? null;
+  }
+
+  /** What the Play page needs to enable/disable queues before the player commits to one. */
+  async eligibility(playerId: string): Promise<{ activeRankedMatchId: string | null }> {
+    return { activeRankedMatchId: await this.activeRankedMatch(playerId) };
+  }
+
+  /**
+   * `opponentId → lastFinishedAt` for everyone this player recently FINISHED a game with in this mode
+   * — the snapshot the ticket carries to hold off quick rematches (see `queue.rematchOk`). Keyed on
+   * `finishedAt`, not match start: a correspondence game runs for days, so start time would age out
+   * of the window before the game even ends. Only finished games in the lookback window are loaded;
+   * anything older can't hold anyway.
+   */
+  private async recentOpponents(playerId: string, mode: GameMode): Promise<Record<string, number>> {
+    const seats = await this.db.matchPlayer.findMany({
+      where: {
+        playerId,
+        isSpectator: false,
+        match: { mode, finishedAt: { gte: new Date(Date.now() - REMATCH_LOOKBACK_MS) } },
+      },
+      select: {
+        match: {
+          select: {
+            finishedAt: true,
+            matchPlayers: { where: { isSpectator: false }, select: { playerId: true } },
+          },
+        },
+      },
+    });
+
+    const recent: Record<string, number> = {};
+
+    for (const seat of seats) {
+      const finishedAt = seat.match.finishedAt?.getTime();
+
+      if (finishedAt === undefined) {
+        continue;
+      }
+
+      for (const other of seat.match.matchPlayers) {
+        if (other.playerId !== playerId) {
+          recent[other.playerId] = Math.max(recent[other.playerId] ?? 0, finishedAt);
+        }
+      }
+    }
+
+    return recent;
   }
 
   status(playerId: string) {
@@ -242,14 +413,19 @@ export class MatchmakingUsecase {
 
   // ── Ready-check ─────────────────────────────────────────────────────────────
 
-  private async createReadyCheck(a: Ticket, b: Ticket): Promise<void> {
+  /**
+   * Returns `true` when a ready-check lobby was created, `false` when an empty map pool forced both
+   * tickets back into the queue — the caller decides whether that's a silent retry (the tick) or a
+   * reported failure (an admin force-pair).
+   */
+  private async createReadyCheck(a: Ticket, b: Ticket): Promise<boolean> {
     const mapPool = await this.buildMapPool();
 
     if (mapPool.length === 0) {
       logger.error("[matchmaking] no eligible 2-player maps; requeueing pair");
       this.queue.add(a);
       this.queue.add(b);
-      return;
+      return false;
     }
 
     if (mapPool.length < MIN_MAP_POOL_SIZE) {
@@ -265,7 +441,10 @@ export class MatchmakingUsecase {
     // "wide gap" means genuinely one-sided rather than merely distant on some rating scale.
     const unfairness = unfairnessOf(a, b);
     const fairnessGap = Math.round(unfairness * 100);
-    const lenient = unfairness > LENIENT_GAP;
+    // The wide-gap escape hatch is CASUAL-ONLY. Ranked is bounded to a rank band at pairing time, so
+    // it can't produce a lopsided game that needs a bail — and ranked is a commitment regardless.
+    // (a.ranked === b.ranked: they share the bucket.)
+    const lenient = !a.ranked && unfairness > LENIENT_GAP;
     const readySeconds = lenient ? READY_SECONDS_LENIENT : READY_SECONDS;
     const readyEndsAt = new Date(Date.now() + readySeconds * 1000);
 
@@ -309,6 +488,8 @@ export class MatchmakingUsecase {
       `[matchmaking] ready-check ${lobby.id}: ${a.playerId} vs ${b.playerId} ` +
         `(${50 + fairnessGap}/${50 - fairnessGap}${lenient ? ", lenient" : ""})`,
     );
+
+    return true;
   }
 
   async acceptReadyCheck(lobbyId: string, playerId: string): Promise<{ accepted: true }> {
@@ -362,12 +543,13 @@ export class MatchmakingUsecase {
       throw new TRPCError({ code: "FORBIDDEN", message: "You are not in this ready-check" });
     }
 
-    // Declining is only offered for wide-gap matches. A normal ranked check is a commitment: accept,
-    // or let it time out (which flags you) — there is no penalty-free bail.
+    // A penalty-free decline exists ONLY for casual wide-gap matches (`readyCheckLenient`). Every
+    // other check — all ranked, and close casual — is a commitment: accept, or let it time out
+    // (which flags you). There is no free bail.
     if (!lobby.readyCheckLenient) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: "You can't decline a ranked match — accept, or it will time out.",
+        message: "This match has to be accepted — it'll time out on its own if you don't.",
       });
     }
 
@@ -377,7 +559,8 @@ export class MatchmakingUsecase {
     }
 
     cancelLobbyPhase(lobbyId);
-    await this.failReadyCheck(lobbyId, [playerId]);
+    // A decline IS a rejection of this matchup — cool the pair down so it isn't re-offered at once.
+    await this.failReadyCheck(lobbyId, [playerId], { cooldown: true });
     return { declined: true };
   }
 
@@ -397,12 +580,23 @@ export class MatchmakingUsecase {
     if (offenders.length === 0) {
       await this.enterMapBan(lobbyId);
     } else {
-      await this.failReadyCheck(lobbyId, offenders);
+      // A timeout is an AFK, not a rejection — don't cool the pair down, or in a small pool the
+      // player who stepped away can never rematch the one opponent who's there. They CAN re-pair the
+      // instant the AFK player re-queues.
+      await this.failReadyCheck(lobbyId, offenders, { cooldown: false });
     }
   }
 
-  /** Cancel the lobby, flag non-lenient offenders, and requeue the accepters with their original wait. */
-  private async failReadyCheck(lobbyId: string, offenderIds: string[]): Promise<void> {
+  /**
+   * Cancel the lobby, flag non-lenient offenders, and requeue the accepters with their original wait.
+   * `cooldown` blocks the pair from being re-offered for a while — right for an explicit decline (a
+   * rejection of the matchup), wrong for an AFK timeout (the player just wasn't there).
+   */
+  private async failReadyCheck(
+    lobbyId: string,
+    offenderIds: string[],
+    { cooldown }: { cooldown: boolean },
+  ): Promise<void> {
     const lobby = await this.db.lobby.findUnique({
       where: { id: lobbyId },
       include: LOBBY_MEMBERS,
@@ -438,7 +632,9 @@ export class MatchmakingUsecase {
         }
       }
 
-      this.queue.addCooldown(pend.a.playerId, pend.b.playerId, Date.now());
+      if (cooldown) {
+        this.queue.addCooldown(pend.a.playerId, pend.b.playerId, Date.now());
+      }
     }
 
     for (const playerId of offenderIds) {

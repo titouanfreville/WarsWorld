@@ -21,15 +21,15 @@ public/img/CO/smoothFull/Awds-<name>.webp        ← existing neutral art (refer
 
 ## Style & format (match the existing art exactly)
 
-| Property | Value |
-|---|---|
-| Style | AWDS-era smooth full-body character art (same as the existing `Awds-*.webp`) — **not** pixel art |
-| Canvas | **400 × 1000 px** (portrait 2:5), same as the neutral art |
-| Background | **Fully transparent** (alpha) — no backdrop, no ground shadow baked in |
-| Framing | **Full body, bottom-aligned** (feet near the bottom edge) — the figures stand on the board's bottom edge and line up side by side |
-| Color | **Full color.** Do NOT pre-desaturate the lose pose — the engine applies the grey/darken "defeat" tint itself (see below). Deliver both poses in full color |
-| Lighting/scale | Consistent with the neutral art so a win + a lose pose sit together without looking mismatched |
-| Format | **WebP**, transparent, comparable file size to the neutral art (~35–95 KB) |
+| Property       | Value                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Style          | AWDS-era smooth full-body character art (same as the existing `Awds-*.webp`) — **not** pixel art                                                            |
+| Canvas         | **400 × 1000 px** (portrait 2:5), same as the neutral art                                                                                                   |
+| Background     | **Fully transparent** (alpha) — no backdrop, no ground shadow baked in                                                                                      |
+| Framing        | **Full body, bottom-aligned** (feet near the bottom edge) — the figures stand on the board's bottom edge and line up side by side                           |
+| Color          | **Full color.** Do NOT pre-desaturate the lose pose — the engine applies the grey/darken "defeat" tint itself (see below). Deliver both poses in full color |
+| Lighting/scale | Consistent with the neutral art so a win + a lose pose sit together without looking mismatched                                                              |
+| Format         | **WebP**, transparent, comparable file size to the neutral art (~35–95 KB)                                                                                  |
 
 > The client greys + slumps losers and lifts + glows winners in CSS (`styles/match/gameOver.scss`).
 > So supply **neutral-lit, full-color** poses; the mood is applied at runtime. (If you'd rather the

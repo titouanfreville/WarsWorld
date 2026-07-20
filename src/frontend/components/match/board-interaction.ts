@@ -106,16 +106,26 @@ export const optimisticUnloadDrops = (
 /** One buildable entry for a production facility, flagged by whether the player can currently afford it. */
 export type BuildableUnit = { type: PriceTable[number]["type"]; cost: number; selectable: boolean };
 
-/** Affordable-sorted units a facility can build, each flagged selectable against `funds`. */
+/**
+ * Affordable-sorted units a facility can build, each flagged selectable against `funds` — unless
+ * `freeProduction` (a dev-tool modifier the BE reports on the snapshot) is on, in which case every
+ * unit is selectable regardless of funds. The BE builds them for free either way; this just stops the
+ * menu greying them out.
+ */
 export const buildableUnits = (
   priceTable: PriceTable,
   facility: string,
   funds: number,
+  freeProduction = false,
 ): BuildableUnit[] =>
   priceTable
     .filter((entry) => entry.facility === facility)
     .sort((a, b) => a.cost - b.cost)
-    .map((entry) => ({ type: entry.type, cost: entry.cost, selectable: entry.cost <= funds }));
+    .map((entry) => ({
+      type: entry.type,
+      cost: entry.cost,
+      selectable: freeProduction || entry.cost <= funds,
+    }));
 
 /**
  * An action offered when a move is staged at a tile. `kind` is what it does; the component maps it to
@@ -212,11 +222,9 @@ export const stageActions = (
     actions.push({ kind: "repair", label: "REPAIR", targets: repairTargets });
   }
 
-  // Delete (self-destruct) is an in-place main action — only on the unit's own tile.
-  if (samePosition(dest, unit.position)) {
-    actions.push({ kind: "delete", label: "DELETE" });
-  }
-
+  // DELETE is deliberately absent: scrapping is a board-wide MODE now (right-click an empty tile ->
+  // Delete), not a per-unit menu entry, so a player disbanding several units doesn't have to reopen
+  // this menu for each one. The `delete` StageAction kind is kept for the enqueue path it shares.
   actions.push({ kind: "wait", label: "WAIT" });
 
   return { actions, attackTargets: canAttack ? targets : [] };

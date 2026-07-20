@@ -2,9 +2,11 @@ import type { GameMode, Prisma, PrismaClient, Rank } from "@prisma/client";
 import { logger } from "shared/utils/logger";
 import {
   ACTIVE_RANKS,
+  DIVISIONS_PER_RANK,
   RANK_ORDER,
   anchorOrdinalOf,
   applyMerit,
+  hasDivisions,
   meritDelta,
   startingLadder,
   type Ladder,
@@ -69,7 +71,8 @@ export class RankingUsecase {
 
     return ranks.map((row) => {
       const skill = skillByMode.get(row.mode);
-      const provisional = skill === undefined || inPlacements(skill);
+      // An admin-set rank is authoritative — it shows even while the skill estimate is provisional.
+      const provisional = !row.placementsExempt && (skill === undefined || inPlacements(skill));
 
       return {
         mode: row.mode,
@@ -82,6 +85,120 @@ export class RankingUsecase {
         inPlacements: provisional,
       };
     });
+  }
+
+  /**
+   * The player's SETTLED rank for a mode, or null while they're still in placements (or have no
+   * rating yet). Matchmaking uses this to band ranked pairings — a `null` means "no band applies",
+   * exactly as everywhere else the rank is withheld until the estimate settles.
+   */
+  async rankFor(playerId: string, mode: GameMode): Promise<Rank | null> {
+    const [rank, skill] = await Promise.all([
+      this.db.playerRank.findUnique({
+        where: { playerId_mode: { playerId, mode } },
+        select: { rank: true, placementsExempt: true },
+      }),
+      this.db.playerSkill.findUnique({
+        where: { playerId_mode: { playerId, mode } },
+        select: { mu: true, sigma: true, games: true },
+      }),
+    ]);
+
+    if (rank === null) {
+      return null;
+    }
+
+    // An admin-set rank bands in matchmaking like any settled rank; otherwise the placement gate holds.
+    if (!rank.placementsExempt && (skill === null || inPlacements(skill))) {
+      return null;
+    }
+
+    return rank.rank;
+  }
+
+  /**
+   * Admin override: set a player's VISIBLE rank + division for one mode directly, bypassing match
+   * results. Merit is reset to a division's baseline (0) — the tools decision was "visible rank only",
+   * so this never touches the hidden OpenSkill rating the matchmaker pairs on.
+   *
+   * `rank`/`division` are validated at the router boundary (rank ∈ ACTIVE_RANKS, division 1–5), so
+   * this trusts them; it only normalises the division for the two rankless tiers. `peakRank` climbs
+   * but never drops — an admin demotion shouldn't erase a legitimately-earned peak.
+   *
+   * Marks the row `placementsExempt` so the rank shows immediately: without it the read side masks
+   * any rank as "placements" until the hidden skill estimate settles, which for a fresh player never
+   * happens until they've played — so an admin override would look like it did nothing.
+   */
+  async setLadder(playerId: string, mode: GameMode, rank: Rank, division: number): Promise<void> {
+    // cadet (placements) and marechal (apex) carry no division — pin to the schema default.
+    const normalizedDivision = hasDivisions(rank) ? division : DIVISIONS_PER_RANK;
+
+    const existing = await this.db.playerRank.findUnique({
+      where: { playerId_mode: { playerId, mode } },
+      select: { peakRank: true },
+    });
+
+    const isNewPeak =
+      existing?.peakRank == null ||
+      RANK_ORDER.indexOf(rank) >= RANK_ORDER.indexOf(existing.peakRank);
+    const peakRank = isNewPeak ? rank : existing.peakRank;
+
+    await this.db.playerRank.upsert({
+      where: { playerId_mode: { playerId, mode } },
+      create: {
+        playerId,
+        mode,
+        rank,
+        division: normalizedDivision,
+        merit: 0,
+        peakRank: rank,
+        placementsExempt: true,
+      },
+      update: { rank, division: normalizedDivision, merit: 0, peakRank, placementsExempt: true },
+    });
+  }
+
+  /**
+   * One player's Merit movement from a single match, for the End-Game screen — or null when the match
+   * wasn't rated for them (casual, unranked, or they didn't play it). `applyMatchResult` already wrote
+   * the `MeritEvent`; this just reads it back, viewer-scoped.
+   *
+   * Placements are honoured the same way `getLadder` does: while the estimate is unsettled the rank is
+   * withheld and the caller shows placement progress instead of a rank/Merit line.
+   */
+  async matchOutcome(playerId: string, matchId: string) {
+    const [event, match] = await Promise.all([
+      this.db.meritEvent.findUnique({
+        where: { matchId_playerId: { matchId, playerId } },
+        select: { delta: true, rankAfter: true, divisionAfter: true },
+      }),
+      this.db.match.findUnique({ where: { id: matchId }, select: { mode: true } }),
+    ]);
+
+    if (event === null || match === null) {
+      return null;
+    }
+
+    const [skill, rank] = await Promise.all([
+      this.db.playerSkill.findUnique({
+        where: { playerId_mode: { playerId, mode: match.mode } },
+        select: { mu: true, sigma: true, games: true },
+      }),
+      this.db.playerRank.findUnique({
+        where: { playerId_mode: { playerId, mode: match.mode } },
+        select: { placementsExempt: true },
+      }),
+    ]);
+    // An admin-set rank shows on the end-game screen too, rather than falling back to placements.
+    const provisional = rank?.placementsExempt !== true && (skill === null || inPlacements(skill));
+
+    return {
+      delta: event.delta,
+      rank: event.rankAfter,
+      division: event.divisionAfter,
+      games: skill?.games ?? 0,
+      inPlacements: provisional,
+    };
   }
 
   /**

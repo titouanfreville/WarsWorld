@@ -3,6 +3,7 @@
 import { coArtUrl, coPortraitUrl, coPoseUrl } from "frontend/utils/sprites";
 import { useState } from "react";
 import { ParticleField } from "./ParticleField";
+import { resolveParticleTypes, type EffectId } from "./particle-effects";
 
 /**
  * FE-local shape of the BE-derived game-over flag (from `match.full`'s `gameOver`). Redeclared here
@@ -99,6 +100,7 @@ export function GameOverOverlay({
   secondsLeft,
   onContinue,
   particles = true,
+  particleEffect,
 }: {
   gameOver: GameOverInfo;
   cos: CoResult[];
@@ -108,9 +110,14 @@ export function GameOverOverlay({
   onContinue?: () => void;
   /** Show the animated particle layer (confetti/gold on a win, ash/embers on a loss). */
   particles?: boolean;
+  /** The viewer's picked particle effect. A CO's signature still overrides it (see particle-effects). */
+  particleEffect?: EffectId;
 }) {
   const outcome = outcomeOf(gameOver);
   const lineup = [...cos].sort((a, b) => rankOf(a.result) - rankOf(b.result));
+  // Particles follow the VIEWER's CO: its signature wins, else the player's pick, else the default.
+  const viewerCo = cos.find((co) => co.isViewer)?.name;
+  const particleTypes = resolveParticleTypes(viewerCo, outcome, particleEffect);
 
   return (
     <div
@@ -127,7 +134,7 @@ export function GameOverOverlay({
         </div>
       )}
       <div className="ww-go__sweep @absolute @inset-0 @pointer-events-none" />
-      {particles && <ParticleField outcome={outcome} />}
+      {particles && <ParticleField types={particleTypes} />}
       <div className="ww-go__banner">
         <div className="ww-go__stampWrap @relative @flex @flex-col @items-center">
           <div className="ww-go__word @relative @select-none">{WORD[outcome]}</div>

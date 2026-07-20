@@ -1,29 +1,40 @@
+import {
+  avatarObjectPosition,
+  coAvatarUrl,
+  isPixelVariant,
+  type CoAvatar,
+} from "frontend/utils/sprites/avatar";
+import { coArtUrl } from "frontend/utils/sprites/co";
 import Link from "next/link";
-import type { Army } from "shared/schemas/army";
-import type { CO } from "shared/schemas/co";
+import UserAvatar from "../navbar/UserAvatar";
 
 type Props = {
-  friendName: string;
-  friendFavCO: CO;
-  friendFavArmy: Army;
+  name: string;
+  avatar: CoAvatar | null;
+  favouriteCO: string | null;
 };
 
-export function PlayerFriendLink({ friendName, friendFavArmy, friendFavCO }: Props) {
+/** One friend row: their chosen portrait (or favourite-CO / monogram fallback) + handle, linked. */
+export function PlayerFriendLink({ name, avatar, favouriteCO }: Props) {
+  const image = avatar ? coAvatarUrl(avatar) : favouriteCO ? coArtUrl(favouriteCO) : undefined;
+  const pixelated = avatar ? isPixelVariant(avatar.variant) : false;
+  const objectPosition = avatar ? avatarObjectPosition(avatar) : "50% 0%";
+
   return (
     <Link
-      className="@grid @grid-cols-6 smallscreen:@grid-cols-10 laptop:@grid-cols-6 @w-full @space-x-4 @justify-start @items-center @align-middle @text-white  @border-4 @border-transparent @bg-transparent hover:@text-white hover:@bg-white/10"
-      href={`/players/${friendName}`}
+      href={`/players/${name}`}
+      className="@group @flex @items-center @gap-3 @border @border-transparent @px-2 @py-1.5 @transition-colors hover:@border-primary/30 hover:@bg-primary/10"
     >
-      <div
-        className={`@bg-black @border-${friendFavArmy} @border-[3px] @min-h-4 @min-w-4 monitor:@min-h-12 monitor:@min-w-12`}
-      >
-        <img
-          className="@min-w-full [image-rendering:pixelated]"
-          src={`/img/CO/pixelated/${friendFavCO}-small.png`}
-          alt={friendFavCO}
-        />
-      </div>
-      <h3 className="@col-span-5 @font-medium @text-lg smallscreen:@text-xl">{friendName}</h3>
+      <UserAvatar
+        name={name}
+        image={image}
+        pixelated={pixelated}
+        objectPosition={objectPosition}
+        size={36}
+      />
+      <span className="@min-w-0 @truncate @text-sm @text-white/85 group-hover:@text-white">
+        {name}
+      </span>
     </Link>
   );
 }

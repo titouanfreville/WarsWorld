@@ -57,7 +57,7 @@ export const senseiAWDS: COProperties = {
       name: "Airborne Assault",
       description:
         "B-Copters gain +20% firepower. Spawns 9 HP mech units on top of unoccupied owned cities, ready to move.",
-      stars: 2,
+      stars: 5,
       instantEffect(player) {
         applySenseiPowerSpawn(player, "mech");
       },

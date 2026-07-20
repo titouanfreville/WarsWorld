@@ -504,7 +504,7 @@ export const CO_PROFILES: COProfile[] = [
     },
     superCoPower: {
       name: "Airborne Assault",
-      stars: 2,
+      stars: 5,
       description: "B-Copters gain +25% firepower; spawns 9 HP mechs on owned cities.",
       effects: [{ kind: "spawnUnits", params: { unit: "mech", hp: 9, on: "cities" } }],
       modifiers: [
@@ -543,7 +543,7 @@ export const CO_PROFILES: COProfile[] = [
     },
     superCoPower: {
       name: "Airborne Assault",
-      stars: 2,
+      stars: 5,
       description: "B-Copters gain +20% firepower; spawns 9 HP mechs on owned cities.",
       effects: [{ kind: "spawnUnits", params: { unit: "mech", hp: 9, on: "cities" } }],
       modifiers: [

@@ -32,9 +32,12 @@ type WithCargo = {
 };
 
 /**
- * A render-only stand-in for a just-built unit. `renderUnitFromView` reads only position, type,
- * isReady, stats.hp and (absence of) currentCapturePoints, so we fill those and cast past the full
+ * A render-only stand-in for a just-built unit. `renderUnitFromView` reads position, type, isReady,
+ * stats.hp, `supply` and (absence of) currentCapturePoints, so we fill those and cast past the full
  * 17-variant unit union — this object never reaches the BE, it only feeds the optimistic sprite.
+ *
+ * The cast means TypeScript will NOT tell you when the renderer starts reading a new field: every
+ * field the board reads has to be listed here by hand, or the sprite blows up on a missing one.
  */
 const ghostBuiltUnit = (position: BoardPosition, unitType: string, playerSlot: number): MatchUnit =>
   ({
@@ -43,6 +46,9 @@ const ghostBuiltUnit = (position: BoardPosition, unitType: string, playerSlot: n
     position: [position[0], position[1]],
     isReady: false,
     stats: { hp: 100, fuel: 99, ammo: 99 },
+    // A unit fresh off the production line is fully fuelled and armed, so it never badges. Stated
+    // rather than left undefined: the board reads this, and the BE will say the same on the refetch.
+    supply: { lowFuel: false, lowAmmo: false },
   }) as unknown as MatchUnit;
 
 export const applyBufferedActions = (

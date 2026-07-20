@@ -21,4 +21,7 @@ export function applyMatchStartEvent(match: MatchWrapper, event: MatchStartEvent
   const startingPlayer = match.getCurrentTurnPlayer();
   startingPlayer.data.funds += startingPlayer.getFundsPerTurn();
   match.setInitialWeather(event.weather);
+  // Play begins on Day 1. The wrapper is built at turn 0 (see buildMatchWrapper); the day advances
+  // from here and every time the turn order wraps back to the first player (applyPassTurnEvent).
+  match.turn = 1;
 }

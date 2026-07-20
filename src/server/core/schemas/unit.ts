@@ -157,3 +157,30 @@ type UnitWithHiddenStats = Omit<UnitWithVisibleStats, "stats"> & {
 };
 
 export type WWUnit = UnitWithHiddenStats | UnitWithVisibleStats;
+
+/**
+ * Whether a unit is at or below the low-fuel/low-ammo threshold. Derived by the engine (see
+ * engine/rules/supply.ts) and sent as a plain boolean, because the maximums it compares against are
+ * engine constants and the client holds none — it renders the flag, it doesn't compute it.
+ */
+export type SupplyView = { lowFuel: boolean; lowAmmo: boolean };
+
+/**
+ * A unit's stats as one viewer reads them: `"hidden"` (a Sonja unit, which conceals life AND
+ * resources), HP-only (an enemy under fog, whose consumables are secret but whose health is plainly
+ * visible), or the full set. Consumables are OPTIONAL rather than nullable so the unmasked shape
+ * stays structurally identical to `WWUnit` and existing readers don't churn.
+ */
+type ViewStats = "hidden" | { hp: number; fuel?: number; ammo?: number };
+
+/** Distributes over the `WWUnit` union so each unit type keeps its own shape (cargo, hidden, …). */
+export type MaskedUnit<T = WWUnit> = T extends { stats: unknown }
+  ? Omit<T, "stats"> & { stats: ViewStats }
+  : never;
+
+/**
+ * A unit as it goes over the wire to ONE viewer: the masked data plus the engine-derived supply
+ * flag. This — not `WWUnit` — is what every client-bound path carries, so the redaction can't be
+ * skipped by accident. See maskUnitForViewer, the single rule that builds it.
+ */
+export type UnitView = MaskedUnit & { supply: SupplyView | null };

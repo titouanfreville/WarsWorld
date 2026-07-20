@@ -24,6 +24,7 @@ export const rachelAWDS: COProperties = {
       description:
         "Fires three missiles that deal 3 HP of damage to all units at 2 or less distance from the center. The first one targets the largest group of infantry, the second one targets the most unit value (own units subtract value), and the third one tries to inflict as much HP damage as possible (own units subtract value)",
       stars: 6,
+      signatureEffect: "missiles",
       calculatePositions: (player) => getMissilePositions(player),
       instantEffect(player, positions) {
         if (positions === undefined || positions.length !== 3) {
