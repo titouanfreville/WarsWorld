@@ -5,7 +5,7 @@ import { logger } from "shared/utils/logger";
 import { initGameData } from "./adapters/game-data/game-data-cache";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
-import { matchesUsecase } from "./composition-root";
+import { matchActionUsecase, matchesUsecase } from "./composition-root";
 import { matchmakingUsecase } from "./composition-root";
 import { prisma } from "./prisma/prisma-client";
 
@@ -14,12 +14,23 @@ const app = next({ dev: false });
 const handler = app.getRequestHandler();
 
 /**
- * This process serves BOTH the Next app and the tRPC WebSocket on the same port, so the only
- * origin the browser ever talks to is our own. `NEXT_PUBLIC_APP_URL` is that origin (the public
- * one, e.g. `https://<host>`); behind a TLS-terminating proxy it's what CORS must echo — never a
- * hardcoded localhost.
+ * The browser origin allowed to call this server, with credentials. This exists only because the
+ * Next dev server and the WS/API server sit on different ports; in production they are the SAME
+ * process on one origin, so this should be the deployed site's URL.
+ *
+ * It used to be hardcoded to `http://localhost:3000`, which silently breaks every deployment: a
+ * credentialed request from the real origin is rejected, and the header advertises localhost.
+ * Falling back is kept (so a local production build still runs) but is loud — in a real deployment
+ * an unset CORS_ORIGIN is a misconfiguration, not a default.
  */
-const appOrigin = process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${port}`;
+const corsOrigin = process.env.CORS_ORIGIN ?? "http://localhost:3000";
+
+if (process.env.CORS_ORIGIN === undefined) {
+  logger.warn(
+    `CORS_ORIGIN is not set — falling back to ${corsOrigin}. Set it to the deployed origin, ` +
+      `or credentialed browser requests will be rejected.`,
+  );
+}
 
 void (async () => {
   await matchStore.rebuild();
@@ -27,6 +38,9 @@ void (async () => {
   await initGameData(prisma);
   // Re-arm general-picker deadlines from Match.pickEndsAt so a restart never drops one.
   await matchesUsecase.reschedulePickDeadlines();
+  // Re-arm turn clocks from Match.turnEndsAt, so time keeps running across a restart
+  // instead of the acting player quietly getting a fresh bank.
+  await matchActionUsecase.rescheduleTurnDeadlines();
   // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
   await matchmakingUsecase.rescheduleLobbyPhases();
   matchmakingUsecase.startQueueTick();
@@ -43,6 +57,8 @@ void (async () => {
 
     // Behind a TLS-terminating proxy, bounce plain HTTP to HTTPS. Opt-in: with no proxy (or one
     // that doesn't set the header) this never fires, so a plain-HTTP deployment still works.
+    // NB: the target path is `req.url` — `req.headers.url` is not a header and is always
+    // undefined, which made the old guard throw (killing the process) instead of redirecting.
     if (req.headers["x-forwarded-proto"] === "http" && req.headers.host !== undefined) {
       // redirect to ssl
       res.writeHead(303, {
@@ -55,7 +71,7 @@ void (async () => {
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
-        "Access-Control-Allow-Origin": appOrigin,
+        "Access-Control-Allow-Origin": corsOrigin,
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -64,7 +80,7 @@ void (async () => {
       return;
     }
 
-    res.setHeader("Access-Control-Allow-Origin", appOrigin);
+    res.setHeader("Access-Control-Allow-Origin", corsOrigin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
 
     // set browsers to deny framing into an iframe (framebusting)
@@ -86,5 +102,5 @@ void (async () => {
   createTRPCwebSocketServer({ server });
   server.listen(port);
 
-  logger.info(`Production mode: HTTP + tRPC WebSocket listening on port ${port} (${appOrigin})`);
+  logger.info(`Production mode: Server listening at ${process.env.NEXT_PUBLIC_WS_URL}${port}`);
 })();

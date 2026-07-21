@@ -147,6 +147,8 @@ CREATE TABLE "Map" (
     "predeployedUnits" JSONB NOT NULL,
     "numberOfPlayers" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "supportedModes" "GameMode"[],
+    "rankedModes" "GameMode"[],
 
     CONSTRAINT "Map_pkey" PRIMARY KEY ("id")
 );
@@ -237,10 +239,12 @@ CREATE TABLE "match" (
     "rules" JSONB NOT NULL,
     "status" "MatchStatus" NOT NULL,
     "winnerTeamIndex" INTEGER,
+    "endReason" TEXT,
     "finishedAt" TIMESTAMP(3),
     "isRanked" BOOLEAN NOT NULL DEFAULT false,
     "teamFactions" JSONB,
     "pickEndsAt" TIMESTAMP(3),
+    "turnEndsAt" TIMESTAMP(3),
     "revealedAt" TIMESTAMP(3),
     "ratedAt" TIMESTAMP(3),
     "statsAt" TIMESTAMP(3),
@@ -258,7 +262,7 @@ CREATE TABLE "match" (
 -- CreateTable
 CREATE TABLE "Event" (
     "matchId" TEXT NOT NULL,
-    "eventIndex" SERIAL NOT NULL,
+    "eventIndex" INTEGER NOT NULL,
     "content" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

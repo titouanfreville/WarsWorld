@@ -1,4 +1,5 @@
 import type { PrismaClient, Role } from "@prisma/client";
+import { appendEvent } from "server/adapters/event-log";
 import type { DevAction } from "server/core/schemas/dev-action";
 import type { MatchWrapper } from "server/engine/entities/match";
 import { applyDevToolEvent, devActionToEvent } from "server/engine/events/handlers/dev-tool";
@@ -109,9 +110,7 @@ export class DevToolsUsecase {
     /* The Event row and the audit row go together: an effect that replays with no record of who
      * caused it is exactly what the audit exists to prevent. */
     await this.prisma.$transaction(async (tx) => {
-      await tx.event.create({
-        data: { matchId: match.id, content: event },
-      });
+      await appendEvent(tx, match.id, event);
 
       await writeAudit(tx, {
         capability: "devTools",

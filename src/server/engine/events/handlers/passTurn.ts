@@ -8,6 +8,8 @@ import type { ApplyEvent, MainActionToEvent } from "server/engine/events/handler
 import { getTurnFuelConsumption } from "server/engine/events/handlers/passTurn/consumeFuelAndCrash";
 import { propertyRepairAndResupply } from "server/engine/events/handlers/passTurn/propertyRepairAndResupply";
 import { updateWeather } from "server/engine/events/handlers/passTurn/updateWeather";
+import { releaseHoldings } from "server/engine/rules/elimination";
+import { creditIncrementOnTurnStart, settleBankOnTurnEnd } from "server/engine/rules/turn-clock";
 
 type NewWeather = Pick<Turn, "newWeather" | "newWeatherDays">;
 
@@ -96,6 +98,13 @@ export const passTurnActionToEvent: MainActionToEvent<PassTurnAction> = (match, 
   return {
     ...action,
     turns,
+    // Snapshot the ending player's remaining clock INTO the event, alongside the weather roll above.
+    // `match.turnEndsAt` is the deadline the orchestrator armed when this turn began; what's left of
+    // it is what they bank. Untimed matches record nothing. This is the only place the wall clock is
+    // read — everything downstream (apply, replay) works off the recorded number.
+    ...(match.turnEndsAt === null
+      ? {}
+      : { bankRemainingMs: Math.max(0, match.turnEndsAt - Date.now()) }),
   };
 };
 
@@ -119,6 +128,10 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
   // stale splash (the ongoing power effects live on via COPowerState, not this report).
   match.powerActivationReport = null;
 
+  // Bank what the ENDING player had left, before the loop moves the turn on. Read off the event, so
+  // this replays to the same number every time (see engine/rules/turn-clock.ts).
+  settleBankOnTurnEnd(match.getCurrentTurnPlayer(), event.bankRemainingMs);
+
   for (const turn of event.turns) {
     // TODO when we pass multiple turns, getCurrentTurnPlayer relies on the just eliminated / previous player still having a turn
     // i'm just marking this in case this doesn't work as planned.
@@ -137,6 +150,7 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
       lastTurnPlayer.getUnits().length === 0
     ) {
       lastTurnPlayer.data.status = "routed";
+      releaseHoldings(match, lastTurnPlayer, null);
     }
 
     lastTurnPlayer.data.hasCurrentTurn = false;
@@ -210,6 +224,7 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
     // status here — in the apply step — so it survives an event-log replay, like combat elimination.
     if (turn.eliminationReason === "all-units-crashed") {
       nextTurnPlayer.data.status = "routed";
+      releaseHoldings(match, nextTurnPlayer, null);
     }
 
     // Record what the upkeep did to the player-now-on-turn's units, for the start-round animation.
@@ -247,6 +262,11 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
       fundsAfter: nextTurnPlayer.data.funds,
     };
   }
+
+  // Credit the incoming player's increment — at the START of their turn, so the clock they watch
+  // already includes it, and a player who just flagged begins the next turn with exactly the
+  // increment rather than nothing at all.
+  creditIncrementOnTurnStart(match.getCurrentTurnPlayer());
 
   for (const team of match.teams) {
     // TODO improve this. maybe later. not prioritary

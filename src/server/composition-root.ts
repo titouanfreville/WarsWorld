@@ -22,7 +22,12 @@ import { AdminUsecase } from "server/admin/admin.usecase";
  * "Explicit wiring": compose once, don't stash module singletons on shared mutable state).
  */
 export const rankingUsecase = new RankingUsecase(prisma);
-export const matchesUsecase = new MatchesUsecase(prisma, matchStore);
+export const matchesUsecase = new MatchesUsecase(prisma, matchStore, {
+  // Lazy on purpose: the action usecase is built further down (it needs ranking + endgame first),
+  // and these only run when a match actually goes live.
+  plan: (match) => matchActionUsecase.planTurnClock(match),
+  commit: (match, endsAt) => matchActionUsecase.commitTurnClock(match, endsAt),
+});
 export const matchLifecycleUsecase = new MatchLifecycleUsecase(prisma, matchStore);
 export const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase, matchesUsecase);
 export const lobbyUsecase = new LobbyUsecase(prisma, matchesUsecase);
@@ -49,4 +54,14 @@ export const adminUsecase = new AdminUsecase(
 );
 // Declared after ranking/endgame: playing an action can END the match, and finalizing it rates the
 // players and writes their battle report — so this one depends on both being built already.
-export const matchActionUsecase = new MatchActionUsecase(prisma, rankingUsecase, endgameUsecase);
+// The explicit type annotation is load-bearing: `matchesUsecase` above forward-references this
+// binding, and without an annotation TypeScript resolves that reference to `any` — which silently
+// swallowed a call to a method that no longer existed (`armTurnClock`, since split into
+// plan/commit). Annotated, a stale call here is a compile error instead of a runtime crash.
+export const matchActionUsecase: MatchActionUsecase = new MatchActionUsecase(
+  prisma,
+  rankingUsecase,
+  endgameUsecase,
+  // A fired turn deadline carries only a match id, so this one resolves the match itself.
+  matchStore,
+);

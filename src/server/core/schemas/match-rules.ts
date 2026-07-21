@@ -17,7 +17,16 @@ export const matchRulesSchema = z.object({
   labUnitTypes: unitTypeSchema.array(),
   bannedUnitTypes: unitTypeSchema.array(),
   captureLimit: z.number().int().positive(),
-  dayLimit: z.number().int().positive(),
+  /**
+   * Last day that gets played; the match is decided on territory once it's over (see day-limit.ts).
+   *
+   * Bounded above because `resolveTimeControl`'s custom branch passes the host's number straight
+   * through — `positive()` alone let a client ask for a match that outlives the server. There is no
+   * "unlimited" value: `isDayLimitReached` treats `<= 0` as no-limit, but that is a TEST-FIXTURE
+   * sentinel only and this schema deliberately forbids it, because an unbounded ranked match is the
+   * stalemate the day limit exists to prevent.
+   */
+  dayLimit: z.number().int().positive().max(1000),
   weatherSetting: weatherSettingSchema,
   /**
    * indexes are playerSlots of the map, values are the team
@@ -45,6 +54,27 @@ export const matchRulesSchema = z.object({
    * matchmaking, test scenarios) to name it. Absent means off, which is the safe reading.
    */
   testingTools: z.boolean().optional(),
+  /**
+   * Turn clock, chess-style: `turnBankSeconds` is what a player starts with, and
+   * `turnIncrementSeconds` is credited at the start of each of their turns. When the bank runs out
+   * the turn is ended for them; they keep playing on the increment alone.
+   *
+   * Optional for the same reason as `pickSeconds` above — required fields would force every existing
+   * rules constructor (seed, matchmaking, admin, test scenarios) to name them. **Absent means no
+   * clock**, which is what every match created before this feature has, and they must keep playing.
+   *
+   * Bounds live here because this schema is the transport boundary for both match and lobby
+   * creation; they're never applied to already-stored rules (nothing parses a persisted row through
+   * this schema), so tightening them can't invalidate a match in flight.
+   */
+  turnBankSeconds: z.number().int().min(60).max(7200).optional(),
+  /**
+   * The increment MUST be positive when a clock exists. A zero increment breaks the promise made
+   * just above — "they keep playing on the increment alone" — because a player whose bank has hit 0
+   * would be credited nothing, arm a deadline of `now`, and be force-passed on the very next tick,
+   * forever. The floor is what makes running out of time survivable rather than terminal.
+   */
+  turnIncrementSeconds: z.number().int().min(5).max(900).optional(),
 });
 
 export type MatchRules = z.infer<typeof matchRulesSchema>;

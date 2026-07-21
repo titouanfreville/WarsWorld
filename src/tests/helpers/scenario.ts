@@ -178,6 +178,10 @@ export function createTestMatch(options: ScenarioOptions): MatchWrapper {
     numberOfPlayers: players.length,
     predeployedUnits: [],
     tiles: options.tiles,
+    // Scenarios drive the engine directly, past the lobby/matchmaking guards these fields gate,
+    // so the values only need to be present and consistent with the seat count.
+    supportedModes: players.length === 2 ? ["duel"] : ["teams", "ffa"],
+    rankedModes: [],
   };
 
   return new MatchWrapper(

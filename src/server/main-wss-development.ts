@@ -1,13 +1,16 @@
 import { logger } from "shared/utils/logger";
 import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
-import { matchesUsecase } from "./composition-root";
+import { matchActionUsecase, matchesUsecase } from "./composition-root";
 import { matchmakingUsecase } from "./composition-root";
 
 void (async () => {
   await matchStore.rebuild();
   // Re-arm general-picker deadlines from Match.pickEndsAt so a restart never drops one.
   await matchesUsecase.reschedulePickDeadlines();
+  // Re-arm turn clocks from Match.turnEndsAt, so time keeps running across a restart
+  // instead of the acting player quietly getting a fresh bank.
+  await matchActionUsecase.rescheduleTurnDeadlines();
   // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
   await matchmakingUsecase.rescheduleLobbyPhases();
   matchmakingUsecase.startQueueTick();

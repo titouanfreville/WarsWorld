@@ -4,11 +4,17 @@
 datasource db {
   provider = "postgres"
   url      = env("DATABASE_URL")
+  // NOTE: no `shadowDatabaseUrl` here on purpose. `migrate diff --from-migrations` ignores it and
+  // requires the explicit --shadow-database-url flag anyway (the tooling scripts pass it), while
+  // declaring it would make production depend on an env var it has no use for.
 }
 
 generator client {
   provider      = "prisma-client-js"
-  // debian-openssl-3.0.x: production runs on node:22-bookworm-slim (Debian 12) — see Dockerfile.
+  // `debian-openssl-3.0.x` is what the production image needs — it runs on node:22-bookworm-slim
+  // (Debian 12, glibc). Without it Prisma fails at container start with "query engine not found",
+  // which reads like a build problem rather than a missing engine binary.
+  // `linux-musl-openssl-3.0.x` is kept for Alpine-based images.
   binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
@@ -219,6 +225,18 @@ model WWMap {
   lobbies          Lobby[]
   createdAt        DateTime @default(now())
 
+  /// Modes this map may be played in at all. Seat count cannot decide this on its own: a 2v2 map
+  /// and a free-for-all map both seat 4 but are designed around opposite assumptions (teammates
+  /// adjacent vs. all four equidistant), so the legal modes are declared, not inferred.
+  /// Empty means the map is not playable anywhere — treat that as unconfigured, not as a mode.
+  supportedModes GameMode[]
+  /// Modes this map is ranked-legal in — a subset of `supportedModes`. Deliberately per-mode
+  /// rather than one boolean: a 4-player map can be fair enough for ranked free-for-all while
+  /// being unbalanced for ranked 2v2, and a boolean would force banning both. Empty = casual only,
+  /// which is the safe default for an imported or unvetted map: nothing reaches the rating ladder
+  /// until someone opts it in.
+  rankedModes    GameMode[]
+
   // TODO maps should have different sets of captureLimits and bannedUnitTypes
   // per league type.
 
@@ -428,6 +446,10 @@ model Match {
   /// Persisted match outcome (set once, when the game is decided). Null while playing.
   /// winnerTeamIndex is null on a draw even though the match is finished.
   winnerTeamIndex Int?
+  /// How it ended: "elimination" | "day-limit" (GameOverReason in TS). Without it a day-limit draw
+  /// and a mutual-elimination draw are the same row, so history can't tell them apart. Null for
+  /// matches finished before this was tracked.
+  endReason       String?
   finishedAt      DateTime?
 
   // --- v2 lobby/match path ---
@@ -436,6 +458,11 @@ model Match {
   teamFactions Json?
   /// general-picker deadline (setup status only); FE renders `pickEndsAt - now`
   pickEndsAt   DateTime?
+  /// Turn-clock deadline for the player currently on turn (`now + their bank`), re-armed on every
+  /// turn change. Null in an untimed match. Persisted because elapsed wall-clock cannot be replayed
+  /// from the event log — without it a restart would hand the acting player a fresh full bank; the
+  /// per-player banks themselves ARE event-derived and are not stored.
+  turnEndsAt   DateTime?
   /// CO reveal gate: while null, enemy generals are hidden from queries/emits
   revealedAt   DateTime?
   /// set when MMR has been applied for this (ranked) match — idempotency guard for finalize
@@ -489,8 +516,17 @@ model Event {
   match   Match  @relation(fields: [matchId], references: [id])
   matchId String
 
-  /// the index describes the order of events. they are not universally unique, but unique per match.
-  index Int @default(autoincrement()) @map("eventIndex")
+  /// The order of events within a match. Assigned by `appendEvent` (server/adapters/event-log.ts)
+  /// as max+1 for THIS match — deliberately NOT a database default. It used to be
+  /// `@default(autoincrement())`, but on Postgres that is a GLOBAL sequence: every insert drew a
+  /// fresh globally-unique value, so the `@@id([matchId, index])` primary key below could never
+  /// collide and the log had no write fence — two writers on one match would both succeed and
+  /// silently interleave a divergent history. Deriving it per match makes that primary key the
+  /// optimistic-concurrency check the log needs to survive a sharded/replicated game tier.
+  /// Values are per-match ordered but NOT contiguous: rows predating this change keep their old
+  /// global-sequence values, and each match simply continues from its own max. Only `orderBy` ever
+  /// reads it, so the gaps are harmless.
+  index Int @map("eventIndex")
 
   /// [PrismaEvent]
   content Json

@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, Role } from "@prisma/client";
+import { appendEvent } from "server/adapters/event-log";
 import type { AdminAction } from "server/core/schemas/admin-action";
 import type { MatchWrapper } from "server/engine/entities/match";
 import { adminActionToEvent, applyAdminToolEvent } from "server/engine/events/handlers/admin-tool";
@@ -61,12 +62,16 @@ export class AdminToolsUsecase {
      * usually still contested — that's the whole point of forcing — so `finalizeIfGameOver` would
      * say "nothing to do" and the result would never reach the DB. */
     const finished =
-      action.type === "forceOutcome" ? { winnerTeamIndex: action.winnerTeamIndex } : null;
+      action.type === "forceOutcome"
+        ? // `reason` matches what `forceOutcome` stamps on the match itself, so the persisted row and
+          // the in-memory entity agree about how this ended.
+          { winnerTeamIndex: action.winnerTeamIndex, reason: "elimination" as const }
+        : null;
 
     emitToTeams(match, mainEventToEmittables(match, event));
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.event.create({ data: { matchId: match.id, content: event } });
+      await appendEvent(tx, match.id, event);
 
       if (finished !== null) {
         /* The same writes a natural ending performs — shared, not copied. */

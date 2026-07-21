@@ -38,7 +38,9 @@ const makeUsecase = () => {
   let created: CreatedData | null = null;
 
   const db = {
-    wWMap: { findUnique: async () => ({ id: "map-1", numberOfPlayers: 2 }) },
+    wWMap: {
+      findUnique: async () => ({ id: "map-1", numberOfPlayers: 2, supportedModes: ["duel"] }),
+    },
     lobby: {
       create: async ({ data }: { data: CreatedData }) => {
         created = data;
@@ -176,7 +178,9 @@ const makeSetMapUsecase = (opts: { host: string; status: string }) => {
         return row();
       },
     },
-    wWMap: { findUnique: async () => ({ id: "map-9", numberOfPlayers: 2 }) },
+    wWMap: {
+      findUnique: async () => ({ id: "map-9", numberOfPlayers: 2, supportedModes: ["duel"] }),
+    },
     playerInLobby: { findMany: async () => [] },
   };
 

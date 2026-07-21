@@ -5,8 +5,19 @@ import { BANS_PER_PLAYER } from "./constants";
  * module owns the *rules*: what survives the bans, which votes are valid, and how the final map is
  * rolled. `randomInt(maxExclusive)` is injected so callers stay deterministic in tests.
  *
- * There is no deadline auto-fill: a player who doesn't vote in time abandons the pick and the match
- * is cancelled + flagged (handled in the usecase), rather than voting on their behalf.
+ * BANS ARE BLIND. Both players ban simultaneously without seeing each other's picks; the bans reveal
+ * only once everyone has spent them, which is also when voting opens ({@link banStageComplete}).
+ * Two consequences the rules here have to honour:
+ *
+ * - **Duplicate bans are legal.** Rejecting "the opponent already banned that" would leak the
+ *   opponent's ban through the error. A wasted ban is the cost of banning blind.
+ * - **No last-survivor guard.** It too read the opponent's bans. It isn't needed: the pool is at
+ *   least `MIN_MAP_POOL_SIZE` (2 players × BANS_PER_PLAYER + 1), so even with zero overlap the bans
+ *   can never empty it.
+ *
+ * There is no deadline auto-fill: a player who doesn't finish their bans, or doesn't vote in time,
+ * abandons the pick and the match is cancelled + flagged (handled in the usecase), rather than
+ * deciding on their behalf.
  */
 
 export type RandomInt = (maxExclusive: number) => number;
@@ -62,18 +73,21 @@ export const rollMap = (
 };
 
 /**
- * Validate a live ban: the map must be in the pool, unbanned by this player, and the player must
- * have bans left — AND the ban must not empty the pool. `players` is every member's current
- * ban/vote state; the last-survivor guard rejects a ban that would leave nothing to vote on, so two
- * players can never ban every map (which would make voting impossible and wrongly flag both as
- * having abandoned the pick).
+ * Has everyone spent all their bans? This is the reveal moment: bans stay hidden until it's true,
+ * and voting opens the instant it is.
  */
-export const canBan = (
-  pool: string[],
-  players: PlayerBanVote[],
-  player: PlayerBanVote,
-  mapId: string,
-): boolean => {
+export const banStageComplete = (players: PlayerBanVote[]): boolean =>
+  // `players.length > 0` because `[].every(...)` is vacuously TRUE. A lobby whose deciders have all
+  // left (or that somehow contains only spectators) would otherwise report its bans revealed, open
+  // voting on nobody, and let `resolveMapBan` roll a map for an empty room.
+  players.length > 0 && players.every((p) => p.bannedMapIds.length >= BANS_PER_PLAYER);
+
+/**
+ * Validate a live ban. Deliberately blind: it looks ONLY at the pool and at *this* player's own bans
+ * — the map must be in the pool, not already banned by them, and they must have bans left. It never
+ * consults the other players, because every rejection is information (see the module header).
+ */
+export const canBan = (pool: string[], player: PlayerBanVote, mapId: string): boolean => {
   if (!pool.includes(mapId)) {
     return false;
   }
@@ -82,22 +96,12 @@ export const canBan = (
     return false;
   }
 
-  if (player.bannedMapIds.length >= BANS_PER_PLAYER) {
-    return false;
-  }
-
-  // Already banned by someone (incl. the opponent) → no longer a survivor; banning it again just
-  // wastes a ban with no effect on the pool.
-  if (players.some((p) => p.bannedMapIds.includes(mapId))) {
-    return false;
-  }
-
-  const afterBan = players.map((p) =>
-    p.playerId === player.playerId ? { ...p, bannedMapIds: [...p.bannedMapIds, mapId] } : p,
-  );
-  return survivors(pool, afterBan).length > 0;
+  return player.bannedMapIds.length < BANS_PER_PLAYER;
 };
 
-/** Validate a live vote: the map must still be a survivor (in pool, not banned by anyone). */
+/**
+ * Validate a live vote: the ban stage must be over (nobody votes before the reveal — that's what
+ * makes the bans meaningful) and the map must still be a survivor.
+ */
 export const canVote = (pool: string[], players: PlayerBanVote[], mapId: string): boolean =>
-  survivors(pool, players).includes(mapId);
+  banStageComplete(players) && survivors(pool, players).includes(mapId);

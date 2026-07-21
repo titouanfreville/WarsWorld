@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { appendEvent } from "server/adapters/event-log";
 import { DispatchableError } from "server/engine/dispatchable-error";
 import { INITIAL_FUNDS } from "server/engine/constants/funds";
 import type { MatchWrapper } from "server/engine/entities/match";
@@ -205,11 +206,7 @@ export class MatchLifecycleUsecase {
 
       let eventIndex: number | undefined = undefined;
       await this.db.$transaction(async (tx) => {
-        const eventOnDB = await tx.event.create({
-          data: { content: matchStartEvent, matchId: match.id },
-        });
-
-        eventIndex = eventOnDB.index;
+        eventIndex = await appendEvent(tx, match.id, matchStartEvent);
 
         // Persist the pre-start snapshot (funds still at INITIAL_FUNDS). Day-1 income is applied by
         // the matchStart event below and re-derived by replaying it on rebuild, so it must NOT be

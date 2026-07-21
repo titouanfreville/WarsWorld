@@ -1,6 +1,7 @@
 import type { GameMode, PrismaClient, Rank, Ruleset } from "@prisma/client";
 import type { RankingUsecase } from "server/ranking/ranking.usecase";
 import type { MatchRules } from "server/core/schemas/match-rules";
+import { rankedTimeControl } from "server/core/schemas/rule-presets";
 import { DispatchableError } from "server/engine/dispatchable-error";
 import { writeAudit } from "server/auth/audit";
 
@@ -54,7 +55,9 @@ const STANDARD_DUEL_RULES: MatchRules = {
   labUnitTypes: [],
   bannedUnitTypes: [],
   captureLimit: 50,
-  dayLimit: 50,
+  // Same time control the ranked queue plays, from the one preset table — a forced match should feel
+  // like a normal game, not an untimed outlier.
+  ...rankedTimeControl(),
   weatherSetting: "clear",
   teamMapping: [],
 };

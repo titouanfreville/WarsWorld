@@ -1,13 +1,20 @@
 import { authMiddleware, requireCapability } from "./middleware/auth";
+import { errorMappingMiddleware } from "./middleware/errors";
 import { matchMiddleware, withMatchIdSchema } from "./middleware/match";
 import { playerMiddleware, withPlayerIdSchema } from "./middleware/player";
 import { t } from "./trpc-init";
 import { DispatchableError } from "server/engine/dispatchable-error";
 
 export const { router, mergeRouters } = t;
-export const publicBaseProcedure = t.procedure;
 
-export const playerBaseProcedure = t.procedure
+/**
+ * EVERY procedure is built from this one, so that typed domain errors get mapped to their proper
+ * transport codes exactly once (see middleware/errors.ts). Outermost on purpose — it must wrap the
+ * auth/player/match middlewares below, which throw `DispatchableError` themselves.
+ */
+export const publicBaseProcedure = t.procedure.use(errorMappingMiddleware);
+
+export const playerBaseProcedure = publicBaseProcedure
   .input(withPlayerIdSchema)
   .use(authMiddleware)
   .use(playerMiddleware);

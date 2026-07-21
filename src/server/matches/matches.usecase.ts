@@ -1,7 +1,9 @@
 import type { GameMode, PrismaClient, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { appendEvent } from "server/adapters/event-log";
 import { emit } from "server/emitter/event-emitter";
 import type { MatchStore } from "server/match-store";
+import type { MatchWrapper } from "server/engine/entities/match";
 import { pageMatchIndex } from "server/page-match-index";
 import { playerMatchIndex } from "server/player-match-index";
 import { DispatchableError } from "server/engine/dispatchable-error";
@@ -54,6 +56,20 @@ export class MatchesUsecase {
   constructor(
     private readonly db: PrismaClient,
     private readonly store: MatchStore,
+    /**
+     * The turn clock's two halves, for starting the FIRST turn. Injected as a narrow pair rather
+     * than the whole action usecase: play and lifecycle are separate seams, and this one only needs
+     * to start a clock.
+     *
+     * Two functions, not one, because planning and arming must sit on opposite sides of the
+     * transaction — `plan` is pure and returns the deadline to persist (null for an untimed match);
+     * `commit` mutates the entity and arms the real timeout, and must not run until the row is
+     * durable. See MatchActionUsecase.planTurnClock.
+     */
+    private readonly turnClock: {
+      plan: (match: MatchWrapper) => Date | null;
+      commit: (match: MatchWrapper, endsAt: Date | null) => void;
+    },
   ) {}
 
   /** Create a Match in `setup` (the general-picker round) from a started lobby. */
@@ -258,16 +274,26 @@ export class MatchesUsecase {
     match.status = "playing";
     const matchStartEvent = createMatchStartEvent(match);
 
+    // Bring the in-memory match to what a rebuild would produce from the event log. This has to
+    // happen BEFORE the clock is planned: `applyMatchStartEvent` credits the starting player their
+    // first increment (exactly as `applyPassTurnEvent` does for everyone else), and planning off the
+    // un-credited bank is what used to give seat 0 a shorter opening turn than its opponents.
+    applyMainEventToMatch(match, matchStartEvent);
+
+    // Start the first player's clock as the match goes live. Every LATER turn is armed by the
+    // pass-turn that begins it; without this one, turn one would run untimed and its pass would
+    // record no elapsed time. Planned here, armed only once the row is durable.
+    const turnEndsAt = this.turnClock.plan(match);
+
     await this.db.$transaction(async (tx) => {
-      await tx.event.create({ data: { content: matchStartEvent, matchId } });
+      await appendEvent(tx, matchId, matchStartEvent);
       await tx.match.update({
         where: { id: matchId },
-        data: { status: "playing", revealedAt: new Date() },
+        data: { status: "playing", revealedAt: new Date(), turnEndsAt },
       });
     });
 
-    // Bring the in-memory match to what a rebuild would produce from the event log.
-    applyMainEventToMatch(match, matchStartEvent);
+    this.turnClock.commit(match, turnEndsAt);
 
     const rows = await this.db.matchPlayer.findMany({ where: { matchId } });
     const playerIds = rows.map((row) => row.playerId);

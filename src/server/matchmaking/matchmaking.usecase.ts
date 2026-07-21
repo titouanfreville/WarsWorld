@@ -1,25 +1,36 @@
 import type { GameMode, PrismaClient, Rank, Ruleset } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { createKeyedLock } from "server/adapters/key-lock";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { emitQueue } from "server/emitter/matchmaking-emitter";
-import { DEFAULT_PICK_SECONDS } from "server/matches/layout";
+import { capacityForMode, DEFAULT_PICK_SECONDS } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
 import { defaultSkill, type Skill } from "server/ranking/skill";
 import { armySchema, type Army } from "server/core/schemas/army";
 import type { MatchRules } from "server/core/schemas/match-rules";
+import { rankedTimeControl } from "server/core/schemas/rule-presets";
 import { logger } from "shared/utils/logger";
 import {
+  BANS_PER_PLAYER,
   LENIENT_GAP,
-  MAP_PHASE_SECONDS,
+  MAP_BAN_SECONDS,
   MAP_POOL_SIZE,
   MAP_REVEAL_SECONDS,
+  MAP_VOTE_SECONDS,
   MIN_MAP_POOL_SIZE,
   READY_SECONDS,
   READY_SECONDS_LENIENT,
   REMATCH_LOOKBACK_MS,
   TICK_MS,
 } from "./constants";
-import { canBan, canVote, defaultRandomInt, rollMap, type PlayerBanVote } from "./map-ban";
+import {
+  banStageComplete,
+  canBan,
+  canVote,
+  defaultRandomInt,
+  rollMap,
+  type PlayerBanVote,
+} from "./map-ban";
 import type { Tile, TileType } from "server/core/schemas/tile";
 import { cancelLobbyPhase, scheduleLobbyPhase } from "./lobby-phase-timer";
 import { MatchQueue, toleranceAt, unfairnessOf, type Ticket } from "./queue";
@@ -58,7 +69,10 @@ const defaultRulesFor = (ruleset: Ruleset): MatchRules => ({
   labUnitTypes: [],
   bannedUnitTypes: [],
   captureLimit: 50,
-  dayLimit: 50,
+  // Day limit + turn clock are the RANKED format and are not negotiable per ruleset — a fog queue
+  // and a high-funds queue still play the same time control. One table (rule-presets.ts) so ranked
+  // can't drift from what the lobby calls "Normal".
+  ...rankedTimeControl(),
   // Ranked queue games always use random weather for variety (custom lobbies let the host choose).
   weatherSetting: "random",
   teamMapping: [], // derived from seats at spawn
@@ -74,6 +88,19 @@ const toPlayerBanVote = (m: {
   bannedMapIds: m.bannedMapIds ?? [],
   votedMapId: m.votedMapId,
 });
+
+/**
+ * The ban/vote state of the members who actually decide. Spectators never ban or vote, so counting
+ * them would leave `banStageComplete` false forever and stall the phase to its deadline.
+ */
+const playerBanVotes = (
+  members: {
+    playerId: string;
+    isSpectator: boolean;
+    bannedMapIds: string[] | null;
+    votedMapId: string | null;
+  }[],
+): PlayerBanVote[] => members.filter((m) => !m.isSpectator).map(toPlayerBanVote);
 
 /** Property tile types surfaced in the map dossier's breakdown (mirrors the maps feature). */
 const PROPERTY_TILE_TYPES = [
@@ -124,6 +151,13 @@ const LOBBY_MEMBERS = {
 } as const;
 
 /**
+ * Serializes everything that mutates one lobby's pick&ban state: both players' bans and votes, and
+ * the phase deadline that can fire between any two of their awaits. Different lobbies never wait on
+ * each other.
+ */
+const lobbyLock = createKeyedLock();
+
+/**
  * The `matchmaking` feature: solo-queue ranked 1v1. Holds the in-memory queue, runs a periodic
  * pairing tick, then drives each pair through a ready-check and a map pick&ban — both as Lobby
  * phases — before handing off to `matches.spawnFromLobby`. Ratings come from `ranking`; the engine
@@ -146,6 +180,26 @@ export class MatchmakingUsecase {
   async joinQueue(playerId: string, input: JoinQueueInput) {
     if (this.queue.has(playerId)) {
       throw new TRPCError({ code: "CONFLICT", message: "You're already in the queue" });
+    }
+
+    // THE QUEUE ONLY FORMS PAIRS. `MatchQueue.pair` is structurally 1v1 — it greedily matches each
+    // ticket to its fairest single partner, cooldowns are keyed per player PAIR, and
+    // `createReadyCheck` seats exactly two members.
+    //
+    // Accepting a 4-seat mode here produced a silently broken match rather than an error: the pool
+    // filter correctly selects a 4-player map, a 2-member lobby is created on it, and the spawned
+    // match has slots 2 and 3 owning property and armies with no player behind them — so
+    // `allMatchSlotsReady` can never be true and the match can never start. Refusing is the honest
+    // answer until group matchmaking exists (4-way fairness, skill-balanced team assignment, and a
+    // 4-player ready-check/ban phase are a feature, not a flag).
+    //
+    // 2v2 and FFA remain fully playable through custom lobbies, which do seat four.
+    if (capacityForMode(input.mode) !== 2) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "The queue currently only matches 1v1. Create a custom lobby to play 2v2 or free-for-all.",
+      });
     }
 
     // ONE RANKED MATCH AT A TIME — and only ranked.
@@ -419,22 +473,44 @@ export class MatchmakingUsecase {
    * reported failure (an admin force-pair).
    */
   private async createReadyCheck(a: Ticket, b: Ticket): Promise<boolean> {
-    const mapPool = await this.buildMapPool();
+    // Both tickets share a bucket, so a's mode and ranked flag are b's too (enforced when the pair
+    // is formed).
+    const mapPool = await this.buildMapPool(a.mode, a.ranked);
 
-    if (mapPool.length === 0) {
-      logger.error("[matchmaking] no eligible 2-player maps; requeueing pair");
-      this.queue.add(a);
-      this.queue.add(b);
-      return false;
-    }
-
+    // REFUSE anything below the floor — this is a correctness gate, not a quality warning.
+    //
+    // Bans are blind, so `canBan` cannot reject the ban that empties the pool without leaking what
+    // the opponent banned. With fewer than MIN_MAP_POOL_SIZE maps, two players spending every ban
+    // can leave zero survivors: `canVote` then refuses every map, neither player can vote, and
+    // `onMapPhaseDeadline` flags BOTH as abandoners for doing exactly what the UI asked. Starting a
+    // ban phase we know can deadlock is worse than not starting one.
     if (mapPool.length < MIN_MAP_POOL_SIZE) {
-      // Playable — the last-survivor guard in `canBan` stops the pool being emptied — but this small
-      // a pool means the ban phase is degenerate. Signals too few eligible 2-player maps in the DB.
-      logger.warn(
-        `[matchmaking] map pool of ${mapPool.length} is below MIN_MAP_POOL_SIZE ` +
-          `(${MIN_MAP_POOL_SIZE}); ban phase will be degenerate — add more eligible maps`,
+      logger.error(
+        `[matchmaking] only ${mapPool.length} eligible ${a.ranked ? "ranked" : "casual"} map(s) ` +
+          `for ${a.mode} (need exactly ${capacityForMode(a.mode)} players, and at least ` +
+          `${MIN_MAP_POOL_SIZE} maps for a ban phase); dropping pair — add eligible maps`,
       );
+
+      // DROP them, don't requeue. Requeueing put the pair straight back into the same bucket to be
+      // re-paired on the next tick and fail identically — an invisible loop running every TICK_MS
+      // forever, with no event ever reaching either client. Nothing about waiting longer fixes an
+      // empty map pool; it needs an operator. So end the wait and say why.
+      //
+      // This is the failure mode a fresh deployment hits head-on: `rankedModes` is deliberately
+      // backfilled empty (balance can't be inferred from seat count), so until maps are vetted for
+      // the ladder the ranked pool really is empty.
+      for (const ticket of [a, b]) {
+        emitQueue(ticket.playerId, {
+          type: "unavailable",
+          reason:
+            `No ${a.ranked ? "ranked" : ""} maps are currently available for ${a.mode}.`.replace(
+              /\s+/g,
+              " ",
+            ),
+        });
+      }
+
+      return false;
     }
 
     // How lopsided this pairing is, as |P(win) − 0.5|. Accounts for both players' uncertainty, so a
@@ -649,7 +725,7 @@ export class MatchmakingUsecase {
   // ── Map pick & ban ──────────────────────────────────────────────────────────
 
   private async enterMapBan(lobbyId: string): Promise<void> {
-    const mapPhaseEndsAt = new Date(Date.now() + MAP_PHASE_SECONDS * 1000);
+    const mapPhaseEndsAt = new Date(Date.now() + MAP_BAN_SECONDS * 1000);
 
     await this.db.lobby.update({
       where: { id: lobbyId },
@@ -670,31 +746,99 @@ export class MatchmakingUsecase {
   }
 
   async banMap(lobbyId: string, playerId: string, mapId: string): Promise<{ ok: true }> {
+    // Serialized per lobby: the read → validate → write → re-read → maybe-open-voting sequence is a
+    // critical section, and both the opponent's ban and the phase deadline are competing writers.
+    // Unserialized, two players landing their last ban together could each observe the stage
+    // complete and both call `enterMapVote`, pushing the vote deadline out twice.
+    return lobbyLock.withLock(lobbyId, () => this.banMapLocked(lobbyId, playerId, mapId));
+  }
+
+  private async banMapLocked(
+    lobbyId: string,
+    playerId: string,
+    mapId: string,
+  ): Promise<{ ok: true }> {
     const { lobby, member } = await this.loadMapBanMember(lobbyId, playerId);
     const pool = (lobby.mapPool ?? []) as string[];
-    const players = lobby.members.map(toPlayerBanVote);
 
-    if (!canBan(pool, players, toPlayerBanVote(member), mapId)) {
+    // Blind: validated against this player's own bans only, so the rejection can't leak the
+    // opponent's. Concurrent bans need no atomicity either — with a pool of at least
+    // MIN_MAP_POOL_SIZE they can't collide into an empty pool (see map-ban.ts).
+    if (!canBan(pool, toPlayerBanVote(member), mapId)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "You can't ban that map" });
     }
 
-    // TODO(review): this is a read-check-write with no atomicity. Two simultaneous bans of the two
-    // last survivors both pass canBan on stale state and empty the pool, defeating the last-survivor
-    // guard (both players then get flagged as abandoners at the deadline). A race-safe fix needs an
-    // atomicity decision — serializable isolation + retry, or an app-level per-lobby lock. Deferred.
     await this.db.playerInLobby.update({
       where: { lobbyId_playerId: { lobbyId, playerId } },
       data: { bannedMapIds: [...(member.bannedMapIds ?? []), mapId] },
     });
 
     await this.notifyLobby(lobbyId);
+
+    // Re-read AFTER the write so two players finishing their bans at once don't each miss the other
+    // and stall the reveal to the deadline (same reasoning as the final vote below).
+    const updated = await this.db.lobby.findUnique({
+      where: { id: lobbyId },
+      include: LOBBY_MEMBERS,
+    });
+
+    if (updated !== null && banStageComplete(playerBanVotes(updated.members))) {
+      await this.enterMapVote(lobbyId);
+    }
+
     return { ok: true };
   }
 
+  /**
+   * Everyone has spent their bans → the bans reveal and voting opens on a FRESH deadline. The lobby
+   * status stays `map_ban` (the stage is derived from the ban counts, so no schema change); only the
+   * clock is restarted, so nobody votes on whatever time a slow opponent left them.
+   */
+  private async enterMapVote(lobbyId: string): Promise<void> {
+    const mapPhaseEndsAt = new Date(Date.now() + MAP_VOTE_SECONDS * 1000);
+
+    // Conditional on the lobby still being in `map_ban`. Callers hold the lobby lock, so this can't
+    // race a concurrent ban — but a lobby CANCELLED between the ban write and the re-read (a
+    // deadline elsewhere, an admin) would otherwise be handed a fresh deadline and a scheduled
+    // phase, reviving a dead lobby.
+    const { count } = await this.db.lobby.updateMany({
+      where: { id: lobbyId, status: "map_ban" },
+      data: { mapPhaseEndsAt },
+    });
+
+    if (count === 0) {
+      return;
+    }
+
+    scheduleLobbyPhase(lobbyId, mapPhaseEndsAt, (id) => this.onMapPhaseDeadline(id));
+    await this.notifyLobby(lobbyId);
+
+    logger.info(`[matchmaking] lobby ${lobbyId} bans revealed; voting open`);
+  }
+
   async voteMap(lobbyId: string, playerId: string, mapId: string): Promise<{ ok: true }> {
+    // Same critical section as `banMap` — concurrent final votes must not both resolve the lobby.
+    return lobbyLock.withLock(lobbyId, () => this.voteMapLocked(lobbyId, playerId, mapId));
+  }
+
+  private async voteMapLocked(
+    lobbyId: string,
+    playerId: string,
+    mapId: string,
+  ): Promise<{ ok: true }> {
     const { lobby } = await this.loadMapBanMember(lobbyId, playerId);
     const pool = (lobby.mapPool ?? []) as string[];
-    const players = lobby.members.map(toPlayerBanVote);
+    const players = playerBanVotes(lobby.members);
+
+    // `canVote` below is the AUTHORITATIVE rule and checks this too. Asked separately here only to
+    // pick the right message: "spend your bans first" and "that map is gone" are different problems
+    // for the player, and a single rejection can't say both. One implementation, two messages.
+    if (!banStageComplete(players)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Spend your bans first — voting opens once both players have banned",
+      });
+    }
 
     if (!canVote(pool, players, mapId)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "That map is no longer available" });
@@ -724,10 +868,16 @@ export class MatchmakingUsecase {
   }
 
   /**
-   * Deadline fired for the map phase: if anyone still hasn't voted they abandoned the pick — cancel
-   * and flag them (same treatment as a non-lenient missed ready-check). Everyone voted → resolve.
+   * Deadline fired for the map phase. Offenders are whoever is behind AT THE CURRENT STAGE: while
+   * bans are still open it's the players who didn't spend them, once they're revealed it's the
+   * players who didn't vote. Flagging non-voters unconditionally would punish the player who banned
+   * on time and was then blocked waiting for a foe who never did.
    */
   private async onMapPhaseDeadline(lobbyId: string): Promise<void> {
+    return lobbyLock.withLock(lobbyId, () => this.onMapPhaseDeadlineLocked(lobbyId));
+  }
+
+  private async onMapPhaseDeadlineLocked(lobbyId: string): Promise<void> {
     const lobby = await this.db.lobby.findUnique({
       where: { id: lobbyId },
       include: LOBBY_MEMBERS,
@@ -737,9 +887,22 @@ export class MatchmakingUsecase {
       return;
     }
 
-    const offenders = lobby.members
-      .filter((m) => !m.isSpectator && m.votedMapId === null)
-      .map((m) => m.playerId);
+    // STALE FIRING. The ban timer stays armed while `banMap` does its writes, so the moment the last
+    // ban opens voting there are briefly two timers: the old ban deadline and the fresh vote one.
+    // If the old one fires here it finds the ban stage complete, switches to the vote predicate,
+    // sees nobody has voted — because voting only just opened — and flags BOTH players as
+    // abandoners for a vote they were never given time to cast. The persisted deadline is the source
+    // of truth: if it is still in the future, this firing belongs to a phase that has already been
+    // superseded.
+    if (lobby.mapPhaseEndsAt !== null && lobby.mapPhaseEndsAt.getTime() > Date.now()) {
+      return;
+    }
+
+    const players = playerBanVotes(lobby.members);
+    const behind = banStageComplete(players)
+      ? (p: PlayerBanVote) => p.votedMapId === null
+      : (p: PlayerBanVote) => p.bannedMapIds.length < BANS_PER_PLAYER;
+    const offenders = players.filter(behind).map((p) => p.playerId);
 
     if (offenders.length === 0) {
       await this.resolveMapBan(lobbyId);
@@ -815,7 +978,7 @@ export class MatchmakingUsecase {
     }
 
     const pool = (lobby.mapPool ?? []) as string[];
-    const players = lobby.members.map(toPlayerBanVote);
+    const players = playerBanVotes(lobby.members);
     const mapId = rollMap(pool, players, defaultRandomInt);
 
     await this.enterMapReveal(lobbyId, mapId);
@@ -885,10 +1048,15 @@ export class MatchmakingUsecase {
 
   /**
    * The ban-board view for the FE: each pool map with enough to draw a real thumbnail + a dossier
-   * (terrain grid, size, player count, property counts), plus everyone's bans/votes, the phase, its
-   * deadline, and — once revealing — the locked-in map.
+   * (terrain grid, size, player count, property counts), plus the stage, its deadline, and — once
+   * revealing — the locked-in map.
+   *
+   * VIEWER-AWARE, because the ban and the vote are both blind. Another player's bans are withheld
+   * until everyone has banned, and their vote until the map is rolled; all the viewer gets in the
+   * meantime is a progress signal (`banCount`, `hasVoted`) so the UI can say "your foe is still
+   * choosing" without saying what they chose. Masking happens HERE, on the wire — never in the FE.
    */
-  async mapBanView(lobbyId: string) {
+  async mapBanView(lobbyId: string, viewerId: string) {
     const lobby = await this.db.lobby.findUnique({
       where: { id: lobbyId },
       include: LOBBY_MEMBERS,
@@ -905,21 +1073,46 @@ export class MatchmakingUsecase {
     });
     const byId = new Map(maps.map((m) => [m.id, m]));
 
+    // Bans reveal when everyone has spent them (which is also when voting opens); votes reveal with
+    // the rolled map. Past the ban stage the lobby is in `map_reveal`, where both are public.
+    const bansRevealed = banStageComplete(playerBanVotes(lobby.members));
+    const votesRevealed = lobby.status === "map_reveal";
+
     return {
       lobbyId: lobby.id,
       status: lobby.status, // "map_ban" | "map_reveal" (| other, defensively)
+      // Three stages, not two. Derived from `bansRevealed` alone, this reported "vote" for the whole
+      // of `map_reveal` too — the map is already rolled and locked by then, so any consumer reading
+      // `stage` on its own would render a voting UI over a decided pick. `MapBanScreen` happens to
+      // also check `status`/`chosenMapId`; a view field shouldn't depend on its caller doing that.
+      stage: votesRevealed
+        ? ("reveal" as const)
+        : bansRevealed
+          ? ("vote" as const)
+          : ("ban" as const),
+      bansRevealed,
+      votesRevealed,
       mapPhaseEndsAt: lobby.mapPhaseEndsAt?.toISOString() ?? null,
       chosenMapId: lobby.mapId, // set once the reveal starts
       rules: lobby.rules,
       // Preserve pool order so the board layout is stable across refetches.
       pool: pool.map((id) => summariseMap(id, byId.get(id))),
-      players: lobby.members.map((m) => ({
-        playerId: m.playerId,
-        name: m.player.name,
-        team: m.team,
-        bannedMapIds: (m.bannedMapIds ?? []) as string[],
-        votedMapId: m.votedMapId,
-      })),
+      players: lobby.members.map((m) => {
+        const isViewer = m.playerId === viewerId;
+        const bans = (m.bannedMapIds ?? []) as string[];
+
+        return {
+          playerId: m.playerId,
+          name: m.player.name,
+          team: m.team,
+          // You always see your own picks; someone else's only once they're revealed. The counts
+          // stay public throughout — they show progress, not content.
+          bannedMapIds: isViewer || bansRevealed ? bans : [],
+          banCount: bans.length,
+          votedMapId: isViewer || votesRevealed ? m.votedMapId : null,
+          hasVoted: m.votedMapId !== null,
+        };
+      }),
     };
   }
 
@@ -968,9 +1161,23 @@ export class MatchmakingUsecase {
 
   // ── internals ─────────────────────────────────────────────────────────────
 
-  private async buildMapPool(): Promise<string[]> {
+  /**
+   * Eligible maps for a bucket's mode and ranked/casual setting.
+   *
+   * Matched on EXACT seat count, not `gte`: the map's `numberOfPlayers` drives slot iteration
+   * downstream, so an oversized map produces slots with no player behind them and a match that can
+   * never become ready. `gte: 2` meant a 4-player map could be auto-rolled into a ranked duel.
+   *
+   * A ranked queue draws only from `rankedModes` — a map may be perfectly playable in a mode and
+   * still be unbalanced enough there that it has no business deciding ratings. Casual draws from
+   * the wider `supportedModes`.
+   */
+  private async buildMapPool(mode: GameMode, ranked: boolean): Promise<string[]> {
     const maps = await this.db.wWMap.findMany({
-      where: { numberOfPlayers: { gte: 2 } },
+      where: {
+        numberOfPlayers: capacityForMode(mode),
+        ...(ranked ? { rankedModes: { has: mode } } : { supportedModes: { has: mode } }),
+      },
       select: { id: true },
     });
     return shuffled(maps.map((m) => m.id)).slice(0, MAP_POOL_SIZE);

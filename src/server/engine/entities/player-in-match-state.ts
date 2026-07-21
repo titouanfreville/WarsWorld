@@ -57,6 +57,12 @@ export type PlayerInMatch = {
   hasBuiltUnit?: boolean;
   /** Dev-tool modifiers. Undefined on every normal match — see {@link DevModifiers}. */
   devModifiers?: DevModifiers;
+  /**
+   * Remaining turn-clock time in ms. Undefined means "not started their first turn yet" (resolves to
+   * the match's starting bank) or an untimed match — see engine/rules/turn-clock.ts. Written only by
+   * the pass-turn apply step, from time recorded ON the event, so it rebuilds exactly on replay.
+   */
+  timeBankMs?: number;
 };
 
 export const createNeutralPlayerInMatch: () => PlayerInMatch = () => {

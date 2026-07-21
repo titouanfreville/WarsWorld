@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { appendEvent } from "server/adapters/event-log";
 import type { MainAction } from "server/core/schemas/action";
 import { getFinalPositionSafe } from "server/core/schemas/position";
 import type { EndgameUsecase } from "server/endgame/endgame.usecase";
@@ -25,6 +26,15 @@ import type {
   SubEvent,
 } from "server/engine/types/events";
 import { emitToTeams } from "server/matches/emit-to-teams";
+import { withMatchLock } from "server/matches/match-lock";
+import {
+  BOOT_STAGGER_MS,
+  cancelTurnDeadline,
+  MIN_TURN_MS,
+  scheduleTurnDeadline,
+} from "server/matches/turn-timer";
+import { bankOf } from "server/engine/rules/turn-clock";
+import type { MatchStore } from "server/match-store";
 import type { RankingUsecase } from "server/ranking/ranking.usecase";
 import { logger } from "shared/utils/logger";
 
@@ -51,7 +61,147 @@ export class MatchActionUsecase {
     private readonly db: PrismaClient,
     private readonly ranking: RankingUsecase,
     private readonly endgame: EndgameUsecase,
+    /** Needed to resolve a match from a fired turn deadline, which only carries an id. */
+    private readonly store: MatchStore,
   ) {}
+
+  /**
+   * End the turn of whoever is on the clock, because their time ran out.
+   *
+   * Runs the SAME pipeline a voluntary pass does — validate → apply → emit → persist — rather than
+   * mutating state directly: a forced end must leave a match indistinguishable from one where the
+   * player pressed the button, or upkeep (weather, funds, repair, fuel) would silently differ
+   * depending on how the turn ended. The clock is settled to zero by the pass-turn event itself,
+   * since `turnEndsAt` has by definition already elapsed.
+   *
+   * Idempotent and defensive: a match that finished, was archived, or has already moved on since the
+   * timer was armed is simply left alone.
+   */
+  async forceEndTurn(matchId: string): Promise<void> {
+    // Queue behind any action already in flight for this match. The guards below all read state that
+    // an in-flight `send` is in the middle of changing, so checking them outside the lock is
+    // checking a value that can be stale by the time we act on it (see match-lock.ts).
+    return withMatchLock(matchId, async () => {
+      const match = this.store.get(matchId);
+
+      if (match === undefined || match.status !== "playing" || match.turnEndsAt === null) {
+        return;
+      }
+
+      // The deadline moved (the player acted, or another path re-armed it) — this firing is stale.
+      // Now meaningful: the action that moved it has fully committed before we get here.
+      if (match.turnEndsAt > Date.now()) {
+        return;
+      }
+
+      await this.endTurnNow(match);
+    });
+  }
+
+  /** The forced-pass body, already holding the match lock. */
+  private async endTurnNow(match: MatchWrapper): Promise<void> {
+    const event = validateMainActionAndToEvent(match, { type: "passTurn" });
+
+    applyMainEventToMatch(match, event);
+
+    const emittables = mainEventToEmittables(match, event);
+    fillDiscoveredUnitsAndProperties(match, emittables);
+    emitToTeams(match, emittables);
+
+    await this.persistEventAndOutcome(match, attachSubEvent(event, { type: "wait" }));
+  }
+
+  /**
+   * Re-arm turn deadlines from the DB on boot (called after the match-store rebuild).
+   *
+   * Also restores `turnEndsAt` onto the rebuilt engine entity: the banks replay from the event log,
+   * but the deadline can't, and without it the first pass-turn after a restart would record no
+   * remaining time and quietly hand the acting player their whole bank back. A deadline that expired
+   * while the server was down fires immediately, which is correct — their time really did run out.
+   */
+  async rescheduleTurnDeadlines(): Promise<void> {
+    const rows = await this.db.match.findMany({
+      where: { status: "playing", turnEndsAt: { not: null } },
+      select: { id: true, turnEndsAt: true },
+    });
+
+    const orphaned: string[] = [];
+
+    rows.forEach((row, i) => {
+      const match = this.store.get(row.id);
+
+      if (match === undefined || row.turnEndsAt === null) {
+        // Quarantined or archived by the rebuild — nothing to time. Clear the row too: left set, it
+        // is re-selected and re-skipped by this query on every boot from now until forever.
+        orphaned.push(row.id);
+
+        return;
+      }
+
+      match.turnEndsAt = row.turnEndsAt.getTime();
+
+      // Deadlines that expired while we were down must still fire — their time really did run out —
+      // but firing them all on one tick means N concurrent force-end transactions. Stagger the
+      // already-expired ones; live deadlines keep their real time.
+      const expired = row.turnEndsAt.getTime() <= Date.now();
+      const firesAt = expired ? new Date(Date.now() + i * BOOT_STAGGER_MS) : row.turnEndsAt;
+
+      scheduleTurnDeadline(row.id, firesAt, (id) => this.forceEndTurn(id));
+    });
+
+    if (orphaned.length > 0) {
+      logger.info(`[turn-timer] clearing ${orphaned.length} turn deadline(s) on untracked matches`);
+      await this.db.match.updateMany({
+        where: { id: { in: orphaned } },
+        data: { turnEndsAt: null },
+      });
+    }
+  }
+
+  /**
+   * PLAN the deadline for the turn that just began — pure: no mutation, no timer, no I/O.
+   *
+   * Split from `commitTurnClock` deliberately. Arming used to happen before the transaction that
+   * persists the events causing it, so a rollback (a DB failure, or the EventLogConflictError this
+   * same seam can now raise) left the in-memory entity and a live `setTimeout` ahead of the durable
+   * row — and the next reboot restored the stale one. Planning is safe to do early; committing is
+   * not, so it waits for the commit.
+   *
+   * Public because the match lifecycle starts the FIRST turn's clock through it (see
+   * MatchesUsecase.reveal). An untimed match, or one that just ended, plans `null`.
+   */
+  planTurnClock(match: MatchWrapper): Date | null {
+    const bankMs = match.status === "playing" ? bankOf(match.getCurrentTurnPlayer()) : null;
+
+    if (bankMs === null) {
+      return null;
+    }
+
+    // Floor the turn length. `matchRulesSchema` now forbids a zero increment, which is the real
+    // guard, but a bank of 0 must never arm a deadline of `now`: that fires on the next tick, ends
+    // the turn, and does it again forever — a match no one can play. Defence in depth for any rules
+    // blob that predates the schema floor.
+    return new Date(Date.now() + Math.max(MIN_TURN_MS, bankMs));
+  }
+
+  /**
+   * ADOPT a planned deadline: mutate the live entity and arm (or cancel) the timer.
+   *
+   * Call this ONLY after the transaction that persisted the deadline has committed — see
+   * `planTurnClock`. Clearing (`null`) also cancels any live timeout, because leaving one on a
+   * finished match would force-end a turn in a game nobody is playing.
+   */
+  commitTurnClock(match: MatchWrapper, endsAt: Date | null): void {
+    match.turnEndsAt = endsAt?.getTime() ?? null;
+
+    if (endsAt === null) {
+      cancelTurnDeadline(match.id);
+
+      return;
+    }
+
+    scheduleTurnDeadline(match.id, endsAt, (id) => this.forceEndTurn(id));
+  }
 
   /**
    * Play a main action: validate it into an event, apply it, emit what each team may see, and persist.
@@ -62,6 +212,18 @@ export class MatchActionUsecase {
    * `playerInMatchBaseProcedure` the router binds this to.
    */
   async send(
+    match: MatchWrapper,
+    action: MainAction,
+  ): Promise<{
+    trapped: boolean;
+    trapPosition: [number, number] | null;
+  }> {
+    // Serialized per match: the whole validate → apply → emit → persist sequence is one critical
+    // section, and the turn deadline is a second writer that can fire into the middle of it.
+    return withMatchLock(match.id, () => this.sendLocked(match, action));
+  }
+
+  private async sendLocked(
     match: MatchWrapper,
     action: MainAction,
   ): Promise<{
@@ -173,6 +335,11 @@ export class MatchActionUsecase {
    * match without this method knowing anything about winners.
    */
   async surrender(match: MatchWrapper, playerId: string): Promise<void> {
+    // Same critical section as `send` — a concession must not interleave with a firing deadline.
+    return withMatchLock(match.id, () => this.surrenderLocked(match, playerId));
+  }
+
+  private async surrenderLocked(match: MatchWrapper, playerId: string): Promise<void> {
     const event = surrenderToEvent(match, playerId);
     const hadTurn = match.getPlayerById(playerId)?.data.hasCurrentTurn === true;
 
@@ -260,9 +427,24 @@ export class MatchActionUsecase {
     contents: MainEventWithSubEvents[],
     finished: FinalizeResult | null,
   ): Promise<void> {
+    // PLAN the next deadline (pure), persist it in the SAME transaction as the events that caused
+    // it, and only ADOPT it once that transaction has committed. Persisted because elapsed
+    // wall-clock can't be replayed: on reboot this row is what stops the acting player getting a
+    // fresh full bank. `undefined` means "this action didn't touch the clock — leave the row alone".
+    //
+    // A match that just FINISHED clears its deadline even when the turn didn't move: an attack or a
+    // surrender by a non-turn-holder decides a match without a passTurn, and without this the row
+    // keeps a live deadline on a finished match and the timeout survives until it fires.
+    const movedTurn = contents.some((content) => content.type === "passTurn");
+    const turnEndsAt = finished !== null ? null : movedTurn ? this.planTurnClock(match) : undefined;
+
     await this.db.$transaction(async (tx) => {
       for (const content of contents) {
-        await tx.event.create({ data: { matchId: match.id, content } });
+        await appendEvent(tx, match.id, content);
+      }
+
+      if (turnEndsAt !== undefined) {
+        await tx.match.update({ where: { id: match.id }, data: { turnEndsAt } });
       }
 
       if (finished !== null) {
@@ -275,5 +457,10 @@ export class MatchActionUsecase {
         });
       }
     });
+
+    // Durable now — safe to move the in-memory deadline and arm the real timeout.
+    if (turnEndsAt !== undefined) {
+      this.commitTurnClock(match, turnEndsAt);
+    }
   }
 }

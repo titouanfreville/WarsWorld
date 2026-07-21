@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { armySchema, type Army } from "server/core/schemas/army";
 import type { MatchRules } from "server/core/schemas/match-rules";
+import { resolveTimeControl } from "server/core/schemas/rule-presets";
 import { logger } from "shared/utils/logger";
 import { capacityForMode, isValidSeat, layoutForMode } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
@@ -49,6 +50,10 @@ export class LobbyUsecase {
       await this.assertMapFits(input.mapId, input.mode);
     }
 
+    // The time control is decided HERE, not by the client: a preset becomes its numbers, and a
+    // ranked lobby is pinned to the ranked format whatever was sent (see resolveTimeControl).
+    const rules = resolveTimeControl(input.rules, input.preset, input.isRanked);
+
     const lobby = await this.db.lobby.create({
       data: {
         hostPlayerId,
@@ -56,7 +61,7 @@ export class LobbyUsecase {
         ruleset: input.ruleset,
         isRanked: input.isRanked,
         mapId: input.mapId,
-        rules: input.rules,
+        rules,
         // Rolled now so the lobby can show faction team names/colours before the match spawns.
         teamFactions: rollTeamFactions(layoutForMode(input.mode).teamCount),
         members: {
@@ -471,7 +476,18 @@ export class LobbyUsecase {
     return lobby;
   }
 
-  /** A map exists and seats at least the mode's capacity — the shared guard for choosing a map. */
+  /**
+   * A map exists and seats EXACTLY the mode's capacity — the shared guard for choosing a map.
+   *
+   * Exactly, not "at least": the map's `numberOfPlayers` — never the seat count — is what drives
+   * slot iteration downstream (`allMatchSlotsReady`, `getNextAlivePlayer`). A 4-slot map in a duel
+   * therefore leaves slots 2 and 3 owning property and armies with no player behind them, and the
+   * match can never become ready. An oversized map is as broken as an undersized one.
+   *
+   * Seat count alone cannot separate a 2v2 map from a free-for-all one — both seat 4 — so the
+   * map's own `supportedModes` is the second half of this guard. A map with an empty list is
+   * unconfigured, not universally legal, and is refused everywhere.
+   */
   private async assertMapFits(mapId: string, mode: GameMode): Promise<void> {
     const map = await this.db.wWMap.findUnique({ where: { id: mapId } });
 
@@ -481,10 +497,17 @@ export class LobbyUsecase {
 
     const capacity = capacityForMode(mode);
 
-    if (map.numberOfPlayers < capacity) {
+    if (map.numberOfPlayers !== capacity) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Map supports ${map.numberOfPlayers} players but ${mode} needs ${capacity}`,
+        message: `Map is for ${map.numberOfPlayers} players but ${mode} needs exactly ${capacity}`,
+      });
+    }
+
+    if (!map.supportedModes.includes(mode)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `"${map.name}" is not playable in ${mode}`,
       });
     }
   }

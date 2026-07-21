@@ -28,10 +28,22 @@ class FakeDb {
   lobbies = new Map<string, Record<string, unknown>>();
   members: Member[] = [];
   infractions: { playerId: string; type: string; lobbyId?: string }[] = [];
+  // m0..m5 are ranked-legal; `m6` is playable in duel but NOT ranked-legal — the case the ranked
+  // pool filter has to exclude. Both counts stay at or under MAP_POOL_SIZE (7) on purpose: the
+  // pool is shuffled and sliced to that cap, so a larger eligible set would make "does the pool
+  // contain m6" depend on the shuffle and the test would flake.
   maps = Array.from({ length: 7 }, (_, i) => ({
     id: `m${i}`,
     name: `Map ${i}`,
     numberOfPlayers: 2,
+    supportedModes: ["duel"],
+    rankedModes: i === 6 ? [] : ["duel"],
+    // A 2×2 terrain grid: `mapBanView` summarises every pool map for the board's thumbnails, so the
+    // row needs the same shape the real column has.
+    tiles: [
+      [{ type: "plain" }, { type: "city" }],
+      [{ type: "base" }, { type: "plain" }],
+    ],
   }));
   private seq = 0;
 
@@ -78,6 +90,24 @@ class FakeDb {
       const lobby = this.lobbies.get(where.id)!;
       Object.assign(lobby, data);
       return lobby;
+    },
+    /** Conditional write: applies only when every field in `where` matches (see enterMapVote). */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: { id: string; status?: string };
+      data: Record<string, unknown>;
+    }) => {
+      const lobby = this.lobbies.get(where.id);
+
+      if (lobby === undefined || (where.status !== undefined && lobby.status !== where.status)) {
+        return { count: 0 };
+      }
+
+      Object.assign(lobby, data);
+
+      return { count: 1 };
     },
     findMany: async ({ where }: { where: { status?: string } }) =>
       [...this.lobbies.values()].filter(
@@ -130,8 +160,37 @@ class FakeDb {
     },
   };
   wWMap = {
-    findMany: async ({ where }: { where?: { id?: { in: string[] } } }) =>
-      where?.id ? this.maps.filter((m) => where.id!.in.includes(m.id)) : this.maps,
+    // Honours the mode filters, not just the id lookup: `buildMapPool` decides which maps a queue
+    // can roll, so a fake that ignored `rankedModes` would let a broken ranked filter pass unseen.
+    findMany: async ({
+      where,
+    }: {
+      where?: {
+        id?: { in: string[] };
+        numberOfPlayers?: number;
+        supportedModes?: { has: string };
+        rankedModes?: { has: string };
+      };
+    }) =>
+      this.maps.filter((m) => {
+        if (where?.id) {
+          return where.id.in.includes(m.id);
+        }
+
+        if (where?.numberOfPlayers !== undefined && m.numberOfPlayers !== where.numberOfPlayers) {
+          return false;
+        }
+
+        if (where?.supportedModes && !m.supportedModes.includes(where.supportedModes.has)) {
+          return false;
+        }
+
+        if (where?.rankedModes && !m.rankedModes.includes(where.rankedModes.has)) {
+          return false;
+        }
+
+        return true;
+      }),
   };
   $transaction = async (fn: (tx: FakeDb) => Promise<unknown>) => fn(this);
 }
@@ -172,6 +231,38 @@ const listen = (playerId: string, sink: QueueEvent[]) =>
 
 const firstLobbyId = (db: FakeDb) => [...db.lobbies.keys()][0];
 
+/** The lobby's current phase deadline, in ms (the fake DB stores lobby columns untyped). */
+const mapDeadline = (db: FakeDb, lobbyId: string): number =>
+  (db.lobbies.get(lobbyId)!.mapPhaseEndsAt as Date).getTime();
+
+/**
+ * Wind the phase deadline into the past, the way real elapsed time would, before invoking the
+ * handler directly.
+ *
+ * `onMapPhaseDeadline` ignores a firing whose persisted deadline is still in the future — that's how
+ * it tells a genuine timeout from the stale ban-phase timer that is briefly still armed when the
+ * last ban opens voting. Calling the handler without this asks it to treat a live phase as expired.
+ */
+const expireMapPhase = (db: FakeDb, lobbyId: string): void => {
+  db.lobbies.get(lobbyId)!.mapPhaseEndsAt = new Date(Date.now() - 1000);
+};
+
+/**
+ * Spend everyone's bans so the stage flips to voting. Bans are blind, so nothing may be voted until
+ * every player has used all of theirs — most tests only care about reaching the vote.
+ */
+const spendBans = async (
+  usecase: MatchmakingUsecase,
+  lobbyId: string,
+  bans: Record<string, string[]>,
+): Promise<void> => {
+  for (const [playerId, mapIds] of Object.entries(bans)) {
+    for (const mapId of mapIds) {
+      await usecase.banMap(lobbyId, playerId, mapId);
+    }
+  }
+};
+
 // The deadline handlers are private (only ever invoked by the timer); reach them in tests.
 type Internals = {
   onReadyDeadline(lobbyId: string): Promise<void>;
@@ -211,7 +302,10 @@ describe("matchmaking usecase", () => {
     await usecase.acceptReadyCheck(lobbyId, "B");
     expect(db.lobbies.get(lobbyId)!.status).toBe("map_ban");
 
-    // No bans → all 7 maps survive; both vote the same one.
+    // Bans are blind and voting is gated on both players spending them.
+    await spendBans(usecase, lobbyId, { A: ["m4", "m5"], B: ["m2", "m3"] });
+
+    // m0..m1 survive; both vote the same one.
     await usecase.voteMap(lobbyId, "A", "m0");
     await usecase.voteMap(lobbyId, "B", "m0");
 
@@ -245,7 +339,8 @@ describe("matchmaking usecase", () => {
     await usecase.acceptReadyCheck(lobbyId, "A");
     await usecase.acceptReadyCheck(lobbyId, "B");
 
-    await usecase.banMap(lobbyId, "A", "m0");
+    await spendBans(usecase, lobbyId, { A: ["m0", "m2"], B: ["m3", "m4"] });
+
     await expect(usecase.voteMap(lobbyId, "B", "m0")).rejects.toThrow(); // m0 is banned
     await usecase.voteMap(lobbyId, "A", "m1");
     await usecase.voteMap(lobbyId, "B", "m1");
@@ -254,6 +349,121 @@ describe("matchmaking usecase", () => {
     await internals(usecase).onMapRevealDeadline(lobbyId);
     expect(spawn.calls).toHaveLength(1);
     expect(spawn.calls[0]).toMatchObject({ mapId: "m1" });
+  });
+
+  it("keeps bans blind: no voting until both have banned, and the view masks the opponent", async () => {
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+    await usecase.acceptReadyCheck(lobbyId, "A");
+    await usecase.acceptReadyCheck(lobbyId, "B");
+
+    await usecase.banMap(lobbyId, "A", "m0");
+    await usecase.banMap(lobbyId, "A", "m1");
+
+    // A is done, B hasn't started. A may not vote yet — the bans haven't revealed.
+    await expect(usecase.voteMap(lobbyId, "A", "m2")).rejects.toThrow();
+
+    await usecase.banMap(lobbyId, "B", "m3");
+
+    // What B sees of A mid-stage: a count, and nothing else.
+    const midView = await usecase.mapBanView(lobbyId, "B");
+    const aAsSeenByB = midView.players.find((p) => p.playerId === "A")!;
+    expect(midView.stage).toBe("ban");
+    expect(midView.bansRevealed).toBe(false);
+    expect(aAsSeenByB.bannedMapIds).toEqual([]);
+    expect(aAsSeenByB.banCount).toBe(2);
+    // ...while B's own bans come back in full.
+    expect(midView.players.find((p) => p.playerId === "B")!.bannedMapIds).toEqual(["m3"]);
+
+    // B's last ban completes the stage → bans reveal, voting opens, the clock restarts.
+    const banDeadline = mapDeadline(db, lobbyId);
+    await usecase.banMap(lobbyId, "B", "m4");
+
+    const voteView = await usecase.mapBanView(lobbyId, "B");
+    expect(voteView.stage).toBe("vote");
+    expect(voteView.bansRevealed).toBe(true);
+    expect(voteView.players.find((p) => p.playerId === "A")!.bannedMapIds).toEqual(["m0", "m1"]);
+    expect(mapDeadline(db, lobbyId)).not.toBe(banDeadline);
+
+    // Votes stay blind in their turn: A's vote is withheld from B until the map is rolled.
+    await usecase.voteMap(lobbyId, "A", "m2");
+    const votingView = await usecase.mapBanView(lobbyId, "B");
+    const aVoting = votingView.players.find((p) => p.playerId === "A")!;
+    expect(votingView.votesRevealed).toBe(false);
+    expect(aVoting.votedMapId).toBeNull();
+    expect(aVoting.hasVoted).toBe(true);
+
+    // Both voted → rolled and revealed → the votes finally become public.
+    await usecase.voteMap(lobbyId, "B", "m2");
+    const revealView = await usecase.mapBanView(lobbyId, "B");
+    expect(revealView.votesRevealed).toBe(true);
+    expect(revealView.players.find((p) => p.playerId === "A")!.votedMapId).toBe("m2");
+  });
+
+  it("lets both players waste a ban on the same map rather than leaking it", async () => {
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+    await usecase.acceptReadyCheck(lobbyId, "A");
+    await usecase.acceptReadyCheck(lobbyId, "B");
+
+    // A banned m0; B banning it too must be ACCEPTED — a rejection would tell B what A picked.
+    await spendBans(usecase, lobbyId, { A: ["m0", "m1"], B: ["m0", "m2"] });
+
+    const view = await usecase.mapBanView(lobbyId, "A");
+    expect(view.stage).toBe("vote");
+    // The overlap wasted a ban: 4 bans removed only 3 maps, so m3 survives alongside m4..m5.
+    await usecase.voteMap(lobbyId, "A", "m3");
+    await usecase.voteMap(lobbyId, "B", "m3");
+    expect(db.lobbies.get(lobbyId)!.mapId).toBe("m3");
+  });
+
+  it("ban-stage deadline flags the player who didn't ban, not the one waiting on them", async () => {
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+    await usecase.acceptReadyCheck(lobbyId, "A");
+    await usecase.acceptReadyCheck(lobbyId, "B"); // → map_ban
+
+    // A bans on time and is then blocked waiting for B, who goes AFK. A must not be punished for a
+    // vote they were never allowed to cast.
+    await usecase.banMap(lobbyId, "A", "m0");
+    await usecase.banMap(lobbyId, "A", "m1");
+    expireMapPhase(db, lobbyId);
+    await internals(usecase).onMapPhaseDeadline(lobbyId);
+
+    expect(db.lobbies.get(lobbyId)!.status).toBe("cancelled");
+    expect(db.infractions).toEqual([{ playerId: "B", type: "abandoned_map_ban", lobbyId }]);
+    expect(queue.has("A")).toBe(true);
+    expect(queue.has("B")).toBe(false);
+  });
+
+  it("ignores the stale ban timer that is still armed when the last ban opens voting", async () => {
+    queue.add(ticket("A"));
+    queue.add(ticket("B", 25.3));
+    await usecase.tick();
+    const lobbyId = firstLobbyId(db);
+    await usecase.acceptReadyCheck(lobbyId, "A");
+    await usecase.acceptReadyCheck(lobbyId, "B"); // → map_ban
+
+    // BOTH players spend every ban, just before the ban deadline. That opens voting on a fresh
+    // deadline — but the original ban timer is still armed and about to fire.
+    await usecase.banMap(lobbyId, "A", "m0");
+    await usecase.banMap(lobbyId, "A", "m1");
+    await usecase.banMap(lobbyId, "B", "m2");
+    await usecase.banMap(lobbyId, "B", "m3");
+
+    // The stale firing. Left unguarded it sees the bans complete, switches to the vote predicate,
+    // finds neither player has voted — voting opened milliseconds ago — and cancels the match,
+    // flagging BOTH for abandoning a phase they were never given time to play.
+    await internals(usecase).onMapPhaseDeadline(lobbyId);
+
+    expect(db.lobbies.get(lobbyId)!.status).toBe("map_ban");
+    expect(db.infractions).toEqual([]);
   });
 
   it("ready-check timeout flags the non-acceptor and requeues the acceptor", async () => {
@@ -338,6 +548,35 @@ describe("matchmaking usecase", () => {
 
   const casual = (playerId: string, mu = 25) => ({ ...ticket(playerId, mu), ranked: false });
 
+  /**
+   * The map pool a queue rolls from is what decides which maps can affect ratings, so the ranked
+   * queue has to draw from `rankedModes` and not merely from "any map that seats two". `m6` is
+   * playable in duel but not ranked-legal there.
+   */
+  describe("map pool eligibility", () => {
+    it("keeps a ranked-excluded map out of a ranked queue's pool", async () => {
+      queue.add(ticket("A"));
+      queue.add(ticket("B"));
+      await usecase.tick();
+
+      const pool = db.lobbies.get(firstLobbyId(db))!.mapPool as string[];
+
+      expect(pool).not.toContain("m6");
+      expect(pool).toHaveLength(6);
+    });
+
+    it("still offers that map in a casual queue", async () => {
+      queue.add(casual("A"));
+      queue.add(casual("B"));
+      await usecase.tick();
+
+      const pool = db.lobbies.get(firstLobbyId(db))!.mapPool as string[];
+
+      expect(pool).toContain("m6");
+      expect(pool).toHaveLength(7);
+    });
+  });
+
   it("casual wide-gap decline is allowed, writes no infraction, and requeues the other player", async () => {
     queue.add(casual("A"));
     queue.add(casual("B", 35)); // ~95% favourite → past LENIENT_GAP, and casual → lenient
@@ -370,7 +609,9 @@ describe("matchmaking usecase", () => {
     await usecase.acceptReadyCheck(lobbyId, "A");
     await usecase.acceptReadyCheck(lobbyId, "B"); // → map_ban
 
+    await spendBans(usecase, lobbyId, { A: ["m4", "m5"], B: ["m2", "m3"] });
     await usecase.voteMap(lobbyId, "A", "m0"); // A picks, B goes AFK
+    expireMapPhase(db, lobbyId);
     await internals(usecase).onMapPhaseDeadline(lobbyId);
 
     expect(db.lobbies.get(lobbyId)!.status).toBe("cancelled");
@@ -422,8 +663,21 @@ describe("matchmaking usecase", () => {
       db.activeMatches.push({ playerId: "A", isRanked: false });
       db.activeMatches.push({ playerId: "A", isRanked: false });
 
-      await usecase.joinQueue("A", { mode: "ffa", ruleset: "highFunds", ranked: false });
+      await usecase.joinQueue("A", { mode: "duel", ruleset: "highFunds", ranked: false });
       expect(queue.has("A")).toBe(true);
+    });
+
+    it("refuses a 4-seat mode outright rather than spawning an unplayable match", async () => {
+      // `MatchQueue.pair` only forms PAIRS. Left unguarded, a `teams`/`ffa` ticket produced a
+      // 2-member lobby on a correctly-selected 4-player map — slots 2 and 3 holding property with
+      // nobody behind them, so `allMatchSlotsReady` could never be satisfied and the match could
+      // never start. Custom lobbies seat four and remain the way to play these modes.
+      for (const mode of ["teams", "ffa"] as const) {
+        await expect(
+          usecase.joinQueue("A", { mode, ruleset: "standard", ranked: false }),
+        ).rejects.toThrow(/only matches 1v1/);
+        expect(queue.has("A")).toBe(false);
+      }
     });
 
     // The Play page reads eligibility to grey the ranked cards out BEFORE the click. It must agree

@@ -86,11 +86,20 @@ export const REMATCH_LOOKBACK_MS = REMATCH_BASE_GAP_SEC * 1000;
 export const MAP_POOL_SIZE = 7; // candidate maps; 2 players × 2 bans leaves ≥3 to vote on
 export const BANS_PER_PLAYER = 2;
 // Smallest pool that still leaves a votable survivor after both players spend every ban
-// (2 players × BANS_PER_PLAYER + 1). Below this the ban phase is degenerate; the last-survivor
-// guard in `canBan` keeps it safe, but we warn because it signals too few eligible maps in the DB.
+// (2 players × BANS_PER_PLAYER + 1).
+//
+// This is a HARD FLOOR, not a warning threshold. Bans are blind, so `canBan` deliberately cannot
+// consult the opponent's bans — which means it cannot refuse the ban that empties the pool either
+// (refusing would leak what the opponent banned). This constant is the ONLY thing standing between
+// two players and a pool with no survivors, where nobody can vote and both get flagged as
+// abandoners for a vote they were never allowed to cast. A pool below it must never reach the ban
+// phase; see `createReadyCheck`, which refuses to start one.
 export const MIN_MAP_POOL_SIZE = BANS_PER_PLAYER * 2 + 1;
 export const SECONDS_PER_MAP_DECISION = 30; // time budgeted per ban and for the final vote
-// Whole ban/vote phase = one shared deadline covering every ban + the vote (BANS_PER_PLAYER + 1).
-export const MAP_PHASE_SECONDS = (BANS_PER_PLAYER + 1) * SECONDS_PER_MAP_DECISION; // 90s
+// Bans and the vote are SEPARATE deadlines because bans are BLIND: you can't vote until both players
+// have spent their bans (that's the moment bans reveal), so a shared deadline would let a slow
+// opponent eat your voting time — and get you flagged for a vote you were never allowed to cast.
+export const MAP_BAN_SECONDS = BANS_PER_PLAYER * SECONDS_PER_MAP_DECISION; // 60s
+export const MAP_VOTE_SECONDS = SECONDS_PER_MAP_DECISION; // 30s, restarted when the bans reveal
 // After both vote, both players study the rolled map for this long before the CO pick begins.
 export const MAP_REVEAL_SECONDS = 30;
