@@ -31,7 +31,10 @@ describe("finalizeIfGameOver", () => {
 
     const winnerTeamIndex = match.getPlayerBySlot(1)!.team.index;
 
-    expect(finalizeIfGameOver(match)).toEqual({ winnerTeamIndex });
+    // Beaten on the board, not on the clock — the reason travels with the outcome so the endgame
+    // screen and the persisted row can tell the two apart.
+    expect(finalizeIfGameOver(match)).toEqual({ winnerTeamIndex, reason: "elimination" });
+    expect(match.endReason).toBe("elimination");
     expect(match.status).toBe("finished");
     expect(match.getPlayerBySlot(1)!.data.result).toBe("won");
     expect(match.getPlayerBySlot(0)!.data.result).toBe("lost");
@@ -42,7 +45,7 @@ describe("finalizeIfGameOver", () => {
     match.getPlayerBySlot(0)!.data.status = "routed";
     match.getPlayerBySlot(1)!.data.status = "captured";
 
-    expect(finalizeIfGameOver(match)).toEqual({ winnerTeamIndex: null });
+    expect(finalizeIfGameOver(match)).toEqual({ winnerTeamIndex: null, reason: "elimination" });
     expect(match.getPlayerBySlot(0)!.data.result).toBe("drawn");
     expect(match.getPlayerBySlot(1)!.data.result).toBe("drawn");
   });

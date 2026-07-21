@@ -2,6 +2,7 @@ import { DispatchableError } from "server/engine/dispatchable-error";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { ApplyEvent } from "server/engine/events/handler-types";
 import type { PlayerEliminatedEvent } from "server/engine/types/events";
+import { releaseHoldings } from "server/engine/rules/elimination";
 
 /**
  * Surrender — a player conceding the match outright.
@@ -51,6 +52,11 @@ export const applyPlayerEliminatedEvent: ApplyEvent<PlayerEliminatedEvent> = (ma
   }
 
   player.data.status = event.eliminationReason === "surrendered" ? "resigned" : "routed";
+
+  // No capturer, so their holdings go neutral rather than to anyone — and their HQ becomes a city.
+  // Without this their properties stayed on the board under their slot forever, which at the day
+  // limit could score territory for a player who left the match hours ago.
+  releaseHoldings(match, player, null);
 
   for (const unit of player.getUnits()) {
     unit.remove();

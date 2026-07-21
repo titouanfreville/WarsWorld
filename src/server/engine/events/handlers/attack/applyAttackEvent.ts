@@ -4,6 +4,7 @@ import type { AttackEvent, EmittableAttackEvent } from "server/engine/types/even
 import type { MatchWrapper } from "server/engine/entities/match";
 import { canAttackWithPrimary } from "server/engine/events/handlers/attack/canAttackWithPrimary";
 import { getPowerChargeGain } from "server/engine/events/handlers/attack/getPowerChargeGain";
+import { releaseHoldings } from "server/engine/rules/elimination";
 import {
   applySashaFundsDamage,
   handleSashaScopFunds,
@@ -76,10 +77,14 @@ export const applyAttackEvent = (match: MatchWrapper, event: AttackEvent, positi
   // A player who just lost their last unit is eliminated. Set the status HERE (in the apply step) so
   // it survives an event-log replay — `event-to-emittable` also sets it, but that only runs on live
   // emission, not on rebuild, which left game-over (derived from status) unreachable after a restart.
+  // Their properties go neutral and their HQ becomes a city — routing is not a capture, so nobody
+  // inherits (see rules/elimination.ts).
   if (event.eliminationReason === "all-attacker-units-destroyed") {
     attacker.player.data.status = "routed";
+    releaseHoldings(match, attacker.player, null);
   } else if (event.eliminationReason === "all-defender-units-destroyed") {
     defender.player.data.status = "routed";
+    releaseHoldings(match, defender.player, null);
   }
 };
 

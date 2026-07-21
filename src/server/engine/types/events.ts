@@ -103,7 +103,18 @@ export type Turn = WithElimination<"all-units-crashed"> & {
   newWeatherDays?: number;
 };
 
-export type PassTurnEvent = PassTurnAction & { turns: Turn[] };
+export type PassTurnEvent = PassTurnAction & {
+  turns: Turn[];
+  /**
+   * How much turn-clock time the player ENDING their turn had left, in ms — captured when the action
+   * became this event, exactly like combat luck and the weather roll. The apply step banks it rather
+   * than reading a clock itself, which is what keeps event-log replay reproducible.
+   *
+   * Absent on an untimed match and on every event written before the clock existed; the apply step
+   * treats both as "no clock to settle". Zero means they were force-ended on time.
+   */
+  bankRemainingMs?: number;
+};
 
 /**
  * The "start of turn" summary for the player whose turn just began — day number plus which of their

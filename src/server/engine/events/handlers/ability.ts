@@ -5,6 +5,7 @@ import type { AbilityEvent } from "server/engine/types/events";
 import type { CapturableTile } from "server/core/schemas/tile-state";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { UnitWrapper } from "server/engine/entities/unit";
+import { releaseHoldings } from "server/engine/rules/elimination";
 import type { ApplySubEvent, SubActionToEvent } from "server/engine/events/handler-types";
 
 function willCaptureTile(unit: UnitWrapper<"infantry" | "mech">): boolean {
@@ -143,24 +144,9 @@ const eliminatePlayerByCapture = (match: MatchWrapper, capturingUnit: UnitWrappe
     );
   }
 
-  const newOwnerSlot = capturingUnit.data.playerSlot;
-  const previousOwnerVision = playerToEliminate.team.vision;
-  const newOwnerVision = capturingUnit.player.team.vision;
-
-  for (const changeableTile of match.changeableTiles) {
-    if ("playerSlot" in changeableTile && playerToEliminate.owns(changeableTile)) {
-      // Everyone watching the tile as it changes hands learns its new owner (fog last-known); the
-      // losing player always sees their own property flip. Must run BEFORE removeOwnedProperty, while
-      // the previous owner still has vision of it.
-      match.rememberPropertyOwnerForWatchers(changeableTile.position, newOwnerSlot);
-      // Hand the property's fog vision over with its ownership: drop it from the eliminated player's
-      // team (so a surviving teammate can't keep seeing it) and grant it to the new owner. Without
-      // this the next recalculateVision() would rebuild the OLD owner's sight of transferred tiles.
-      previousOwnerVision?.removeOwnedProperty(changeableTile.position);
-      changeableTile.playerSlot = newOwnerSlot;
-      newOwnerVision?.addOwnedProperty(changeableTile.position);
-    }
-  }
+  // The capturer inherits the lot, and the captured HQ becomes a city (see rules/elimination.ts —
+  // shared with the rout and resignation paths so the board can't tell you HOW someone died).
+  releaseHoldings(match, playerToEliminate, capturingUnit.data.playerSlot);
 
   for (const unit of playerToEliminate.getUnits()) {
     unit.remove();

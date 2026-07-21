@@ -179,6 +179,16 @@ export class EndgameUsecase {
       matchId: raw.id,
       status: raw.status,
       winnerTeamIndex: raw.winnerTeamIndex,
+      /**
+       * HOW it ended, alongside who won — the reason `Match.endReason` is persisted at all.
+       *
+       * Without it on this read path the column was write-only: a draw on the day limit and a draw
+       * by mutual elimination are the same `winnerTeamIndex: null` row, and the live
+       * `deriveGameOver` that the end-game overlay reads works off the in-memory entity, which is
+       * archived out of the store on reboot. History could never tell the player which game they
+       * had just played. Null for matches finished before this was tracked.
+       */
+      endReason: raw.endReason,
       finishedAt: raw.finishedAt,
       isRanked: raw.isRanked,
       // Match meta for the End-Game hero (map · mode · fog · duration).

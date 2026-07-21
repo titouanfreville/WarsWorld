@@ -1,5 +1,6 @@
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { TeamWrapper } from "server/engine/entities/team";
+import { dayLimitWinner, isDayLimitReached, teamInPlay } from "server/engine/previews/day-limit";
 
 /**
  * Derives the match outcome from the engine's elimination status. A team is out once none of its
@@ -10,10 +11,14 @@ import type { TeamWrapper } from "server/engine/entities/team";
  * elimination event, so its status stays "alive".
  */
 
-const teamInPlay = (team: TeamWrapper): boolean =>
-  team.players.some((player) => player.data.status === "alive");
+/** Why the match ended — the endgame screen says "routed" or "day limit — most properties". */
+export type GameOverReason = "elimination" | "day-limit";
 
-export type GameOver = { winnerTeamIndex: number | null; viewerWon: boolean };
+export type GameOver = {
+  winnerTeamIndex: number | null;
+  viewerWon: boolean;
+  reason: GameOverReason;
+};
 
 /** Non-null once at most one team is still in play. `winnerTeamIndex` is null on a draw. */
 export const deriveGameOver = (
@@ -42,13 +47,30 @@ export const deriveGameOver = (
         winnerTeamIndex !== null &&
         viewerTeam !== undefined &&
         viewerTeam.index === winnerTeamIndex,
+      // How it ended was decided when it was stamped; a finished match just reports it back.
+      reason: match.endReason ?? "elimination",
     };
   }
 
   const teamsInPlay = match.teams.filter(teamInPlay);
 
   if (teamsInPlay.length > 1) {
-    return null; // still contested
+    // Still contested on the board — but the clock can still call it. Territory decides: most
+    // properties, cities breaking the tie, otherwise a draw (see dayLimitWinner).
+    if (!isDayLimitReached(match)) {
+      return null;
+    }
+
+    const winnerOnTerritory = dayLimitWinner(match);
+
+    return {
+      winnerTeamIndex: winnerOnTerritory,
+      viewerWon:
+        winnerOnTerritory !== null &&
+        viewerTeam !== undefined &&
+        viewerTeam.index === winnerOnTerritory,
+      reason: "day-limit",
+    };
   }
 
   const winnerTeamIndex = teamsInPlay.length === 1 ? teamsInPlay[0].index : null;
@@ -57,5 +79,6 @@ export const deriveGameOver = (
     winnerTeamIndex,
     viewerWon:
       winnerTeamIndex !== null && viewerTeam !== undefined && viewerTeam.index === winnerTeamIndex,
+    reason: "elimination",
   };
 };

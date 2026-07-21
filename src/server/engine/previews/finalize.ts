@@ -1,7 +1,7 @@
 import type { MatchWrapper } from "server/engine/entities/match";
-import { deriveGameOver } from "./game-over";
+import { deriveGameOver, type GameOverReason } from "./game-over";
 
-export type FinalizeResult = { winnerTeamIndex: number | null };
+export type FinalizeResult = { winnerTeamIndex: number | null; reason: GameOverReason };
 
 /**
  * If a playing match has become decided, flip it to "finished" in memory and stamp each player's
@@ -21,7 +21,7 @@ export const finalizeIfGameOver = (match: MatchWrapper): FinalizeResult | null =
     return null;
   }
 
-  return stampOutcome(match, gameOver.winnerTeamIndex);
+  return stampOutcome(match, gameOver.winnerTeamIndex, gameOver.reason);
 };
 
 /**
@@ -41,17 +41,26 @@ export const forceOutcome = (
     return null;
   }
 
-  return stampOutcome(match, winnerTeamIndex);
+  // An admin decides the result directly, so nothing on the board explains it — it's an elimination
+  // as far as every downstream reader is concerned (the audit log is where the forcing is recorded).
+  return stampOutcome(match, winnerTeamIndex, "elimination");
 };
 
 /** Flip to finished and stamp each player's result. The one place an outcome is written to state. */
-const stampOutcome = (match: MatchWrapper, winnerTeamIndex: number | null): FinalizeResult => {
+const stampOutcome = (
+  match: MatchWrapper,
+  winnerTeamIndex: number | null,
+  reason: GameOverReason,
+): FinalizeResult => {
   match.status = "finished";
+  // Kept on the match so a finished match can still say HOW it ended — `deriveGameOver` reads it back
+  // rather than re-deriving from a board that has already stopped moving.
+  match.endReason = reason;
 
   for (const player of match.getAllPlayers()) {
     player.data.result =
       winnerTeamIndex === null ? "drawn" : player.team.index === winnerTeamIndex ? "won" : "lost";
   }
 
-  return { winnerTeamIndex };
+  return { winnerTeamIndex, reason };
 };

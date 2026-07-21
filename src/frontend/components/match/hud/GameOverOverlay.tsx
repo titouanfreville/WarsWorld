@@ -10,7 +10,12 @@ import { resolveParticleTypes, type EffectId } from "./particle-effects";
  * per the frontend contract rule (no `shared/` import); the BE stays the single source of the
  * outcome — the client only renders it.
  */
-type GameOverInfo = { viewerWon: boolean; winnerTeamIndex: number | null };
+type GameOverInfo = {
+  viewerWon: boolean;
+  winnerTeamIndex: number | null;
+  /** How it ended. Optional so a match finalized before this was recorded still renders. */
+  reason?: "elimination" | "day-limit";
+};
 
 /** One general in the end-of-match cast, tagged with how their match ended. */
 export type CoResult = {
@@ -32,6 +37,19 @@ const PROMPT: Record<Outcome, string> = {
   victory: "The battlefield is yours",
   defeat: "Your forces are broken",
   draw: "Mutual annihilation",
+};
+
+/**
+ * The line under the stamp. A match decided on the day limit needs saying explicitly — the armies are
+ * both still standing, so "your forces are broken" would be a lie, and a draw there is a territory
+ * tie rather than mutual annihilation.
+ */
+const promptFor = (gameOver: GameOverInfo, outcome: Outcome): string => {
+  if (gameOver.reason !== "day-limit") {
+    return PROMPT[outcome];
+  }
+
+  return outcome === "draw" ? "Day limit — territory even" : "Day limit — decided on territory";
 };
 
 // Winners first so a 1v1 reads left-to-right as winner → loser.
@@ -140,7 +158,7 @@ export function GameOverOverlay({
           <div className="ww-go__word @relative @select-none">{WORD[outcome]}</div>
         </div>
         <p className="ww-go__prompt @relative @mt-4 @text-xs @uppercase @tracking-[0.3em] @text-white/70">
-          {PROMPT[outcome]}
+          {promptFor(gameOver, outcome)}
         </p>
         {onContinue !== undefined && (
           <div className="ww-go__continue @relative @mt-6 @flex @items-center @gap-3">

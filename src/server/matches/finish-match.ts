@@ -37,6 +37,10 @@ export const persistFinishedMatch = async (
     data: {
       status: "finished",
       winnerTeamIndex: finished.winnerTeamIndex,
+      // HOW it ended, alongside who won: a draw on the day limit and a draw by mutual elimination
+      // are the same `winnerTeamIndex: null` row otherwise, and the history screen can't tell the
+      // player which one they just played.
+      endReason: finished.reason,
       finishedAt: new Date(),
       playerState: match.getAllPlayers().map((player) => player.data),
     },

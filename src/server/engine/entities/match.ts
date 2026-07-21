@@ -10,6 +10,7 @@ import type { WWUnit } from "server/core/schemas/unit";
 import type { Weather } from "server/core/schemas/weather";
 import type { ChangeableTile } from "server/core/schemas/tile-state";
 import type { PowerActivationReport, TurnStartReport } from "server/engine/types/events";
+import type { GameOverReason } from "server/engine/previews/game-over";
 import {
   createNeutralPlayerInMatch,
   type PlayerInMatch,
@@ -53,6 +54,23 @@ export class MatchWrapper<
    * is used, and null again once the activating player's next turn begins.
    */
   public powerActivationReport: PowerActivationReport | null = null;
+  /**
+   * How this match ended, set by `stampOutcome` when it finishes. Null while it's still being played.
+   * Rebuilt by replay like the reports above (the final event is what decides it), and persisted on
+   * the Match row so the history/battle-report path — which never touches this entity — can say
+   * "decided on the day limit" rather than just naming a winner.
+   */
+  public endReason: GameOverReason | null = null;
+  /**
+   * When the current turn runs out, as epoch ms — `now + the acting player's bank`, armed by the
+   * orchestrator each time the turn moves on. Null in an untimed match.
+   *
+   * ORCHESTRATION state, not a rule: no engine logic branches on it, and it's persisted on the Match
+   * row (unlike the banks, which rebuild from the event log) because elapsed wall-clock can't be
+   * replayed — without it a restart would hand the acting player a fresh full bank. The pass-turn
+   * action-to-event step reads it once to record what's left; nothing else in the engine touches it.
+   */
+  public turnEndsAt: number | null = null;
   public teams: TeamWrapper[] = [];
   private neutralPlayer: PlayerInMatchWrapper;
   /**
