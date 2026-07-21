@@ -3,6 +3,7 @@ import type { MatchWrapper } from "server/engine/entities/match";
 import { fogViewChangeableTiles } from "server/engine/previews/fog-view";
 import { deriveGameOver } from "server/engine/previews/game-over";
 import { buildPublicPowerSummary } from "server/engine/previews/turn-snapshot";
+import { bankOf } from "server/engine/rules/turn-clock";
 
 /**
  * The full board view for one viewer — the fog-projected, vision-masked snapshot the client renders
@@ -60,10 +61,17 @@ export const buildMatchFullView = (match: MatchWrapper, currentPlayerId: string)
       ...player.data,
       funds: !fogOfWar || player.data.id === currentPlayerId ? player.data.funds : null,
       power: buildPublicPowerSummary(player),
+      // Turn clock, public for BOTH players — how long your opponent has left is part of playing a
+      // timed game, and hiding it would only make the pressure invisible. Null in an untimed match.
+      timeBankMs: bankOf(player),
     })),
     rules: match.rules,
     status: match.status,
     turn: match.turn,
+    // When the current turn runs out, as an epoch ms the client counts down from. The SERVER decides
+    // what happens at zero (it force-ends the turn); this is only what the clock displays, so a
+    // client with a skewed or paused clock can't buy or lose time. Null in an untimed match.
+    turnEndsAt: match.turnEndsAt,
     // Per-viewer masked units (see maskUnitForViewer, the single rule): Sonja hides her units'
     // HP/fuel/ammo from opponents even without fog, and under fog an enemy's cargo and consumables are
     // secret too (its HP is not — a unit you can see, you can read). Each unit also carries `supply`,

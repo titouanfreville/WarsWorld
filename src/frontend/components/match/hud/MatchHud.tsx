@@ -91,6 +91,7 @@ export function MatchHud(props: Props) {
               activatablePower={self && props.isMyTurn ? (props.snapshot?.power ?? null) : null}
               onActivatePower={self ? props.onActivatePower : undefined}
               powerPending={props.powerPending}
+              turnEndsAt={view.turnEndsAt}
             />
           );
         })}

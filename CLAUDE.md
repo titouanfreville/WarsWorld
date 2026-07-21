@@ -142,6 +142,48 @@ npm run prisma:studio  # browse the DB at :5555
 > (`rtk: No such file or directory`). If `prisma db push/seed` fails that way, run it through
 > `rtk proxy npx prisma <cmd>`.
 
+## Schema changes (Prisma migrations)
+
+**Iterate with `db push`, capture one migration at the end, deploy with `migrate deploy`.**
+
+```bash
+npm run prisma:push              # while iterating: schema → DB, no files, no history
+npm run prisma:migrate:new -- <lower_snake_case_name>   # once settled: capture it as ONE migration
+npm run prisma:check             # do the migrations reproduce schema.prisma? (run this in CI)
+npm run prisma:deploy            # servers: apply pending migrations. The ONLY prod command.
+npm run prisma:shadow-init       # one-time: create the scratch DB the two commands above need
+```
+
+- **Never run `prisma migrate dev`** (nor `migrate reset` casually). Because we iterate with
+  `db push`, the dev DB always holds changes the migration history doesn't know about — `migrate
+dev` reads that as drift and offers to **reset your database**. `prisma:migrate:new` does the same
+  job non-destructively: it computes the SQL by diffing history against `schema.prisma`, then marks
+  the migration applied (your `db push` already applied it).
+- **Never edit a migration that has been applied anywhere but your own machine.** Prisma checksums
+  them; changing an applied one makes every other environment report drift. Correct it with a _new_
+  migration. Unmerged and local-only, you can freely delete the folder and regenerate.
+- **Review the generated SQL before committing** — a diff can express a rename as drop-then-add,
+  which silently discards the column's data.
+- **Rebase before generating, and generate as the last step before merge.** The SQL is computed
+  against migration history _at that moment_; from a stale baseline it can encode a world that no
+  longer exists. `prisma:check` is what catches the resulting drift — the silent failure is two
+  branches whose migrations no longer reproduce `schema.prisma`.
+- **A database that predates the migration history must be BASELINED once**, before its first
+  `prisma:deploy`. `prisma/migrations/0_init` is a full `CREATE TABLE` baseline; run it against a DB
+  that already has those tables — every environment built with `db push`, which until now was all of
+  them — and `migrate deploy` tries to create what exists, aborts, and marks the migration failed.
+  Tell Prisma it is already applied instead:
+
+  ```bash
+  npx prisma migrate resolve --applied 0_init   # ONCE per pre-existing database, then never again
+  ```
+
+  A brand-new empty database needs none of this — `prisma:deploy` just runs `0_init` normally. This
+  is the one gap in "`prisma:deploy` is the ONLY prod command": it is, _after_ baselining.
+
+- `start:server` does **not** migrate on boot. Deployment runs `prisma:deploy` as a release step,
+  before starting the server.
+
 ## Global conventions
 
 - **Validate at the boundary, once.** Every tRPC procedure declares a `zod` input schema. Don't

@@ -74,9 +74,7 @@ export function ChatMessageList<Message extends ChatBubbleMessage>({
             )}
 
             <div className="@flex @min-w-0 @flex-col @gap-1">
-              {editor !== null ? (
-                editor
-              ) : (
+              {editor ?? (
                 <div className="@group @relative">
                   <div
                     className={`@rounded-xl @px-3 @py-1.5 @text-xs @leading-relaxed ${

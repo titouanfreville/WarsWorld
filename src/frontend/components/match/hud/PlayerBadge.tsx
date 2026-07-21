@@ -5,6 +5,7 @@ import { ARMY_HEX, ARMY_LABEL, coPortraitUrl, type Army } from "frontend/utils/s
 import type { PlayerBattleStats } from "./derive-player-stats";
 import { PowerActions } from "./PowerActions";
 import { PowerMeter } from "./PowerMeter";
+import { TurnClock } from "./TurnClock";
 
 /**
  * One army's permanent readout in the command HUD: CO mugshot in an army-accent frame, name, and the
@@ -27,6 +28,8 @@ type Props = {
   onActivatePower?: (isSuper: boolean) => void;
   /** True while a power activation is already buffered — blocks a double-tap. */
   powerPending?: boolean;
+  /** Deadline for the turn in progress (epoch ms), for the active army's live clock. */
+  turnEndsAt?: number | null;
 };
 
 const fundsLabel = (funds: number | null): string =>
@@ -40,6 +43,7 @@ export function PlayerBadge({
   activatablePower = null,
   onActivatePower,
   powerPending = false,
+  turnEndsAt = null,
 }: Props) {
   const army = player.army as Army;
   const accent = ARMY_HEX[army] ?? "#E47220";
@@ -109,6 +113,11 @@ export function PlayerBadge({
               <span className="@text-slate-500">⌂</span> {stats.propertyCount}
             </span>
           </div>
+          {/* Turn clock, pushed to the right of the intel line. Live for the army on turn, banked
+              for everyone else; absent entirely in an untimed match. */}
+          <span className="@ml-auto @flex-none">
+            <TurnClock bankMs={player.timeBankMs} endsAt={turnEndsAt} active={active} />
+          </span>
         </div>
 
         {/* Meter with activation buttons to its right; wraps to the next line in a narrow side dock

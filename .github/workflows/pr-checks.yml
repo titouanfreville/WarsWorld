@@ -8,20 +8,44 @@ on:
       - main
 jobs:
   pr-checks:
-    name: Build, Lint, and Prettier
+    name: Check, Lint, Test, and Build
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node: ["18.x"]
+        node: ["21.x"]
         os: [ubuntu-latest]
+
+    services:
+      # Postgres 17 to match the Supabase project we deploy to (supabase/.temp/postgres-version).
+      # The local Docker dev DB is still postgres:13 — CI deliberately tracks PRODUCTION, since the
+      # point of the migration check is "will these migrations replay on the real database?".
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # No .env in CI (it is gitignored) — the tooling reads real environment variables instead.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/warsworld?schema=public
+      # Scratch DB that `prisma:check` replays the whole migration history into.
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/warsworld_shadow?schema=public
+
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Use Node ${{ matrix.node }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: "npm"
@@ -29,11 +53,38 @@ jobs:
       - name: Install deps (with cache)
         run: npm install
 
+      # @prisma/client generates on install, but do it explicitly so a cached node_modules can never
+      # leave a stale client behind — the type errors that causes are baffling to debug.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Create databases
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" \
+            -c 'CREATE DATABASE warsworld;' \
+            -c 'CREATE DATABASE warsworld_shadow;'
+
+      # Guards the multi-developer failure mode: two branches generating migrations from different
+      # baselines can leave migrations that no longer reproduce schema.prisma. Silent otherwise —
+      # you only find out when a fresh environment comes up different from production.
+      - name: Check migrations reproduce schema.prisma
+        run: npm run prisma:check
+
+      # Also proves every migration actually applies in order, on the production Postgres version.
+      - name: Apply migrations
+        run: npm run prisma:deploy
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
       - name: Next.js cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.next/cache
-          key: ${{ runner.os }}-${{ runner.node }}-${{ hashFiles('**/package-lock.yaml') }}-nextjs
+          key: ${{ runner.os }}-${{ matrix.node }}-${{ hashFiles('package-lock.json') }}-nextjs
 
       - name: Build
         run: npm run build

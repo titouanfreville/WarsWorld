@@ -11,6 +11,7 @@ type Props = {
 const navItemObject = [
   { text: "PLAY", location: "/play" },
   { text: "YOUR GAMES", location: "/your-games" },
+  { text: "MAPS", location: "/maps" },
   {
     text: "NEWS",
     location: "/news",

@@ -1,0 +1,18 @@
+# TLS terminator and reverse proxy. Caddy obtains and renews a Let's Encrypt certificate for
+# SITE_DOMAIN automatically, provided ports 80 and 443 are reachable and the DNS A/AAAA record
+# already points at this host.
+#
+# WebSocket upgrades need no special configuration here: `reverse_proxy` passes them through, which
+# is the main reason to prefer this over a hand-written nginx config for an app whose live match
+# feed is a long-lived WS connection.
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy app:3001 {
+		# The match feed holds a connection open for the length of a game. Default read/write
+		# timeouts are disabled in Caddy 2, but be explicit so a future edit does not silently
+		# introduce a cutoff that drops players mid-match.
+		flush_interval -1
+	}
+}

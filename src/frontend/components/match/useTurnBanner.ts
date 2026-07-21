@@ -3,6 +3,13 @@ import type { Army } from "frontend/utils/sprites";
 
 /** What the start-of-turn banner shows: whose CO is up, the day, and (own turn only) upkeep + funds. */
 export type TurnBanner = {
+  /**
+   * A monotonic id bumped every time the banner (re)fires — used as the React `key` at the render
+   * site so a new turn-start REMOUNTS the component. Without a key change React reconciles the same
+   * element and its CSS entrance animation (`animation-fill-mode: both`, ending at opacity 0) never
+   * replays, leaving the banner stuck invisible when turns arrive faster than the auto-dismiss.
+   */
+  nonce: number;
   day: number;
   coName: string;
   army: Army;
@@ -66,6 +73,8 @@ export function useTurnBanner({
   // re-trigger it. Keyed on the player too, so a viewer→opponent handover fires even if `turn` is
   // unchanged between them.
   const shownKeyRef = useRef<string | null>(null);
+  // Bumped on every fire so the render can key on it and force a fresh mount each turn (see TurnBanner.nonce).
+  const nonceRef = useRef(0);
 
   useEffect(() => {
     if (
@@ -84,6 +93,7 @@ export function useTurnBanner({
     }
 
     shownKeyRef.current = key;
+    nonceRef.current += 1;
 
     const isViewer = actingPlayerId === viewerId;
     // Funds are the viewer's own (fog-hidden for the opponent). Sequence: banked `before` → up by
@@ -97,6 +107,7 @@ export function useTurnBanner({
           }
         : null;
     setBanner({
+      nonce: nonceRef.current,
       day: turnStart?.day ?? turn,
       coName: actingCoName,
       army: actingArmy,

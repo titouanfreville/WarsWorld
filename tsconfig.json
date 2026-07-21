@@ -27,5 +27,7 @@
   },
 
   "include": [".", ".eslintrc.cjs"], // .eslintrc.json is extra because the leading period makes it excluded otherwise
-  "exclude": ["node_modules", "dist", ".next", "bundleServer.mjs"]
+  // Build/tooling scripts run standalone under plain Node, outside the app's module graph — with
+  // "checkJs" on they'd otherwise be type-checked as app source.
+  "exclude": ["node_modules", "dist", ".next", "bundleServer.mjs", "prisma/scripts/migrations.mjs"]
 }

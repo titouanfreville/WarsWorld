@@ -239,7 +239,7 @@ function Stat({
   return (
     <div>
       <p
-        className={`@font-russoOne @text-2xl @leading-none ${accent ? "@text-primary" : "@text-white"}`}
+        className={`@font-russoOne @text-2xl @leading-none ${accent === true ? "@text-primary" : "@text-white"}`}
       >
         {value}
       </p>

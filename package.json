@@ -3,23 +3,27 @@
   "version": "0.0.0",
   "private": true,
   "engines": {
-    "node": ">=21"
+    "node": "^21.0.0"
   },
   "type": "module",
   "scripts": {
     "db:up": "docker compose up -d",
     "db:destroy": "docker compose down --volumes --remove-orphans",
     "prisma:push": "prisma db push",
-    "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "prisma:seed:prod": "tsx prisma/scripts/seed-production.ts",
+    "prisma:seed:reference": "tsx prisma/scripts/seed-reference.ts",
     "prisma:reset": "prisma migrate reset",
     "prisma:generate-once": "prisma generate",
     "prisma:generate-watch": "prisma generate --watch",
     "prisma:studio": "prisma studio",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:shadow-init": "docker compose exec -T postgres psql -U postgres -c \"CREATE DATABASE \\\"warsworld-shadow\\\";\"",
+    "prisma:migrate:new": "node prisma/scripts/migrations.mjs new",
+    "prisma:check": "node prisma/scripts/migrations.mjs check",
     "dev:wss": "cross-env PORT=3001 tsx watch src/server/main-wss-development.ts --tsconfig tsconfig.server.json",
     "dev:next": "next dev",
-    "dev": "npm run prisma:push && concurrently \"npm:dev:*\"",
+    "predev": "npm run prisma:push",
+    "dev": "concurrently --kill-others --kill-signal SIGTERM --names next,wss --prefix-colors cyan,magenta \"npm:dev:next\" \"npm:dev:wss\"",
     "lint:eslint": "eslint .",
     "lint:eslint:fix": "eslint . --fix",
     "lint:prettier": "prettier --check .",
@@ -31,12 +35,16 @@
     "build:next": "cross-env NODE_ENV=production next build",
     "build:server": "node bundleServer.mjs",
     "build": "concurrently \"npm:build:*\"",
-    "start": "cross-env NODE_ENV=production node dist/server/main-production.mjs",
+    "start:next": "next start",
+    "start:server": "cross-env NODE_ENV=production node dist/server/main-production.mjs",
+    "start": "npm run start:server",
     "redundant-code": "npx jscpd --ignore node_modules,dist,public,.next --reporters consoleFull .",
     "update-depencencies": "npx npm-check-updates -i",
     "fix-paths": "fix-esm-import-path  dist ",
     "install-utils": "npm install $(jq -r '.utilsDependencies | to_entries | .[] | \"\\(.key)@\\(.value)\"' package.json)",
-    "backfill:unit-stats": "tsx prisma/scripts/backfill-unit-stats.ts"
+    "backfill:unit-stats": "tsx prisma/scripts/backfill-unit-stats.ts",
+    "maps:check": "tsx prisma/scripts/check-maps.ts",
+    "maps:gallery": "tsx prisma/scripts/render-gallery.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

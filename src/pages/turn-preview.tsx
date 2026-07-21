@@ -192,6 +192,7 @@ const TurnPreviewPage: NextPageWithLayout = () => {
       <div style={{ position: "relative", flex: 1, height: "100vh", background: "#000b2c" }}>
         <TurnStartBanner
           key={stageKey}
+          nonce={0}
           day={day}
           coName={coName}
           army={army}

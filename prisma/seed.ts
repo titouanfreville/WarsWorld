@@ -13,6 +13,7 @@ import { articleSchema } from "server/articles/schemas";
 import { seedGameData } from "./scripts/seed-game-data";
 import { seedCos } from "./scripts/seed-cos";
 import { seedSkins } from "./scripts/seed-skins";
+import { seedMaps } from "./scripts/seed-maps";
 
 const prisma = new PrismaClient();
 
@@ -272,6 +273,10 @@ async function main() {
   32,31,2,112,1,34,1,2,2,3,30,34,30,30,29,2,5,1,44,3,32,34
 `,
   });
+
+  // The test map pool: 1v1 / 2v2 / free-for-all maps, each built on an exact symmetry.
+  // `npm run maps:check` validates them without a database.
+  await seedMaps(prisma);
 
   await prisma.match.create({
     data: {

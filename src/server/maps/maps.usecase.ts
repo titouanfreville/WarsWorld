@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { PlayerSlot } from "server/core/schemas/player-slot";
 import type { Tile, TileType } from "server/core/schemas/tile";
 import { isNotNeutralProperty, isUnitProducingProperty } from "server/core/schemas/tile";
-import type { CreatableMap } from "./schemas";
+import type { CreatableMap, MapFilter } from "./schemas";
 
 /** Tile types surfaced in the map list's property breakdown. */
 const propertyTileTypes = [
@@ -45,9 +45,32 @@ export const getPlayerAmountOfMap = (map: CreatableMap) => {
 export class MapsUsecase {
   constructor(private readonly db: PrismaClient) {}
 
-  async listMaps() {
-    // TODO pagination / filter / search
-    const allMaps = await this.db.wWMap.findMany();
+  /**
+   * The map library, narrowed by `filter`. Feeds both the old list view and the map browser.
+   *
+   * Narrowing happens in the query rather than after it: `rankedModes`/`supportedModes` are the
+   * same columns the lobby and matchmaking guards read, so a browser that filtered client-side
+   * could show a map as ranked-legal that the queue would never actually roll.
+   */
+  async listMaps(filter: MapFilter = {}) {
+    const allMaps = await this.db.wWMap.findMany({
+      where: {
+        ...(filter.search === undefined || filter.search === ""
+          ? {}
+          : { name: { contains: filter.search, mode: "insensitive" } }),
+        ...(filter.players === undefined ? {} : { numberOfPlayers: filter.players }),
+        ...(filter.mode === undefined
+          ? {}
+          : filter.rankedOnly === true
+            ? { rankedModes: { has: filter.mode } }
+            : { supportedModes: { has: filter.mode } }),
+        // Ranked-only with no mode chosen: any map ranked-legal somewhere.
+        ...(filter.mode === undefined && filter.rankedOnly === true
+          ? { NOT: { rankedModes: { isEmpty: true } } }
+          : {}),
+      },
+      orderBy: { name: "asc" },
+    });
 
     return allMaps.map((map) => {
       const tiles = map.tiles as Tile[][];
@@ -63,6 +86,12 @@ export class MapsUsecase {
           width: tiles[0].length,
           height: tiles.length,
         },
+        // Terrain type per cell — the FE colours it into a thumbnail. Sending the type only (not
+        // the tile objects) keeps the payload small and keeps ownership/HP off the wire, which a
+        // browser has no use for.
+        terrain: tiles.map((row) => row.map((tile) => tile.type as string)),
+        supportedModes: map.supportedModes,
+        rankedModes: map.rankedModes,
         propertyStats: propertyTileTypes.reduce<PropertyStatsType>(
           (prev, cur) => ({
             ...prev,

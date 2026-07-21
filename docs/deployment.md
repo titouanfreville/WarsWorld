@@ -1,253 +1,160 @@
-# Deploying WarsWorld to a Hetzner box (Ubuntu + Docker Compose)
+# Deployment runbook
 
-One server, one compose stack: `postgres` + `app` + `nginx` (+ `certbot`). The app is a **single
-Node process** — `src/server/main-production.ts` boots Next _and_ attaches the tRPC WebSocket to the
-same http server, so there is no separate `:3001` service in production and the browser only ever
-talks to one origin.
+**Target: one small VPS running the app and Postgres together, via Docker Compose.**
 
-```
-internet ──▶ nginx :80/:443 ──▶ app :3000 (Next + tRPC + WS) ──▶ postgres :5432
-                                                                 (loopback only)
-```
+## Why one box
 
-> **Run exactly one `app` replica.** It holds the live match store in memory, owns the WebSocket
-> connections, and runs the matchmaking queue ticker and pick/lobby deadline timers. A second
-> replica would double-tick the queue and lose subscribers. Scaling out means moving that state
-> out of process first — not `--scale app=2`.
+The app is a single stateful process. `src/server/main-production.ts` builds its own Next app,
+routes all HTTP through `app.getRequestHandler()`, and attaches the tRPC WebSocket server to the
+same `http.Server` — Next, the API and the live match feed all share one port in one process. On top
+of that, `matchStore` holds live match state in memory and the emitters hold WS subscriber handles,
+so **a second replica would be a second, divergent world.** Until the game tier is sharded, one
+instance is not a compromise; it is the design.
 
----
+Co-locating Postgres also removes a storage cliff. The event log is append-only and grows roughly
+**80 MB/month** at ~30 games/day. That is a problem against a managed free tier (500 MB) and a
+non-issue against a 40 GB VPS disk.
 
-## 0. Prerequisites
+Rough cost: **€4–8/month** all-in on Hetzner or Scaleway. Verify current pricing — it moves.
 
-- A Hetzner Cloud instance (CX22 / 2 vCPU / 4 GB is comfortable; the `next build` is the memory
-  peak — on a 2 GB box add swap first).
-- Ubuntu 22.04 / 24.04 / 26.04, SSH access as root or a sudo user. (Verified on 26.04 LTS
-  "resolute"; the apt lines below read `$VERSION_CODENAME`, so they follow the release you're on.)
-- The server's public IPv4 address. **No domain is required** — see step 5.
+> **Not Cloud Run / serverless.** The turn clock, pick deadlines and matchmaking queue tick are
+> in-process timers, and `matchStore` is in-process memory. That forces always-allocated CPU, which
+> costs roughly 10× a VPS — while the platform's request timeout also caps long-lived WebSockets.
+> Paying a premium to disable the features that make serverless cheap is the worst of both worlds.
 
-> **First login on a fresh Hetzner box.** If you created the server without attaching an SSH key,
-> the emailed root password is **pre-expired**: you must change it in an interactive session with a
-> real TTY. `ssh-copy-id`, `ssh <host> <command>` and any non-interactive tool fail with
-> `Password change required but no TTY available.` — plain `ssh root@<ip>` first, change the
-> password, then install your key.
+## What is in the stack
 
-## 1. Server setup
+| Service | Role |
+|---|---|
+| `app` | the one Node process (Next + tRPC + WS) |
+| `postgres` | Postgres 17, **not** published to the internet |
+| `caddy` | TLS termination + reverse proxy; the only service with open ports |
+| `backup` | nightly `pg_dump`, rotated |
 
-```bash
-ssh root@<server-ip>
+## First deploy
 
-apt update && apt upgrade -y
-apt install -y ca-certificates curl git ufw
+### 1. Prepare the host
 
-# Docker Engine + compose plugin (official repo)
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt update && apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+A VPS with Docker and Compose, and a DNS `A`/`AAAA` record for your domain already pointing at it —
+Caddy needs that resolving before it can obtain a certificate.
 
-# Firewall: SSH + web only. Postgres is bound to 127.0.0.1 and never exposed.
-ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable
-```
-
-On a 2 GB instance, give the build room to breathe:
+### 2. Configure
 
 ```bash
-fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-echo '/swapfile none swap sw 0 0' >> /etc/fstab
+cp .env.production.example .env.production
+# fill it in — every value; several have no safe default
 ```
 
-## 2. Get the code
+Generate real secrets (`openssl rand -base64 32`) for `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET` and
+`AUTH_SECRET`. **Never reuse the placeholders from `.env.example`** — they are public.
+
+⚠️ `NEXT_PUBLIC_APP_URL` and `NEXT_PUBLIC_WS_URL` are **inlined into the client bundle at build
+time**. Changing them later needs a rebuild, not a restart.
+
+### 3. Build and start
 
 ```bash
-mkdir -p /srv && cd /srv
-git clone https://github.com/titouanfreville/WarsWorld.git warsworld
-cd /srv/warsworld
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
-## 3. Configure
+### 4. Apply the schema
 
 ```bash
-cp .env.prod.example .env.prod
-chmod 600 .env.prod
-openssl rand -base64 32   # → PGPASSWORD
-openssl rand -base64 32   # → NEXTAUTH_SECRET and AUTH_SECRET (same value)
-nano .env.prod
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  run --rm app npm run prisma:deploy
 ```
 
-For the **first** (plain-HTTP) boot, point the URLs at the bare IP:
+`migrate deploy` only applies pending migrations — it never resets and never generates. It is the
+only Prisma command that should touch a deployment. Do **not** use `db push` here.
 
-```
-NEXT_PUBLIC_APP_URL=http://<server-ip>
-NEXT_PUBLIC_WS_URL=ws://<server-ip>
-NEXTAUTH_URL=http://<server-ip>
-NGINX_CONF=app-http.conf
-```
+This is a deliberate release step: `start:server` does not migrate on boot, so a cold start never
+waits on (or half-applies) a schema change.
 
-> `NEXT_PUBLIC_*` are compiled into the client bundle. Changing them later needs
-> `up -d --build`, **not** a restart.
-
-Every command below uses the same prefix, so give it an alias:
+### 5. Seed reference data
 
 ```bash
-echo "alias wwc='docker compose --env-file .env.prod -f docker-compose.prod.yaml'" >> ~/.bashrc
-source ~/.bashrc
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  run --rm app npm run prisma:seed:reference
 ```
 
-## 4. First boot
+**Required, not optional** — the engine reads commanders, units and terrain from the database at
+boot (`initGameData`), so an unseeded deployment cannot start a match. Seeds units, terrain,
+properties, commanders, skins and the map pool; creates no users.
+
+> ### 🔴 Never run `npm run prisma:seed` against a deployment
+>
+> `prisma/seed.ts` is the **dev** seed. Alongside the same reference data it creates a
+> `development_user` holding **every role including `admin`**, with the password `secret`, plus
+> fixture players, articles and sample matches. Running it against a real database hands full
+> control of the ladder to anyone who guesses those credentials.
+
+Note `prisma:seed:reference` **clears and re-inserts** the reference tables, so run it before the
+deployment takes traffic, or in a maintenance window when refreshing content.
+
+## Updating
 
 ```bash
-cd /srv/warsworld
-
-wwc build app                       # ~5-10 min: npm ci + next build + esbuild server bundle
-wwc up -d postgres
-wwc --profile tools run --rm migrate            # prisma migrate deploy → creates the schema
-wwc --profile tools run --rm migrate npm run prisma:seed:prod   # units, terrain, COs, skins
-wwc up -d                           # app + nginx + certbot
-
-wwc ps
-wwc logs -f app                     # expect: "Production mode: HTTP + tRPC WebSocket listening…"
-curl -fsS http://<server-ip>/api/health   # {"status":"ok"}
-```
-
-Then open `http://<server-ip>` in a browser.
-
-**About the seed:** `npm run prisma:seed:prod` loads only the game-reference data the app cannot
-boot without (`initGameData` reads CO profiles at startup). It deliberately does _not_ create the
-`development_user`, fake players, articles or sample maps that `prisma/seed.ts` does — that seed is
-dev-only and grants every role to one account. Each seeder clears its own tables before
-re-inserting, so re-run it only when game data changes, not on every deploy.
-
-You still need at least one map and one admin account:
-
-- Register normally through the UI, then grant roles once, straight in the DB:
-  ```bash
-  wwc exec postgres psql -U warsworld -d warsworld \
-    -c "UPDATE \"User\" SET roles = '{admin,moderator,dev,tester}' WHERE name = '<your-user>';"
-  ```
-- Import maps with the admin/map tools once you are logged in as that user.
-
-## 5. HTTPS without a domain
-
-Let's Encrypt will not issue for a bare IP with the standard flow, but it _will_ issue for a
-hostname — and `sslip.io` resolves any `1-2-3-4.sslip.io` to `1.2.3.4` for free, no signup, no DNS
-to manage. Use `203-0-113-7.sslip.io` (dashes for the dots of your IP). When you buy a real domain
-later, the only change is these same values.
-
-```bash
-IP=<server-ip>
-HOST=$(echo $IP | tr '.' '-').sslip.io
-echo $HOST                      # e.g. 203-0-113-7.sslip.io
-
-# nginx must already be serving :80 (step 4) so the http-01 challenge can be answered.
-wwc run --rm --entrypoint certbot certbot certonly \
-  --webroot -w /var/www/certbot \
-  -d $HOST --email <you@example.com> --agree-tos --no-eff-email
-```
-
-Then switch the stack to TLS:
-
-```bash
-sed -i "s/<DOMAIN>/$HOST/g" deployment/nginx/app-ssl.conf
-
-# .env.prod:
-#   NGINX_CONF=app-ssl.conf
-#   NEXT_PUBLIC_APP_URL=https://<host>
-#   NEXT_PUBLIC_WS_URL=wss://<host>
-#   NEXTAUTH_URL=https://<host>
-nano .env.prod
-
-wwc up -d --build app nginx     # rebuild: the NEXT_PUBLIC_* values are baked into the bundle
-```
-
-Renewal is automatic — the `certbot` service retries every 12h. Nginx needs to pick up the new
-file, so reload it weekly (or after a renewal):
-
-```bash
-(crontab -l 2>/dev/null; echo "0 4 * * 1 cd /srv/warsworld && docker compose --env-file .env.prod -f docker-compose.prod.yaml exec nginx nginx -s reload") | crontab -
-```
-
-> Alternative: Let's Encrypt now issues certificates for **IP addresses** directly, but only in the
-> short-lived profile (~6-day validity, renewal every few days, ACME-client support still uneven).
-> The sslip.io hostname above gets you ordinary 90-day certs today with no moving parts.
-
-## 6. Deploying an update
-
-```bash
-cd /srv/warsworld
 git pull
-wwc --profile tools run --rm migrate    # only if prisma/migrations changed
-wwc up -d --build app
-wwc logs -f app
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm app npm run prisma:deploy
 ```
 
-Rollback is `git checkout <previous-sha> && wwc up -d --build app` — the DB is untouched by an app
-rebuild.
+Run `prisma:deploy` **after** the new image is up only when migrations are additive. For a
+destructive change, stop the app first so it never talks to a schema it was not built for.
 
-## 7. Schema changes
+## Backups
 
-`prisma/migrations/0_init/` is the baseline generated from `schema.prisma` with the pinned Prisma
-5.8.1. From now on, production uses `migrate deploy` — never `db push`.
+The `backup` service writes a compressed `pg_dump` to `./backups` every 24h and keeps the newest 14
+(`BACKUP_KEEP`). Dumps are written to a `.tmp` name and renamed on success, so an interrupted dump
+can never be mistaken for a good one.
 
-Locally, after editing `schema.prisma`:
+### ⚠️ Local dumps are not a backup
+
+They sit on the same disk as the database. Lose the VPS and you lose both. **Copy them off the box**
+— that step is yours, and it is the one that actually protects you:
 
 ```bash
-npx prisma migrate dev --name <what-changed>   # writes prisma/migrations/<ts>_<name>/
+# e.g. nightly, from another machine or a cron on the host
+rclone sync /path/to/backups remote:warsworld-backups
 ```
 
-If your **local dev database already has the tables** (it predates the baseline), tell Prisma the
-baseline is already applied instead of letting it reset:
+Scaleway Object Storage has a free tier that comfortably fits months of dumps.
+
+### Restore
 
 ```bash
-npx prisma migrate resolve --applied 0_init
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists \
+  < backups/warsworld-<stamp>.dump
 ```
 
-Then commit the migration and deploy it with step 6.
+**Practise this once, now, against a scratch database.** A backup you have never restored is a
+hypothesis, not a backup.
 
-## 8. Operations cheatsheet
+## Alternative: managed Postgres (Supabase)
 
-```bash
-wwc ps                                    # what is running
-wwc logs -f app                           # app logs (LOG_LEVEL in .env.prod)
-wwc restart app
-wwc exec postgres psql -U warsworld -d warsworld
+If you would rather not own database ops, point `DATABASE_URL` at Supabase and drop the `postgres`
+and `backup` services. You gain automated PITR backups; you take on the storage cliff above (~6
+months on the free tier) and a ~$25/month decision after that.
 
-# backup / restore
-wwc exec -T postgres pg_dump -U warsworld warsworld | gzip > ~/ww-$(date +%F).sql.gz
-gunzip -c ~/ww-2026-07-23.sql.gz | wwc exec -T postgres psql -U warsworld -d warsworld
+Supabase runs **Postgres 17**. Pick the connection mode deliberately:
 
-# prisma studio against production (tunnel it, do not expose it):
-#   ssh -L 5555:127.0.0.1:5555 root@<server-ip>
-wwc --profile tools run --rm -p 127.0.0.1:5555:5555 migrate \
-  npx prisma studio --port 5555 --hostname 0.0.0.0
-```
+| Mode | Host | Migrations? |
+|---|---|---|
+| Direct | `db.<ref>.supabase.co:5432` | ✅ best fit. IPv6-only without the IPv4 add-on |
+| Session pooler | `…pooler.supabase.com:5432` | ✅ safe fallback |
+| Transaction pooler | `…pooler.supabase.com:6543` | ❌ **cannot run DDL**; needs `?pgbouncer=true` |
 
-A nightly backup is worth wiring up on day one:
+## Notes and constraints
 
-```bash
-(crontab -l 2>/dev/null; echo "30 3 * * * cd /srv/warsworld && docker compose --env-file .env.prod -f docker-compose.prod.yaml exec -T postgres pg_dump -U warsworld warsworld | gzip > /srv/backups/ww-\$(date +\%F).sql.gz") | crontab -
-mkdir -p /srv/backups
-```
-
-## 9. Troubleshooting
-
-| Symptom                                               | Cause                                                                                                       |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Browser console: `NEXT_PUBLIC_APP_URL … is undefined` | Built without the build args. `wwc up -d --build app` with the vars set in `.env.prod`.                     |
-| Page loads, but nothing live (no WS)                  | `NEXT_PUBLIC_WS_URL` scheme mismatch — `wss://` on an HTTPS page, `ws://` on HTTP. Rebuild after fixing.    |
-| Redirect loop to https                                | nginx sending `X-Forwarded-Proto: http`. The HTTP-only conf deliberately omits that header; don't add it.   |
-| Login works, session drops                            | `NEXTAUTH_URL` doesn't match the origin in the address bar, or `NEXTAUTH_SECRET` changed.                   |
-| `nginx: cannot load certificate`                      | `NGINX_CONF=app-ssl.conf` before certbot issued the cert. Switch back to `app-http.conf`, issue, then swap. |
-| Build OOM-killed                                      | Add swap (step 1), or build the image elsewhere and `docker save`/`load` it.                                |
-| `prisma migrate deploy` says drift                    | The DB predates the baseline: `npx prisma migrate resolve --applied 0_init`.                                |
-
-## Known gaps (deliberate, not blockers)
-
-- **`.env.production` is committed to the repo** with localhost values and a dummy secret. Docker
-  never sees it (`.dockerignore`), but a _non-Docker_ `next build` would load it ahead of `.env` and
-  silently bake `http://localhost:3000` into the bundle. Worth `git rm --cached .env.production`.
-- **`deployment/main.tf`** is the old, unfinished AWS/Terraform attempt. It is unrelated to this
-  stack; ignore or delete it.
-- No CDN/object storage: sprites and CO art are served by Next from `public/`.
+- **Single instance only** — see "Why one box". Do not scale `app`.
+- **Prisma engine targets.** `schema.prisma` declares `debian-openssl-3.0.x` for the production
+  image (node:21-slim, glibc). Switching the base image to Alpine or to **ARM** needs the matching
+  target (`linux-musl-openssl-3.0.x`, `linux-arm64-openssl-3.0.x`) or Prisma fails at container
+  start with a confusing "query engine not found".
+- **Dev dependencies ship in the image** on purpose: the `prisma` CLI lives there and the release
+  step runs inside the container.
+- **Node 21 is past its support window.** Moving to a current LTS means bumping `engines`, the
+  Dockerfile base image and CI together.
+- `deployment/` holds an older, unfinished Terraform/AWS setup from upstream. It is superseded by
+  this document.

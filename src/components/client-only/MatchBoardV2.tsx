@@ -119,12 +119,16 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   // batch of live opponent moves animates exactly once — on the rebuild that reflects it, not on
   // every within-fetch re-render.
   const drainedMoveFetchRef = useRef<number | null>(null);
-  // The last turn we already played the start-of-turn flourish for, so it fires once per turn rather
-  // than on every within-turn refetch/rebuild (the scene rebuilds on each optimistic view change).
-  const sparkledTurnRef = useRef<number | null>(null);
+  // The last `turn:actingPlayerId` we already played the start-of-turn flourish for, so it fires once
+  // per player-turn rather than on every within-turn refetch/rebuild (the scene rebuilds on each
+  // optimistic view change). Keyed on the player too — like the banner — because `view.turn` is a day
+  // counter shared by both players in a round, so a bare turn value aliases the two turns together.
+  const sparkledTurnRef = useRef<string | null>(null);
   // Same, for the fuel-out crash flourish. Tracked separately: crashes are reported to BOTH players
   // (a unit going down is public), so this fires on turns where `turnStart` is null for the viewer.
-  const crashedTurnRef = useRef<number | null>(null);
+  // The player-keyed value is essential here: both sides' crashes can share one `view.turn`, so a
+  // bare-turn gate would let the first-observed crash suppress the other player's on the same day.
+  const crashedTurnRef = useRef<string | null>(null);
   // The viewer's AWDS-style animation setting, gating the one-shot flourishes below.
   const { currentPlayer } = usePlayers();
   const animationScope = readAnimationScope(currentPlayer?.preferences);
@@ -474,15 +478,16 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // (own units only, fog-safe) for the whole turn, but the scene rebuilds on every action, so we
     // fire the pulse once per turn value and then suppress it until the next turn.
     const report = view.turnStart;
+    const turnStartKey = report !== null ? `${view.turn}:${report.playerId}` : null;
     const turnStartPulse =
       report !== null &&
-      sparkledTurnRef.current !== view.turn &&
+      sparkledTurnRef.current !== turnStartKey &&
       shouldAnimate(animationScope, report.playerId, playerId)
         ? { repaired: report.repaired.map((entry) => entry.position), refuelled: report.refuelled }
         : undefined;
 
     if (turnStartPulse !== undefined) {
-      sparkledTurnRef.current = view.turn;
+      sparkledTurnRef.current = turnStartKey;
     }
 
     // Same one-per-turn gate for the fuel-out crashes, on its own ref: `crashes` is sent to BOTH
@@ -490,16 +495,17 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // animation setting keys off whose units went down, so "own units only" stays quiet for the
     // opponent's losses.
     const crashReport = view.crashes;
+    const crashKey = crashReport !== null ? `${view.turn}:${crashReport.playerId}` : null;
     const crashPulse =
       crashReport !== null &&
       crashReport.positions.length > 0 &&
-      crashedTurnRef.current !== view.turn &&
+      crashedTurnRef.current !== crashKey &&
       shouldAnimate(animationScope, crashReport.playerId, playerId)
         ? { positions: crashReport.positions.map((p): BoardPosition => [p[0], p[1]]) }
         : undefined;
 
     if (crashPulse !== undefined) {
-      crashedTurnRef.current = view.turn;
+      crashedTurnRef.current = crashKey;
     }
 
     // The board flourish is armed by a delayed timer (so it plays AFTER the splash). Play it on the
@@ -959,16 +965,10 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               </div>
             )}
             {turnBanner !== null && gameOver === null && (
-              <TurnStartBanner
-                day={turnBanner.day}
-                coName={turnBanner.coName}
-                army={turnBanner.army}
-                isViewer={turnBanner.isViewer}
-                crashed={turnBanner.crashed}
-                repaired={turnBanner.repaired}
-                refuelled={turnBanner.refuelled}
-                funds={turnBanner.funds}
-              />
+              // key on the nonce so each turn-start REMOUNTS the banner — the CSS entrance animation
+              // (fill-mode both, ending at opacity 0) only replays on a fresh mount, so without this a
+              // turn arriving before the 3s auto-dismiss leaves the banner stuck invisible.
+              <TurnStartBanner key={turnBanner.nonce} {...turnBanner} />
             )}
             {powerSplash !== null && gameOver === null && (
               <PowerActivationSplash

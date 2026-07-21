@@ -75,10 +75,10 @@ export default function UserAvatar({
         width: size,
         height: size,
         clipPath: BADGE_CLIP,
-        backgroundColor: image ? "transparent" : tint,
+        backgroundColor: image != null ? "transparent" : tint,
       }}
     >
-      {image ? (
+      {image != null ? (
         // Cropped to the player's chosen focal point (top-centre by default) so tall full-body CO
         // art shows the face, not the boots.
         <img
@@ -86,7 +86,7 @@ export default function UserAvatar({
           alt={name}
           style={{ objectPosition }}
           className={`@absolute @inset-0 @h-full @w-full @object-cover ${
-            pixelated ? "[image-rendering:pixelated]" : ""
+            pixelated === true ? "[image-rendering:pixelated]" : ""
           }`}
         />
       ) : (

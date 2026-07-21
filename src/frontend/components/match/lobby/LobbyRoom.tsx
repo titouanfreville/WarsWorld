@@ -1,3 +1,7 @@
+import { Dialog } from "@headlessui/react";
+import DefaultDialogDesign from "frontend/components/layout/modal/DefaultDialogDesign";
+import MapThumbnail from "frontend/components/matchmaking/MapThumbnail";
+import { formatTimeControl } from "frontend/utils/format-time";
 import { usePlayers } from "frontend/context/players";
 import { trpc } from "frontend/utils/trpc-client";
 import {
@@ -11,11 +15,17 @@ import {
 import { useRouter } from "next/router";
 import { useState } from "react";
 
-/** FE-local mirror of the server lobby geometry, for laying out team columns. */
-const LAYOUT: Record<string, { teams: number; slots: number }> = {
-  "1v1": { teams: 2, slots: 1 },
-  "2v2": { teams: 2, slots: 2 },
-  ffa4: { teams: 4, slots: 1 },
+// The mode union and its labels are shared with the map browser — see `frontend/utils/game-mode`.
+import { MODE_LABEL, type GameMode } from "frontend/utils/game-mode";
+
+/**
+ * FE-local mirror of the server lobby geometry (`server/matches/layout`), for laying out team
+ * columns. Keyed on the `GameMode` enum ids — NOT the display labels — so the lookup actually hits.
+ */
+const LAYOUT: Record<GameMode, { teams: number; slots: number }> = {
+  duel: { teams: 2, slots: 1 },
+  teams: { teams: 2, slots: 2 },
+  ffa: { teams: 4, slots: 1 },
 };
 
 /** A representative deployment shown as ambient sprites in the map dossier. */
@@ -74,12 +84,21 @@ export default function LobbyRoom({ lobbyId }: Props) {
   const utils = trpc.useUtils();
 
   const [inviteName, setInviteName] = useState("");
+  // The visual map-picker modal (host only) + its name filter.
+  const [mapPickerOpen, setMapPickerOpen] = useState(false);
+  const [mapSearch, setMapSearch] = useState("");
 
   const { data: lobby, error } = trpc.lobby.get.useQuery(
     { lobbyId, playerId },
     { enabled: playerId !== "", refetchInterval: 15000 },
   );
-  const { data: maps } = trpc.map.getAll.useQuery();
+  // Narrow the library to the lobby's mode — seat count alone can't decide it (a 4-player map may be
+  // laid out for 2v2 but not FFA), so `supportedModes` is the authority and the filter runs
+  // server-side. Gated until the lobby (hence its mode) has loaded.
+  const { data: maps } = trpc.map.getAll.useQuery(
+    { mode: lobby?.mode },
+    { enabled: lobby !== undefined },
+  );
 
   const refresh = () => void utils.lobby.get.invalidate({ lobbyId });
 
@@ -114,7 +133,8 @@ export default function LobbyRoom({ lobbyId }: Props) {
     void router.push(matchPathFor(lobby.members, playerId, lobby.matchId));
   }
 
-  const layout = LAYOUT[lobby.mode] ?? { teams: 2, slots: 1 };
+  const mode = lobby.mode;
+  const layout = LAYOUT[mode] ?? { teams: 2, slots: 1 };
   const isHost = lobby.hostPlayerId === playerId;
   const map = maps?.find((m) => m.id === lobby.mapId);
   const bench = lobby.members.filter((m) => m.membership === "active" && m.team === null);
@@ -126,7 +146,12 @@ export default function LobbyRoom({ lobbyId }: Props) {
     lobby.teamFactions?.[team] as Army | undefined;
   const capacity = layout.teams * layout.slots;
   const canStart = seated.length === capacity && lobby.mapId !== null;
-  const eligibleMaps = (maps ?? []).filter((m) => m.numberOfPlayers >= capacity);
+  // The query already narrows by mode; this guards the brief window where `maps` is still the
+  // previous mode's list, and makes the mode→map coupling explicit at the render site.
+  const eligibleMaps = (maps ?? []).filter((m) => m.supportedModes.includes(mode));
+  const pickerMaps = eligibleMaps.filter((m) =>
+    m.name.toLowerCase().includes(mapSearch.trim().toLowerCase()),
+  );
 
   const mutationError =
     assignTeam.error?.message ??
@@ -242,11 +267,37 @@ export default function LobbyRoom({ lobbyId }: Props) {
   const mapDossier = (
     <div className="@relative @overflow-hidden @rounded-xl @bg-bg-secondary/60 @p-5 @shadow-lg @shadow-black/30 @outline @outline-1 @outline-white/5">
       <div className="@mb-4 @flex @items-end @justify-between @gap-3">
-        <div className="@min-w-0">
+        <div className="@min-w-0 @flex-1">
           <p className="@py-0 @text-[11px] @uppercase @tracking-[0.2em] @text-primary">Theatre</p>
-          <h1 className="@truncate @py-0 @font-russoOne @text-2xl @uppercase @tracking-wide">
-            {map?.name ?? "Loading map…"}
-          </h1>
+          {/* The map picker lives here in the War Room — prominent, host-only. Non-hosts just read
+              the choice. An empty pool (no maps for the mode) is called out rather than shown blank. */}
+          {isHost ? (
+            <button
+              type="button"
+              onClick={() => setMapPickerOpen(true)}
+              disabled={setMap.isLoading || eligibleMaps.length === 0}
+              className={`@flex @w-full @items-center @gap-2 @rounded @bg-black/40 @px-3 @py-2 @text-left @font-russoOne @text-xl @uppercase @tracking-wide @text-white @outline @outline-2 @transition disabled:@cursor-not-allowed disabled:@opacity-40 ${
+                lobby.mapId === null
+                  ? "@outline-primary hover:@bg-primary/10"
+                  : "@outline-white/10 hover:@outline-white/25"
+              }`}
+            >
+              <span className="@min-w-0 @flex-1 @truncate">
+                {eligibleMaps.length === 0
+                  ? `No maps for ${MODE_LABEL[mode]}`
+                  : (map?.name ?? "Choose a map…")}
+              </span>
+              {eligibleMaps.length > 0 && (
+                <span className="@flex-none @text-sm @text-primary">
+                  {map !== undefined ? "Change ▾" : "Browse ▾"}
+                </span>
+              )}
+            </button>
+          ) : (
+            <h1 className="@truncate @py-0 @font-russoOne @text-2xl @uppercase @tracking-wide">
+              {map?.name ?? "Awaiting map…"}
+            </h1>
+          )}
         </div>
         {map !== undefined && (
           <p className="@flex-none @py-0 @font-mono @text-xs @text-slate-400">
@@ -254,6 +305,11 @@ export default function LobbyRoom({ lobbyId }: Props) {
           </p>
         )}
       </div>
+      {isHost && lobby.mapId === null && (
+        <p className="@-mt-2 @mb-4 @py-0 @text-xs @text-primary/80">
+          Pick a map to enable the general pick.
+        </p>
+      )}
 
       {/* Rules chips */}
       <div className="@mb-4 @flex @flex-wrap @gap-1.5">
@@ -261,15 +317,19 @@ export default function LobbyRoom({ lobbyId }: Props) {
           lobby.rules.fogOfWar ? "Fog of War" : "Clear skies",
           `$${lobby.rules.fundsPerProperty}/prop`,
           `${lobby.rules.dayLimit}-day limit`,
+          formatTimeControl(lobby.rules.turnBankSeconds, lobby.rules.turnIncrementSeconds),
           lobby.isRanked ? "Ranked" : "Casual",
-        ].map((chip) => (
-          <span
-            key={chip}
-            className="@rounded @bg-black/30 @px-2 @py-1 @text-[11px] @font-semibold @uppercase @tracking-wide @text-slate-300"
-          >
-            {chip}
-          </span>
-        ))}
+        ]
+          // An untimed match contributes no chip rather than an empty one.
+          .filter((chip): chip is string => chip !== null)
+          .map((chip) => (
+            <span
+              key={chip}
+              className="@rounded @bg-black/30 @px-2 @py-1 @text-[11px] @font-semibold @uppercase @tracking-wide @text-slate-300"
+            >
+              {chip}
+            </span>
+          ))}
       </div>
 
       {/* Property legend */}
@@ -349,7 +409,7 @@ export default function LobbyRoom({ lobbyId }: Props) {
               War Room
             </span>
             <span className="@text-xs @uppercase @tracking-wider @text-slate-400">
-              {lobby.mode} · {seated.length}/{lobby.capacity} deployed
+              {MODE_LABEL[mode]} · {seated.length}/{lobby.capacity} deployed
             </span>
           </div>
           <button
@@ -395,27 +455,6 @@ export default function LobbyRoom({ lobbyId }: Props) {
 
           {isHost && (
             <div className="@flex @flex-wrap @items-center @gap-2 @border-t @border-white/5 @pt-3">
-              <label className="@flex @items-center @gap-2">
-                <span className="@text-[11px] @uppercase @tracking-wider @text-slate-500">Map</span>
-                <select
-                  className="@w-48 @rounded @bg-black/30 @px-3 @py-2 @text-sm @outline @outline-1 @outline-white/10 disabled:@opacity-40"
-                  value={lobby.mapId ?? ""}
-                  disabled={setMap.isLoading}
-                  onChange={(e) =>
-                    e.target.value !== "" &&
-                    setMap.mutate({ lobbyId, playerId, mapId: e.target.value })
-                  }
-                >
-                  <option value="" disabled>
-                    Choose a map…
-                  </option>
-                  {eligibleMaps.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.numberOfPlayers}p)
-                    </option>
-                  ))}
-                </select>
-              </label>
               <input
                 className="@w-48 @rounded @bg-black/30 @px-3 @py-2 @text-sm @outline @outline-1 @outline-white/10 @placeholder:text-slate-600"
                 value={inviteName}
@@ -459,6 +498,66 @@ export default function LobbyRoom({ lobbyId }: Props) {
           )}
         </div>
       </div>
+
+      {/* Visual map picker — thumbnail grid + name filter, mirroring the ranked map ban/pick screen.
+          Host-only; picking a card sets the map and closes. */}
+      {isHost && (
+        <Dialog
+          open={mapPickerOpen}
+          onClose={() => setMapPickerOpen(false)}
+          className="@relative @z-40"
+        >
+          <DefaultDialogDesign title="Choose a map" width="min(920px, 94vw)">
+            <div className="@flex @flex-col @gap-4 @px-6 @py-6">
+              <input
+                autoFocus
+                value={mapSearch}
+                onChange={(e) => setMapSearch(e.target.value)}
+                placeholder="Filter maps by name…"
+                className="@w-full @rounded @bg-bg-primary @px-3 @py-2 @text-sm @text-white @outline @outline-1 @outline-bg-tertiary @placeholder:text-slate-600"
+              />
+              <div className="@grid @max-h-[60vh] @grid-cols-2 @gap-3 @overflow-y-auto tablet:@grid-cols-3 laptop:@grid-cols-4">
+                {pickerMaps.map((m) => {
+                  const selected = m.id === lobby.mapId;
+
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setMap.mutate({ lobbyId, playerId, mapId: m.id });
+                        setMapPickerOpen(false);
+                      }}
+                      className={`@flex @flex-col @gap-2 @overflow-hidden @rounded-xl @border @p-2 @text-left @transition ${
+                        selected
+                          ? "@border-primary @bg-primary/10"
+                          : "@border-bg-tertiary @bg-black/20 hover:@border-primary-light"
+                      }`}
+                    >
+                      <div className="@overflow-hidden @rounded-md @outline @outline-1 @outline-white/10">
+                        <MapThumbnail terrain={m.terrain} className="@w-full @bg-black/40" />
+                      </div>
+                      <div className="@flex @items-center @justify-between @gap-1">
+                        <span className="@min-w-0 @truncate @text-xs @font-semibold @text-slate-100">
+                          {m.name}
+                        </span>
+                        <span className="@flex-none @font-mono @text-[10px] @text-slate-500">
+                          {m.size.width}×{m.size.height} · {m.numberOfPlayers}P
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+                {pickerMaps.length === 0 && (
+                  <p className="@col-span-full @py-8 @text-center @text-sm @text-slate-500">
+                    No maps match “{mapSearch}”.
+                  </p>
+                )}
+              </div>
+            </div>
+          </DefaultDialogDesign>
+        </Dialog>
+      )}
     </div>
   );
 }

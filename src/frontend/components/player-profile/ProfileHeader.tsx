@@ -1,10 +1,6 @@
-import {
-  avatarObjectPosition,
-  coAvatarUrl,
-  isPixelVariant,
-  type CoAvatar,
-} from "frontend/utils/sprites/avatar";
-import { coArtUrl, coPortraitUrl } from "frontend/utils/sprites/co";
+import { type CoAvatar } from "frontend/utils/sprites/avatar";
+import { coPortraitUrl } from "frontend/utils/sprites/co";
+import { resolvePortrait } from "frontend/utils/sprites/portrait";
 import UserAvatar from "../navbar/UserAvatar";
 
 /**
@@ -37,9 +33,7 @@ export function ProfileHeader({
   onEdit,
 }: Props) {
   // Prefer the explicit avatar; else fall back to the favourite CO's art; else a monogram.
-  const portraitUrl = avatar ? coAvatarUrl(avatar) : favouriteCO ? coArtUrl(favouriteCO) : null;
-  const pixelated = avatar ? isPixelVariant(avatar.variant) : false;
-  const objectPosition = avatar ? avatarObjectPosition(avatar) : "50% 0%";
+  const { image: portraitUrl, pixelated, objectPosition } = resolvePortrait(avatar, favouriteCO);
 
   return (
     <section className="@relative @mt-4 @overflow-hidden @border @border-primary/30 @bg-black/60 [clip-path:polygon(0_0,100%_0,100%_100%,2%_100%,0_97%)]">
@@ -56,7 +50,7 @@ export function ProfileHeader({
             isOwnProfile ? "@cursor-pointer" : "@cursor-default"
           }`}
         >
-          {portraitUrl ? (
+          {portraitUrl != null ? (
             <img
               src={portraitUrl}
               alt={name}
@@ -86,7 +80,9 @@ export function ProfileHeader({
               <h1 className="@truncate @font-russoOne @text-3xl @text-white smallscreen:@text-4xl">
                 {name}
               </h1>
-              {realName && <p className="@mt-1 @text-sm @text-white/50">{realName}</p>}
+              {realName != null && realName !== "" && (
+                <p className="@mt-1 @text-sm @text-white/50">{realName}</p>
+              )}
             </div>
 
             {isOwnProfile && (
@@ -100,7 +96,7 @@ export function ProfileHeader({
             )}
           </div>
 
-          {favouriteCO && (
+          {favouriteCO != null && (
             <div className="@mt-5 @inline-flex @items-center @gap-2 @self-center @border @border-white/10 @bg-black/40 @py-1 @pl-1 @pr-3 smallscreen:@self-start">
               <img
                 src={coPortraitUrl(favouriteCO, "small")}

@@ -31,6 +31,23 @@ const WEATHER_OPTIONS = [
 
 type WeatherSetting = (typeof WEATHER_OPTIONS)[number]["value"];
 
+/**
+ * FE-local mirror of the backend time-control presets (`server/core/schemas/rule-presets.ts`).
+ * Redeclared rather than imported — the FE owns its half of every contract — and the numbers here are
+ * only for LABELS and for pre-filling the custom fields: the server resolves the preset itself, so a
+ * stale copy shows the wrong caption, never spawns the wrong match.
+ */
+const PRESETS = [
+  { value: "quick", label: "Quick", dayLimit: 30, bankMinutes: 10, incrementMinutes: 1 },
+  { value: "normal", label: "Normal", dayLimit: 50, bankMinutes: 15, incrementMinutes: 2 },
+  { value: "long", label: "Long", dayLimit: 100, bankMinutes: 30, incrementMinutes: 4 },
+  { value: "custom", label: "Custom", dayLimit: 50, bankMinutes: 15, incrementMinutes: 2 },
+] as const;
+
+type Preset = (typeof PRESETS)[number]["value"];
+
+const presetByValue = (value: Preset) => PRESETS.find((p) => p.value === value) ?? PRESETS[1];
+
 /** Create a lobby (the pre-room) and jump into it. Replaces the old direct-to-match create flow. */
 export default function CreateLobby({ currentPlayer, onCreated }: Props) {
   const router = useRouter();
@@ -38,6 +55,27 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
   const [mode, setMode] = useState<Mode>("duel");
   const [fogOfWar, setFogOfWar] = useState(false);
   const [weatherSetting, setWeatherSetting] = useState<WeatherSetting>("clear");
+  const [preset, setPreset] = useState<Preset>("normal");
+  // Only read when the preset is "custom" — otherwise the server stamps the preset's own numbers.
+  // Seeded from Normal and re-seeded whenever a named preset is chosen, so switching to Custom starts
+  // from what you were just looking at rather than from an empty form.
+  // Annotated as `number`: the preset table is `as const`, so an inferred initial value would pin
+  // each field to the literal it started at and reject every other preset (and every typed edit).
+  const [dayLimit, setDayLimit] = useState<number>(PRESETS[1].dayLimit);
+  const [bankMinutes, setBankMinutes] = useState<number>(PRESETS[1].bankMinutes);
+  const [incrementMinutes, setIncrementMinutes] = useState<number>(PRESETS[1].incrementMinutes);
+
+  const choosePreset = (value: Preset) => {
+    setPreset(value);
+
+    if (value !== "custom") {
+      const chosen = presetByValue(value);
+
+      setDayLimit(chosen.dayLimit);
+      setBankMinutes(chosen.bankMinutes);
+      setIncrementMinutes(chosen.incrementMinutes);
+    }
+  };
 
   const createLobby = trpc.lobby.create.useMutation({
     onSuccess: (lobby) => {
@@ -60,10 +98,15 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
       ruleset: fogOfWar ? "fog" : "standard",
       // No map here — the host picks it in the lobby room (see setMap), never at invite time.
       isRanked: false,
+      // The server resolves this: a named preset overwrites the three numbers below, and only
+      // "custom" keeps them. Sent for every preset so the intent is explicit on the wire.
+      preset,
       rules: {
         bannedUnitTypes: [],
         captureLimit: 50,
-        dayLimit: 50,
+        dayLimit,
+        turnBankSeconds: bankMinutes * 60,
+        turnIncrementSeconds: incrementMinutes * 60,
         fogOfWar,
         fundsPerProperty: 1000,
         unitCapPerPlayer: 50,
@@ -116,6 +159,65 @@ export default function CreateLobby({ currentPlayer, onCreated }: Props) {
         <input type="checkbox" checked={fogOfWar} onChange={(e) => setFogOfWar(e.target.checked)} />
         Fog of War
       </label>
+
+      <label className="@flex @flex-col @gap-1">
+        <span className="@text-sm @font-semibold @text-slate-300">Time control</span>
+        <select
+          className="@rounded @bg-bg-primary @px-3 @py-2 @text-white @outline @outline-1 @outline-bg-tertiary"
+          value={preset}
+          onChange={(e) => choosePreset(e.target.value as Preset)}
+        >
+          {PRESETS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.value === "custom"
+                ? "Custom…"
+                : `${p.label} — ${p.dayLimit} days, ${p.bankMinutes}m +${p.incrementMinutes}m/turn`}
+            </option>
+          ))}
+        </select>
+        <span className="@text-xs @text-slate-500">
+          Each turn adds to your bank. Run out and your turn is ended for you — you keep playing on
+          the per-turn gain.
+        </span>
+      </label>
+
+      {preset === "custom" && (
+        <div className="@grid @grid-cols-3 @gap-2">
+          <label className="@flex @flex-col @gap-1">
+            <span className="@text-xs @font-semibold @text-slate-400">Days</span>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              className="@rounded @bg-bg-primary @px-2 @py-1.5 @text-white @outline @outline-1 @outline-bg-tertiary"
+              value={dayLimit}
+              onChange={(e) => setDayLimit(Number(e.target.value))}
+            />
+          </label>
+          <label className="@flex @flex-col @gap-1">
+            <span className="@text-xs @font-semibold @text-slate-400">Bank (min)</span>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              className="@rounded @bg-bg-primary @px-2 @py-1.5 @text-white @outline @outline-1 @outline-bg-tertiary"
+              value={bankMinutes}
+              onChange={(e) => setBankMinutes(Number(e.target.value))}
+            />
+          </label>
+          <label className="@flex @flex-col @gap-1">
+            <span className="@text-xs @font-semibold @text-slate-400">Gain/turn (min)</span>
+            <input
+              type="number"
+              min={0}
+              max={15}
+              className="@rounded @bg-bg-primary @px-2 @py-1.5 @text-white @outline @outline-1 @outline-bg-tertiary"
+              value={incrementMinutes}
+              onChange={(e) => setIncrementMinutes(Number(e.target.value))}
+            />
+          </label>
+        </div>
+      )}
 
       {createLobby.error && (
         <p className="@py-0 @text-sm @text-red-400">{createLobby.error.message}</p>

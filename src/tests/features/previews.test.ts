@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  AvailableSubActions,
+  getAvailableSubActions,
+} from "server/engine/events/available-sub-actions";
 import { deriveGameOver } from "server/engine/previews/game-over";
 import { buildInspectionRanges, buildUnitDetails } from "server/routers/match/previews";
 import { buildTurnSnapshot } from "server/engine/previews/turn-snapshot";
@@ -293,6 +297,34 @@ describe("previews", () => {
     expect(has(getAttackableTiles(match, artillery, [0, 0]), [3, 0])).toBe(true);
     // ...but the unseen enemy on it isn't a target (targeting it would leak its position).
     expect(has(getAttackTargetTiles(match, artillery, [0, 0]), [3, 0])).toBe(false);
+  });
+
+  it("under fog, a hidden ambush on the move-to tile reads as EMPTY (no menu leak, so Attack can still be offered)", () => {
+    const seaRow = [
+      [{ type: "sea" }, { type: "sea" }, { type: "sea" }, { type: "sea" }],
+    ] as Parameters<typeof createTestMatch>[0]["tiles"];
+    const match = createTestMatch({
+      tiles: seaRow,
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    const p1 = match.getPlayerBySlot(1)!;
+    const cruiser = addUnit(p0, "cruiser", [0, 0]);
+    addUnit(p1, "sub", [2, 0], { hidden: true }); // a dived ambush sitting on the tile we'd move to
+    recomputeVision(match);
+
+    // The dived sub is genuinely hidden — no p0 unit is adjacent to it.
+    expect(p0.team.canSeeUnitAtPosition([2, 0])).toBe(false);
+
+    // Asking what we can do AT [2,0] must treat it as EMPTY from p0's view: it must offer Wait (so the
+    // downstream attack computation still runs), and must NOT surface the ambush as a Load / Join.
+    // The old omniscient getUnit() saw the sub and early-returned Load — hiding the whole menu
+    // (including Attack) and leaking the hidden unit. The move traps on the sub at execution instead.
+    const options = getAvailableSubActions(match, p0, cruiser, [2, 0], true);
+    expect(options.has(AvailableSubActions.Wait)).toBe(true);
+    expect(options.has(AvailableSubActions.Load)).toBe(false);
+    expect(options.has(AvailableSubActions.Join)).toBe(false);
   });
 
   it("hides a concealed sub from the enemy unless they have an adjacent unit", () => {

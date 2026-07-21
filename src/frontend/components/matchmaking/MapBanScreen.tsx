@@ -1,3 +1,4 @@
+import { formatTimeControl } from "frontend/utils/format-time";
 import { usePlayers } from "frontend/context/players";
 import { useQueue } from "frontend/context/matchmaking";
 import { trpc } from "frontend/utils/trpc-client";
@@ -32,10 +33,22 @@ const PROPERTY_META: { key: string; label: string; color: string }[] = [
 const FORCES: UnitType[] = ["Infantry", "Tank", "Artillery", "Anti-Air", "B-Copter", "Battleship"];
 
 /**
+ * FE-local mirror of the server's `BANS_PER_PLAYER` (matchmaking/constants.ts) — the FE never imports
+ * backend code. Only ever used to render progress ("1/2"); the server owns whether a ban is allowed.
+ */
+const BANS_PER_PLAYER = 2;
+
+/**
  * Map pick & ban — a command-console fusion of the CO picker (timed roster + focused dossier) and the
  * custom-lobby war room (map details, rules, property legend). Focus a map to study it, then confirm
  * a ban or a vote. Once both players vote, the winning map is locked and this screen flips to a
  * `MAP LOCKED` reveal for a shared study window before the CO pick.
+ *
+ * BOTH DECISIONS ARE BLIND, like the CO pick that follows. You ban without seeing your opponent's
+ * bans (they reveal once you've both spent them, which is what opens the vote), and you vote without
+ * seeing theirs (revealed with the rolled map). The opponent card is the whole tell: it shows
+ * *progress*, never content. The masking is the server's — `mapBanView` simply doesn't send what you
+ * may not see — so this file has nothing to hide and no way to leak.
  *
  * Drives off `matchmaking.mapBanView` (enriched with terrain + details), refetched on `lobby.onUpdate`.
  */
@@ -85,15 +98,60 @@ export default function MapBanScreen() {
     return null;
   }
 
-  const phase: "ban" | "vote" = myBans.length < 2 ? "ban" : "vote";
+  // The stage is the SERVER's, not `myBans.length`: it flips only when both players have banned, so
+  // finishing first means waiting rather than voting into a half-revealed board.
+  const phase = data.stage;
+  const waitingOnBans = phase === "ban" && myBans.length >= BANS_PER_PLAYER;
   const remaining =
     data.mapPhaseEndsAt !== null ? new Date(data.mapPhaseEndsAt).getTime() - now : 0;
   const rules = data.rules;
 
+  /**
+   * The opponent tell: a portrait-sized card reporting only how far along they are — never what they
+   * banned or voted for. Mirrors the CO picker's `choosing… / locked` roster tile.
+   */
+  const opponentCard = () => {
+    if (opponent === undefined) {
+      return null;
+    }
+
+    const status = revealing
+      ? "Ready"
+      : phase === "ban"
+        ? opponent.banCount >= BANS_PER_PLAYER
+          ? "Bans locked ✓"
+          : `Banning… ${opponent.banCount}/${BANS_PER_PLAYER}`
+        : opponent.hasVoted
+          ? "Vote locked ✓"
+          : "Choosing map…";
+    const done =
+      revealing || (phase === "ban" ? opponent.banCount >= BANS_PER_PLAYER : opponent.hasVoted);
+
+    return (
+      <div
+        className={`@flex @items-center @gap-2 @rounded-lg @px-2.5 @py-1.5 @transition ${
+          done ? "@bg-white/10" : "@bg-black/30"
+        }`}
+      >
+        <div className="@flex @h-9 @w-9 @flex-none @items-center @justify-center @rounded @bg-black/40 @font-russoOne @text-sm @text-slate-500">
+          {done ? <span className="@text-emerald-400">✓</span> : "?"}
+        </div>
+        <div className="@min-w-0">
+          <p className="@truncate @py-0 @text-xs @font-semibold @leading-tight">{opponent.name}</p>
+          <p className="@py-0 @text-[10px] @uppercase @tracking-wide @text-slate-400">{status}</p>
+        </div>
+      </div>
+    );
+  };
+
+  /** A vote's map name for the reveal line ("—" when they never cast one before the deadline). */
+  const mapName = (mapId: string | null | undefined): string =>
+    data.pool.find((m) => m.id === mapId)?.name ?? "—";
+
   const dossier = (map: NonNullable<typeof focused>) => {
     const banned = allBans.has(map.id);
     const bannedByMe = myBans.includes(map.id);
-    const canBanThis = phase === "ban" && !banned && !revealing;
+    const canBanThis = phase === "ban" && !bannedByMe && !waitingOnBans && !revealing;
     const canVoteThis = phase === "vote" && !banned && me?.votedMapId == null && !revealing;
 
     return (
@@ -116,15 +174,18 @@ export default function MapBanScreen() {
             rules.fogOfWar ? "Fog of War" : "Clear skies",
             `$${rules.fundsPerProperty}/prop`,
             `${rules.dayLimit}-day limit`,
+            formatTimeControl(rules.turnBankSeconds, rules.turnIncrementSeconds),
             "Ranked",
-          ].map((chip) => (
-            <span
-              key={chip}
-              className="@rounded @bg-black/30 @px-2 @py-1 @text-[11px] @font-semibold @uppercase @tracking-wide @text-slate-300"
-            >
-              {chip}
-            </span>
-          ))}
+          ]
+            .filter((chip): chip is string => chip !== null)
+            .map((chip) => (
+              <span
+                key={chip}
+                className="@rounded @bg-black/30 @px-2 @py-1 @text-[11px] @font-semibold @uppercase @tracking-wide @text-slate-300"
+              >
+                {chip}
+              </span>
+            ))}
         </div>
 
         <div className="@grid @grid-cols-2 @gap-x-4 @gap-y-1 @text-xs">
@@ -174,15 +235,17 @@ export default function MapBanScreen() {
                 : "@border @border-red-500/50 @text-red-300 hover:@border-red-500 hover:@text-white"
             }`}
           >
-            {banned
-              ? bannedByMe
-                ? "You banned this"
-                : "Banned by opponent"
-              : phase === "ban"
-                ? `⛔ Ban ${map.name}`
-                : me?.votedMapId != null
-                  ? "Vote locked in"
-                  : `✓ Vote ${map.name}`}
+            {bannedByMe
+              ? "You banned this"
+              : waitingOnBans
+                ? "Waiting for opponent's bans…"
+                : banned
+                  ? "Banned by opponent"
+                  : phase === "ban"
+                    ? `⛔ Ban ${map.name}`
+                    : me?.votedMapId != null
+                      ? "Vote locked in"
+                      : `✓ Vote ${map.name}`}
           </button>
         )}
       </div>
@@ -205,7 +268,7 @@ export default function MapBanScreen() {
               <span
                 className={`@rounded @px-2 @py-1 ${phase === "ban" ? "@bg-primary @text-black" : "@bg-black/30 @text-slate-500"}`}
               >
-                1 · Ban {Math.max(0, 2 - myBans.length)}
+                1 · Ban {Math.max(0, BANS_PER_PLAYER - myBans.length)}
               </span>
               <span className="@text-slate-600">→</span>
               <span
@@ -216,6 +279,7 @@ export default function MapBanScreen() {
             </div>
           )}
           <div className="@ml-auto @flex @items-center @gap-3">
+            {opponentCard()}
             <span className="@text-xs @uppercase @tracking-wide @text-slate-400">
               {revealing ? "Generals deploy in" : "Phase ends in"}
             </span>
@@ -237,7 +301,12 @@ export default function MapBanScreen() {
                   Battlefield selected
                 </p>
                 {dossier(focused)}
-                <p className="@mt-4 @py-0 @text-center @text-sm @text-slate-400">
+                {/* Now that it's rolled, show how it was rolled — both votes, finally unmasked. */}
+                <p className="@mt-3 @py-0 @text-center @text-xs @text-slate-500">
+                  You voted <span className="@text-slate-300">{mapName(me?.votedMapId)}</span> · Foe
+                  voted <span className="@text-slate-300">{mapName(opponent?.votedMapId)}</span>
+                </p>
+                <p className="@mt-2 @py-0 @text-center @text-sm @text-slate-400">
                   Study the terrain — the general pick begins when the timer ends.
                 </p>
               </>
@@ -251,7 +320,10 @@ export default function MapBanScreen() {
               {data.pool.map((map) => {
                 const banned = allBans.has(map.id);
                 const bannedByMe = myBans.includes(map.id);
+                // Only ever true after the reveal — until then the server sends no opponent bans.
+                const bannedByOpp = opponent?.bannedMapIds.includes(map.id) === true;
                 const votedByMe = me?.votedMapId === map.id;
+                // Likewise: the opponent's vote arrives only with the rolled map.
                 const votedByOpp = opponent?.votedMapId === map.id;
                 const isFocused = map.id === activeId;
 
@@ -286,7 +358,7 @@ export default function MapBanScreen() {
                           You
                         </span>
                       )}
-                      {banned && !bannedByMe && (
+                      {bannedByOpp && (
                         <span className="@rounded @bg-primary @px-1.5 @py-0.5 @text-[9px] @font-bold @uppercase @text-black">
                           Foe
                         </span>

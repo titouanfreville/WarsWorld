@@ -68,9 +68,11 @@ export function deriveLobbyStatus(
       if (viewer.result === "won") {
         return "victory";
       }
+
       if (viewer.result === "lost") {
         return "defeat";
       }
+
       if (viewer.result === "drawn") {
         return "draw";
       }

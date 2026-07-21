@@ -1,22 +1,51 @@
 import { prisma } from "../prisma/prisma-client";
 import { logger } from "shared/utils/logger";
 import type { Tile } from "server/core/schemas/tile";
-import type { WWMap } from "@prisma/client";
+import type { GameMode, WWMap } from "@prisma/client";
 
 export type AWBWMapImportSchema = {
   name: string;
   tileDataString: string;
-  numberOfPlayers: 2;
+  /** 2 for a duel, 4 for the 2v2 and free-for-all maps. Slots are 0-indexed and contiguous. */
+  numberOfPlayers: number;
+  /** Where the map may be played. Defaults from the seat count — see {@link modesForSeats}. */
+  supportedModes?: GameMode[];
+  /**
+   * Where the map counts for rating. Defaults to NONE: a freshly imported map is unvetted, and
+   * nothing should reach the rating ladder until someone has looked at it.
+   */
+  rankedModes?: GameMode[];
 };
 
-export const importAWBWMap = async (data: AWBWMapImportSchema) => {
+/**
+ * The modes a given seat count can physically host. Two seats is a duel; four seats fit both 2v2
+ * and free-for-all, since only `teamMapping` differs between them. This is about what *fits*, not
+ * about what is balanced — `rankedModes` is where balance is asserted.
+ */
+export const modesForSeats = (numberOfPlayers: number): GameMode[] =>
+  numberOfPlayers === 2 ? ["duel"] : numberOfPlayers === 4 ? ["teams", "ffa"] : [];
+
+/**
+ * Import one map.
+ *
+ * `client` defaults to the module singleton for the ordinary caller, but must be passed by anyone
+ * who already holds a client — `seedMaps` checks for existing maps and updates mode tags through
+ * its own client, and writing the create through a second one meant two connection pools and two
+ * halves of the same seed that could never share a transaction.
+ */
+export const importAWBWMap = async (
+  data: AWBWMapImportSchema,
+  client: Pick<typeof prisma, "wWMap"> = prisma,
+) => {
   try {
-    return await prisma.wWMap.create({
+    return await client.wWMap.create({
       data: {
         name: data.name,
         numberOfPlayers: data.numberOfPlayers,
         tiles: convertAWBWMapToWWMap(data.tileDataString),
         predeployedUnits: [] /* TODO ! */,
+        supportedModes: data.supportedModes ?? modesForSeats(data.numberOfPlayers),
+        rankedModes: data.rankedModes ?? [],
       },
     });
   } catch (error) {

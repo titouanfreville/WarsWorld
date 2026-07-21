@@ -39,6 +39,30 @@ export const formatDuration = (ms: number): string => {
 };
 
 /**
+ * The match's time control as a chip: starting bank plus per-turn gain, e.g. `15m +2m/turn`.
+ *
+ * `null` when the match is untimed — every match created before the clock existed, and any custom
+ * game that opted out. Callers drop the chip entirely rather than advertising a clock that isn't
+ * there. A zero increment is a real setting (a plain, non-replenishing bank), so it's spelled out
+ * rather than hidden.
+ */
+export const formatTimeControl = (
+  bankSeconds: number | null | undefined,
+  incrementSeconds: number | null | undefined,
+): string | null => {
+  if (bankSeconds === null || bankSeconds === undefined) {
+    return null;
+  }
+
+  const bank = `${Math.round(bankSeconds / 60)}m`;
+
+  // Explicitly: no increment at all, or an increment of zero, both mean a flat bank.
+  return incrementSeconds === null || incrementSeconds === undefined || incrementSeconds === 0
+    ? `${bank} flat`
+    : `${bank} +${Math.round(incrementSeconds / 60)}m/turn`;
+};
+
+/**
  * When a finished match ended. Short and scannable in a list — `finishedAt` may be null on rows
  * archived before the outcome was persisted, so null is a real case, not a bug.
  */
@@ -64,3 +88,27 @@ export const formatMatchDate = (value: Date | string | null | undefined): string
  */
 export const formatClockTime = (value: Date | string): string =>
   new Date(value).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * A COUNTDOWN duration as m:ss, or h:mm:ss once it runs past an hour (the Long preset starts at 30m
+ * but grows with the increment).
+ *
+ * Distinct from the other two duration/time helpers here, and deliberately so:
+ * - `formatDuration` is the COARSE match length a player skims in a list ("15m", "2h 3m", "3d").
+ * - `formatClockTime` renders a point in time in the viewer's timezone.
+ * - this one is a PRECISE live countdown, ticking to the second, for the turn clock.
+ *
+ * It formats a span rather than an instant, so it is timezone-independent and needs no TZ pinning.
+ *
+ * `Math.ceil` so a clock reads "1:00" for the whole of its final minute and only shows 0:00 when the
+ * time is genuinely gone — a countdown that displays 0:00 with a second still on it looks broken.
+ */
+export const formatCountdown = (ms: number): string => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  const mm = hours > 0 ? String(minutes).padStart(2, "0") : String(minutes);
+
+  return `${hours > 0 ? `${hours}:` : ""}${mm}:${String(seconds).padStart(2, "0")}`;
+};

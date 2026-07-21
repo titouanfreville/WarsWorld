@@ -5,7 +5,11 @@
 # secrets
 .env*
 !.env.example
-!.env.prod.example
+!.env.production.example
+
+# Local database dumps written by the compose `backup` service. Never commit these — they contain
+# every user row.
+/backups
 
 # generated files
 /.next
@@ -18,4 +22,5 @@ prisma/migrations/20230510171142_amogus/migration.sql
 
 .ai
 .omc
+.moonlight
 .moonlight-local

@@ -54,7 +54,9 @@ export const matchmakingRouter = router({
     .mutation(({ input, ctx }) =>
       matchmakingUsecase.voteMap(input.lobbyId, ctx.currentPlayer.id, input.mapId),
     ),
+  // The viewer is taken from the session, never from the input: it decides whose bans and votes are
+  // unmasked, so a client must not be able to name someone else.
   mapBanView: playerBaseProcedure
     .input(withLobbyIdSchema)
-    .query(({ input }) => matchmakingUsecase.mapBanView(input.lobbyId)),
+    .query(({ input, ctx }) => matchmakingUsecase.mapBanView(input.lobbyId, ctx.currentPlayer.id)),
 });

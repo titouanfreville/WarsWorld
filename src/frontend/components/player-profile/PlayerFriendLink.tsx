@@ -1,10 +1,5 @@
-import {
-  avatarObjectPosition,
-  coAvatarUrl,
-  isPixelVariant,
-  type CoAvatar,
-} from "frontend/utils/sprites/avatar";
-import { coArtUrl } from "frontend/utils/sprites/co";
+import { type CoAvatar } from "frontend/utils/sprites/avatar";
+import { resolvePortrait } from "frontend/utils/sprites/portrait";
 import Link from "next/link";
 import UserAvatar from "../navbar/UserAvatar";
 
@@ -16,9 +11,7 @@ type Props = {
 
 /** One friend row: their chosen portrait (or favourite-CO / monogram fallback) + handle, linked. */
 export function PlayerFriendLink({ name, avatar, favouriteCO }: Props) {
-  const image = avatar ? coAvatarUrl(avatar) : favouriteCO ? coArtUrl(favouriteCO) : undefined;
-  const pixelated = avatar ? isPixelVariant(avatar.variant) : false;
-  const objectPosition = avatar ? avatarObjectPosition(avatar) : "50% 0%";
+  const { image, pixelated, objectPosition } = resolvePortrait(avatar, favouriteCO);
 
   return (
     <Link

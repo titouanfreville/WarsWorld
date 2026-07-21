@@ -1,4 +1,4 @@
-import type { Lobby, LobbyMembership, PlayerInLobby } from "@prisma/client";
+import type { GameMode, Lobby, LobbyMembership, PlayerInLobby } from "@prisma/client";
 import { capacityForMode } from "server/matches/layout";
 
 type LobbyMemberRow = PlayerInLobby & { player: { id: string; name: string } };
@@ -20,7 +20,12 @@ export type LobbyMemberView = {
 export type LobbyView = {
   id: string;
   hostPlayerId: string | null;
-  mode: string;
+  /**
+   * The mode UNION, not `string`. The server knows this is a `GameMode`; widening it here pushed an
+   * unchecked `as GameMode` onto every frontend use site, which is an assertion the FE has no
+   * standing to make. Narrow on the wire and the FE's own mirror checks structurally instead.
+   */
+  mode: GameMode;
   ruleset: string;
   isRanked: boolean;
   mapId: string | null;
@@ -29,7 +34,14 @@ export type LobbyView = {
   /** Faction (army) per team index — cosmetic team identity. */
   teamFactions: string[] | null;
   /** Rule highlights the lobby surfaces as chips. */
-  rules: { fogOfWar: boolean; fundsPerProperty: number; dayLimit: number };
+  rules: {
+    fogOfWar: boolean;
+    fundsPerProperty: number;
+    dayLimit: number;
+    /** Turn clock in seconds; null on an untimed match (nothing to advertise). */
+    turnBankSeconds: number | null;
+    turnIncrementSeconds: number | null;
+  };
   matchId: string | null;
   members: LobbyMemberView[];
 };
@@ -48,6 +60,8 @@ export const lobbyToView = (row: LobbyRow): LobbyView => ({
     fogOfWar: row.rules.fogOfWar,
     fundsPerProperty: row.rules.fundsPerProperty,
     dayLimit: row.rules.dayLimit,
+    turnBankSeconds: row.rules.turnBankSeconds ?? null,
+    turnIncrementSeconds: row.rules.turnIncrementSeconds ?? null,
   },
   matchId: row.match?.id ?? null,
   members: row.members.map((member) => ({
