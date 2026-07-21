@@ -1,19 +1,22 @@
-import { BANS_PER_PLAYER } from "./constants";
+import { bansPerPlayer } from "./constants";
 
 /**
  * Pure map pick & ban resolution — no I/O. The usecase persists bans/votes on `PlayerInLobby`; this
  * module owns the *rules*: what survives the bans, which votes are valid, and how the final map is
  * rolled. `randomInt(maxExclusive)` is injected so callers stay deterministic in tests.
  *
- * BANS ARE BLIND. Both players ban simultaneously without seeing each other's picks; the bans reveal
- * only once everyone has spent them, which is also when voting opens ({@link banStageComplete}).
+ * BANS ARE BLIND. Every player bans simultaneously without seeing anyone else's picks; the bans
+ * reveal only once everyone has spent them, which is also when voting opens ({@link banStageComplete}).
  * Two consequences the rules here have to honour:
  *
- * - **Duplicate bans are legal.** Rejecting "the opponent already banned that" would leak the
- *   opponent's ban through the error. A wasted ban is the cost of banning blind.
- * - **No last-survivor guard.** It too read the opponent's bans. It isn't needed: the pool is at
- *   least `MIN_MAP_POOL_SIZE` (2 players × BANS_PER_PLAYER + 1), so even with zero overlap the bans
- *   can never empty it.
+ * - **Duplicate bans are legal.** Rejecting "someone else already banned that" would leak their ban
+ *   through the error. A wasted ban is the cost of banning blind.
+ * - **No last-survivor guard.** It too read the other players' bans. It isn't needed: the pool is at
+ *   least `minMapPoolSize(playerCount)`, so even with zero overlap the bans can never empty it —
+ *   and `createReadyCheck` refuses to start a phase on a smaller pool.
+ *
+ * The ban ALLOWANCE is derived from how many are picking (see `bansPerPlayer`), never passed in, so
+ * a duel and a four-player lobby can't disagree about it.
  *
  * There is no deadline auto-fill: a player who doesn't finish their bans, or doesn't vote in time,
  * abandons the pick and the match is cancelled + flagged (handled in the usecase), rather than
@@ -80,14 +83,24 @@ export const banStageComplete = (players: PlayerBanVote[]): boolean =>
   // `players.length > 0` because `[].every(...)` is vacuously TRUE. A lobby whose deciders have all
   // left (or that somehow contains only spectators) would otherwise report its bans revealed, open
   // voting on nobody, and let `resolveMapBan` roll a map for an empty room.
-  players.length > 0 && players.every((p) => p.bannedMapIds.length >= BANS_PER_PLAYER);
+  players.length > 0 &&
+  players.every((p) => p.bannedMapIds.length >= bansPerPlayer(players.length));
 
 /**
- * Validate a live ban. Deliberately blind: it looks ONLY at the pool and at *this* player's own bans
- * — the map must be in the pool, not already banned by them, and they must have bans left. It never
- * consults the other players, because every rejection is information (see the module header).
+ * Validate a live ban. Deliberately blind about WHAT the others banned: it looks only at the pool
+ * and at *this* player's own bans — the map must be in the pool, not already banned by them, and
+ * they must have bans left. It never consults anyone else's ban LIST, because every rejection is
+ * information (see the module header).
+ *
+ * It does take `players`, but only for its LENGTH — how many are picking sets the allowance, and
+ * that is public knowledge (everyone can see how many are in the lobby).
  */
-export const canBan = (pool: string[], player: PlayerBanVote, mapId: string): boolean => {
+export const canBan = (
+  pool: string[],
+  players: PlayerBanVote[],
+  player: PlayerBanVote,
+  mapId: string,
+): boolean => {
   if (!pool.includes(mapId)) {
     return false;
   }
@@ -96,7 +109,7 @@ export const canBan = (pool: string[], player: PlayerBanVote, mapId: string): bo
     return false;
   }
 
-  return player.bannedMapIds.length < BANS_PER_PLAYER;
+  return player.bannedMapIds.length < bansPerPlayer(players.length);
 };
 
 /**

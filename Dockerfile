@@ -17,7 +17,9 @@ WORKDIR /app
 
 FROM base AS build
 
-COPY package.json package-lock.json ./
+# `.npmrc` MUST be copied alongside the manifests: it carries `legacy-peer-deps=true`, without
+# which npm 10 refuses the @auth/core ↔ next-auth nodemailer peer conflict and `npm ci` fails.
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
 COPY . .

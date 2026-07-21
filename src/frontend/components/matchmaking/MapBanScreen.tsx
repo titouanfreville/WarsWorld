@@ -33,10 +33,14 @@ const PROPERTY_META: { key: string; label: string; color: string }[] = [
 const FORCES: UnitType[] = ["Infantry", "Tank", "Artillery", "Anti-Air", "B-Copter", "Battleship"];
 
 /**
- * FE-local mirror of the server's `BANS_PER_PLAYER` (matchmaking/constants.ts) — the FE never imports
- * backend code. Only ever used to render progress ("1/2"); the server owns whether a ban is allowed.
+ * Fallback ban allowance, used only until the first view arrives.
+ *
+ * The real number comes from the server on every view (`bansPerPlayer`), because it depends on how
+ * many are picking — two in a duel, one in a four-player lobby. Mirroring a constant here would
+ * render "1/2" in a lobby where a single ban is the whole allowance. Used for progress display only;
+ * the server owns whether a ban is actually allowed.
  */
-const BANS_PER_PLAYER = 2;
+const DEFAULT_BANS_PER_PLAYER = 2;
 
 /**
  * Map pick & ban — a command-console fusion of the CO picker (timed roster + focused dossier) and the
@@ -77,7 +81,9 @@ export default function MapBanScreen() {
   const voteMap = trpc.matchmaking.voteMap.useMutation({ onSuccess: refresh });
 
   const me = data?.players.find((p) => p.playerId === playerId);
-  const opponent = data?.players.find((p) => p.playerId !== playerId);
+  // EVERY other picker, not just one: a 2v2 or free-for-all lobby has three, and showing a single
+  // card left the other two invisible — you couldn't tell who the phase was waiting on.
+  const opponents = (data?.players ?? []).filter((p) => p.playerId !== playerId);
   const myBans = me?.bannedMapIds ?? [];
   const allBans = useMemo(
     () => new Set((data?.players ?? []).flatMap((p) => p.bannedMapIds)),
@@ -101,7 +107,9 @@ export default function MapBanScreen() {
   // The stage is the SERVER's, not `myBans.length`: it flips only when both players have banned, so
   // finishing first means waiting rather than voting into a half-revealed board.
   const phase = data.stage;
-  const waitingOnBans = phase === "ban" && myBans.length >= BANS_PER_PLAYER;
+  // Server-provided: a four-player lobby gets one ban each, a duel two.
+  const bansPerPlayer = data.bansPerPlayer ?? DEFAULT_BANS_PER_PLAYER;
+  const waitingOnBans = phase === "ban" && myBans.length >= bansPerPlayer;
   const remaining =
     data.mapPhaseEndsAt !== null ? new Date(data.mapPhaseEndsAt).getTime() - now : 0;
   const rules = data.rules;
@@ -110,25 +118,22 @@ export default function MapBanScreen() {
    * The opponent tell: a portrait-sized card reporting only how far along they are — never what they
    * banned or voted for. Mirrors the CO picker's `choosing… / locked` roster tile.
    */
-  const opponentCard = () => {
-    if (opponent === undefined) {
-      return null;
-    }
-
+  const opponentCard = (opponent: (typeof opponents)[number]) => {
     const status = revealing
       ? "Ready"
       : phase === "ban"
-        ? opponent.banCount >= BANS_PER_PLAYER
+        ? opponent.banCount >= bansPerPlayer
           ? "Bans locked ✓"
-          : `Banning… ${opponent.banCount}/${BANS_PER_PLAYER}`
+          : `Banning… ${opponent.banCount}/${bansPerPlayer}`
         : opponent.hasVoted
           ? "Vote locked ✓"
           : "Choosing map…";
     const done =
-      revealing || (phase === "ban" ? opponent.banCount >= BANS_PER_PLAYER : opponent.hasVoted);
+      revealing || (phase === "ban" ? opponent.banCount >= bansPerPlayer : opponent.hasVoted);
 
     return (
       <div
+        key={opponent.playerId}
         className={`@flex @items-center @gap-2 @rounded-lg @px-2.5 @py-1.5 @transition ${
           done ? "@bg-white/10" : "@bg-black/30"
         }`}
@@ -268,7 +273,7 @@ export default function MapBanScreen() {
               <span
                 className={`@rounded @px-2 @py-1 ${phase === "ban" ? "@bg-primary @text-black" : "@bg-black/30 @text-slate-500"}`}
               >
-                1 · Ban {Math.max(0, BANS_PER_PLAYER - myBans.length)}
+                1 · Ban {Math.max(0, bansPerPlayer - myBans.length)}
               </span>
               <span className="@text-slate-600">→</span>
               <span
@@ -279,7 +284,7 @@ export default function MapBanScreen() {
             </div>
           )}
           <div className="@ml-auto @flex @items-center @gap-3">
-            {opponentCard()}
+            {opponents.map(opponentCard)}
             <span className="@text-xs @uppercase @tracking-wide @text-slate-400">
               {revealing ? "Generals deploy in" : "Phase ends in"}
             </span>
@@ -303,8 +308,14 @@ export default function MapBanScreen() {
                 {dossier(focused)}
                 {/* Now that it's rolled, show how it was rolled — both votes, finally unmasked. */}
                 <p className="@mt-3 @py-0 @text-center @text-xs @text-slate-500">
-                  You voted <span className="@text-slate-300">{mapName(me?.votedMapId)}</span> · Foe
-                  voted <span className="@text-slate-300">{mapName(opponent?.votedMapId)}</span>
+                  You voted <span className="@text-slate-300">{mapName(me?.votedMapId)}</span>
+                  {opponents.map((foe) => (
+                    <span key={foe.playerId}>
+                      {" · "}
+                      {foe.name} voted{" "}
+                      <span className="@text-slate-300">{mapName(foe.votedMapId)}</span>
+                    </span>
+                  ))}
                 </p>
                 <p className="@mt-2 @py-0 @text-center @text-sm @text-slate-400">
                   Study the terrain — the general pick begins when the timer ends.
@@ -321,10 +332,10 @@ export default function MapBanScreen() {
                 const banned = allBans.has(map.id);
                 const bannedByMe = myBans.includes(map.id);
                 // Only ever true after the reveal — until then the server sends no opponent bans.
-                const bannedByOpp = opponent?.bannedMapIds.includes(map.id) === true;
+                const bannedByOpp = opponents.some((foe) => foe.bannedMapIds.includes(map.id));
                 const votedByMe = me?.votedMapId === map.id;
-                // Likewise: the opponent's vote arrives only with the rolled map.
-                const votedByOpp = opponent?.votedMapId === map.id;
+                // Likewise: their votes arrive only with the rolled map.
+                const votedByOpp = opponents.some((foe) => foe.votedMapId === map.id);
                 const isFocused = map.id === activeId;
 
                 return (

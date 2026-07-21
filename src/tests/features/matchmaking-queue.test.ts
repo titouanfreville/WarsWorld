@@ -88,6 +88,14 @@ describe("unfairnessOf", () => {
   });
 });
 
+/**
+ * These cases are all about the PAIRING rules (tolerance, rank band, rematch, cooldown), which bind
+ * identically however many seats a mode has. Formed at duel size and read back as `{a, b}` so each
+ * one still says what it is testing rather than indexing into an array.
+ */
+const pairsOf = (q: MatchQueue, now: number) =>
+  q.form(now, () => 2).map((group) => ({ a: group[0], b: group[1] }));
+
 describe("MatchQueue pairing", () => {
   it("pairs the fairest compatible partner, oldest first", () => {
     const q = new MatchQueue();
@@ -95,7 +103,7 @@ describe("MatchQueue pairing", () => {
     q.add(ticket("B", settled(27), 1)); // further away
     q.add(ticket("C", settled(25.2), 1)); // nearly identical -> fairest
 
-    const pairs = q.pair(NOW);
+    const pairs = pairsOf(q, NOW);
 
     expect(pairs).toHaveLength(1);
     expect([pairs[0].a.playerId, pairs[0].b.playerId].sort()).toEqual(["A", "C"]);
@@ -108,7 +116,7 @@ describe("MatchQueue pairing", () => {
     q.add({ ...ticket("A", settled(25)), ruleset: "standard" });
     q.add({ ...ticket("B", settled(25)), ruleset: "fog" });
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
     expect(q.size()).toBe(2);
   });
 
@@ -117,7 +125,7 @@ describe("MatchQueue pairing", () => {
     q.add({ ...ticket("A", settled(25)), mode: "duel" });
     q.add({ ...ticket("B", settled(25)), mode: "ffa" });
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
   });
 
   /** Ranked is a queue axis: a casual player must never be pulled into a game that moves a ladder. */
@@ -126,7 +134,7 @@ describe("MatchQueue pairing", () => {
     q.add({ ...ticket("A", settled(25)), ranked: true });
     q.add({ ...ticket("B", settled(25)), ranked: false });
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
     expect(q.size()).toBe(2);
   });
 
@@ -135,12 +143,12 @@ describe("MatchQueue pairing", () => {
     q.add(ticket("waiter", settled(25), 1000)); // huge tolerance from long wait
     q.add(ticket("fresh", settled(40), 0)); // tolerance only 0.12; this matchup is ~certain
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
 
     // Once the newcomer has also waited long enough, min(tolerance) admits the gap.
     q.remove("fresh");
     q.add(ticket("fresh", settled(40), 1000));
-    expect(q.pair(NOW)).toHaveLength(1);
+    expect(pairsOf(q, NOW)).toHaveLength(1);
   });
 
   it("won't re-offer a pair on cooldown, then does once it expires", () => {
@@ -149,10 +157,10 @@ describe("MatchQueue pairing", () => {
     q.add(ticket("B", settled(25.2), 10));
     q.addCooldown("A", "B", NOW, 30_000);
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
     expect(q.size()).toBe(2); // both still waiting
 
-    expect(q.pair(NOW + 31_000)).toHaveLength(1); // cooldown lapsed
+    expect(pairsOf(q, NOW + 31_000)).toHaveLength(1); // cooldown lapsed
   });
 
   it("remove returns the ticket with its original enqueuedAt (requeue keeps the wait)", () => {
@@ -177,7 +185,7 @@ describe("rank band", () => {
     q.add(ranked("A", "private"));
     q.add(ranked("B", "lieutenant")); // one step away
 
-    expect(q.pair(NOW)).toHaveLength(1);
+    expect(pairsOf(q, NOW)).toHaveLength(1);
   });
 
   it("won't pair two ranks apart at first — the band starts at ±1", () => {
@@ -185,7 +193,7 @@ describe("rank band", () => {
     q.add(ranked("A", "private"));
     q.add(ranked("B", "captain")); // two steps away
 
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
     expect(q.size()).toBe(2);
   });
 
@@ -194,7 +202,7 @@ describe("rank band", () => {
     q.add(ranked("A", "private", 200)); // waited past the first rank-widen step
     q.add(ranked("B", "captain", 200));
 
-    expect(q.pair(NOW)).toHaveLength(1);
+    expect(pairsOf(q, NOW)).toHaveLength(1);
   });
 
   it("never pairs beyond the hard cap, however long the wait", () => {
@@ -204,7 +212,7 @@ describe("rank band", () => {
     q.add(ranked("B", "marechal", 100_000));
 
     expect(MAX_RANK_GAP).toBeLessThan(4);
-    expect(q.pair(NOW)).toHaveLength(0);
+    expect(pairsOf(q, NOW)).toHaveLength(0);
   });
 
   it("ignores the band when a side has no settled rank (placements / casual)", () => {
@@ -214,7 +222,7 @@ describe("rank band", () => {
     q.add({ ...ranked("A", "marechal"), rank: null });
     q.add(ranked("B", "marechal"));
 
-    expect(q.pair(NOW)).toHaveLength(1);
+    expect(pairsOf(q, NOW)).toHaveLength(1);
   });
 });
 
@@ -275,11 +283,87 @@ describe("rematchOk", () => {
     const fresh = new MatchQueue();
     fresh.add(mk("A", "B", 0));
     fresh.add(mk("B", "A", 0));
-    expect(fresh.pair(NOW)).toHaveLength(0); // just played → held apart
+    expect(pairsOf(fresh, NOW)).toHaveLength(0); // just played → held apart
 
     const waited = new MatchQueue();
     waited.add(mk("A", "B", 600));
     waited.add(mk("B", "A", 600));
-    expect(waited.pair(NOW)).toHaveLength(1); // long wait → hold relaxed, they pair
+    expect(pairsOf(waited, NOW)).toHaveLength(1); // long wait → hold relaxed, they pair
+  });
+});
+
+describe("MatchQueue group formation", () => {
+  /** Four seats, as the 2v2 and free-for-all queues ask for. */
+  const quadSize = () => 4;
+
+  it("forms a group of four and clears them all from the queue", () => {
+    const q = new MatchQueue();
+
+    for (const id of ["A", "B", "C", "D"]) {
+      q.add({ ...ticket(id, settled(25)), mode: "teams" });
+    }
+
+    const groups = q.form(NOW, quadSize);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toHaveLength(4);
+    expect(q.size()).toBe(0);
+  });
+
+  it("forms NOTHING when it cannot fill the seats, leaving everyone queued", () => {
+    // Three waiting for a four-seat mode is not a match, and a half-formed lobby would strand them.
+    // They keep their place in line and their tolerance keeps widening.
+    const q = new MatchQueue();
+
+    for (const id of ["A", "B", "C"]) {
+      q.add({ ...ticket(id, settled(25)), mode: "teams" });
+    }
+
+    expect(q.form(NOW, quadSize)).toHaveLength(0);
+    expect(q.size()).toBe(3);
+  });
+
+  it("admits a candidate against EVERY member, not just the one who seeded the group", () => {
+    // A and B are close. C is close to B but miles from A. Checking only against the seed would let
+    // C in and hand A an opponent they were never willing to face.
+    const q = new MatchQueue();
+
+    q.add({ ...ticket("A", settled(25), 5), mode: "teams" });
+    q.add({ ...ticket("B", settled(25.1)), mode: "teams" });
+    q.add({ ...ticket("C", settled(45)), mode: "teams" });
+    q.add({ ...ticket("D", settled(25.2)), mode: "teams" });
+
+    const groups = q.form(NOW, quadSize);
+
+    expect(groups).toHaveLength(0); // C can't join, so the fourth seat can't be filled
+    expect(q.has("C")).toBe(true);
+  });
+
+  it("takes the surplus in wait order, leaving the newest behind", () => {
+    const q = new MatchQueue();
+    const ids = ["A", "B", "C", "D", "E"];
+
+    ids.forEach((id, i) => {
+      // A waited longest, E just arrived.
+      q.add({ ...ticket(id, settled(25), (ids.length - i) * 10), mode: "teams" });
+    });
+
+    const groups = q.form(NOW, quadSize);
+
+    expect(groups).toHaveLength(1);
+    expect(q.size()).toBe(1);
+    expect(q.has("E")).toBe(true);
+  });
+
+  it("still forms pairs for a two-seat mode", () => {
+    const q = new MatchQueue();
+
+    q.add(ticket("A", settled(25)));
+    q.add(ticket("B", settled(25.1)));
+
+    const groups = q.form(NOW, () => 2);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toHaveLength(2);
   });
 });

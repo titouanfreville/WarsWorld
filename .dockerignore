@@ -1,34 +1,38 @@
-# Never bake secrets or local env into an image. This also protects the build itself: Next loads
-# `.env.production` ahead of `.env`, and the copy tracked in git points every NEXT_PUBLIC_* var at
-# localhost — inside the build context it would silently poison the client bundle.
-.env
-.env.*
-!.env.example
-
-# Build outputs — rebuilt inside the image, and copying a host build (darwin/arm64 binaries,
-# stale .next) is how "works locally, breaks in the container" happens.
+# Without this file, `COPY . .` would overwrite the Linux node_modules installed by `npm ci` with
+# the HOST's node_modules. On macOS that means darwin-arm64 binaries for sharp, bcrypt and the
+# Prisma query engine landing in a Linux image — which fails at runtime, not at build time.
 node_modules
 .next
 dist
-tsconfig.tsbuildinfo
+out
 
-# VCS / editor / tooling noise
+# VCS, tooling and local state
 .git
-.github
 .gitignore
-.idea
+.github
 .vscode
+.idea
 .DS_Store
-.ai
-.omc
 .moonlight
 .moonlight-local
+.ai
+.omc
+.claude
 
-# Local infra + docs the image never needs
-docker-compose.yaml
-docker-compose.prod.yaml
-deployment
+# Secrets and local env — never bake these into an image layer
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Database dumps written by the compose backup service
+backups
+
+# Not needed to build or run the app
 docs
-# Only the root-level docs — `src/frontend/utils/articles/**/*.md` is seed input and must stay.
-/*.md
-!/README.md
+deployment
+supabase
+README.md
+CONTRIBUTING.md
+CLAUDE.md
+LICENSE.md

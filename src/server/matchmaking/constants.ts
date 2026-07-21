@@ -83,23 +83,41 @@ export const REMATCH_TAU = 60;
 export const REMATCH_LOOKBACK_MS = REMATCH_BASE_GAP_SEC * 1000;
 
 // --- Map pick & ban ---
-export const MAP_POOL_SIZE = 7; // candidate maps; 2 players × 2 bans leaves ≥3 to vote on
-export const BANS_PER_PLAYER = 2;
-// Smallest pool that still leaves a votable survivor after both players spend every ban
-// (2 players × BANS_PER_PLAYER + 1).
-//
-// This is a HARD FLOOR, not a warning threshold. Bans are blind, so `canBan` deliberately cannot
-// consult the opponent's bans — which means it cannot refuse the ban that empties the pool either
-// (refusing would leak what the opponent banned). This constant is the ONLY thing standing between
-// two players and a pool with no survivors, where nobody can vote and both get flagged as
-// abandoners for a vote they were never allowed to cast. A pool below it must never reach the ban
-// phase; see `createReadyCheck`, which refuses to start one.
-export const MIN_MAP_POOL_SIZE = BANS_PER_PLAYER * 2 + 1;
+export const MAP_POOL_SIZE = 7; // candidate maps; a duel's 2 × 2 bans leaves ≥3 to vote on
+
+/**
+ * Bans each player gets, by how many are picking.
+ *
+ * TWO in a duel, ONE in a 4-player mode. Not a scaling accident — total bans are what the pool has
+ * to absorb, and four players banning twice would strike 8 of a 7-map pool. Keeping the total at
+ * roughly half the pool is what leaves a real vote at the end, and it keeps the blind-ban phase
+ * short enough that three people aren't waiting on a fourth for two full decisions.
+ */
+export const bansPerPlayer = (playerCount: number): number => (playerCount <= 2 ? 2 : 1);
+
+/**
+ * Smallest pool that still leaves a votable survivor once EVERY player spends EVERY ban
+ * (`playerCount × bansPerPlayer + 1`).
+ *
+ * This is a HARD FLOOR, not a warning threshold. Bans are blind, so `canBan` deliberately cannot
+ * consult the other players' bans — which means it cannot refuse the ban that empties the pool
+ * either (refusing would leak what someone else banned). This is the ONLY thing standing between a
+ * lobby and a pool with no survivors, where nobody can vote and everyone gets flagged as an
+ * abandoner for a vote they were never allowed to cast. A pool below it must never reach the ban
+ * phase; see `createReadyCheck`, which refuses to start one.
+ */
+export const minMapPoolSize = (playerCount: number): number =>
+  playerCount * bansPerPlayer(playerCount) + 1;
+
 export const SECONDS_PER_MAP_DECISION = 30; // time budgeted per ban and for the final vote
-// Bans and the vote are SEPARATE deadlines because bans are BLIND: you can't vote until both players
-// have spent their bans (that's the moment bans reveal), so a shared deadline would let a slow
-// opponent eat your voting time — and get you flagged for a vote you were never allowed to cast.
-export const MAP_BAN_SECONDS = BANS_PER_PLAYER * SECONDS_PER_MAP_DECISION; // 60s
+
+/**
+ * Bans and the vote are SEPARATE deadlines because bans are BLIND: you can't vote until everyone has
+ * spent their bans (that's the moment bans reveal), so a shared deadline would let a slow opponent
+ * eat your voting time — and get you flagged for a vote you were never allowed to cast.
+ */
+export const mapBanSeconds = (playerCount: number): number =>
+  bansPerPlayer(playerCount) * SECONDS_PER_MAP_DECISION;
 export const MAP_VOTE_SECONDS = SECONDS_PER_MAP_DECISION; // 30s, restarted when the bans reveal
 // After both vote, both players study the rolled map for this long before the CO pick begins.
 export const MAP_REVEAL_SECONDS = 30;

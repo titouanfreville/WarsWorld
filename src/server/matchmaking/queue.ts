@@ -41,7 +41,11 @@ export type Ticket = {
   enqueuedAt: number;
 };
 
-export type Pair = { a: Ticket; b: Ticket };
+/**
+ * A formed group, ready to be offered a ready-check: exactly `capacityForMode(mode)` tickets, all
+ * from one bucket. Two for a duel, four for 2v2 and free-for-all.
+ */
+export type Group = Ticket[];
 
 /** Hard ceiling on the rank gap: a fraction of the active-rank ladder height (see constants). */
 export const MAX_RANK_GAP = Math.floor(MAX_RANK_GAP_FRACTION * ACTIVE_RANKS.length);
@@ -186,11 +190,42 @@ export class MatchQueue {
   }
 
   /**
-   * One pairing pass. Within each (mode, ruleset, ranked) bucket, oldest ticket first, greedily
-   * match it to the FAIREST partner that BOTH players' tolerances admit (the `min` rule) and that
-   * isn't on rematch cooldown. Every returned pair's tickets are removed from the queue.
+   * Whether `candidate` may join a group that already holds `members`.
+   *
+   * Every rule that used to bind a PAIR now binds the candidate against EVERY existing member: the
+   * matchup must fit inside both tolerance windows (the `min` rule), clear the rank band, clear the
+   * rematch hold, and not be on cooldown. Checking only against the seed would let a group form
+   * around one player while two others in it are wildly mismatched.
    */
-  pair(now: number): Pair[] {
+  private admissible(members: Ticket[], candidate: Ticket, now: number): boolean {
+    return members.every(
+      (member) =>
+        unfairnessOf(member, candidate) <=
+          Math.min(toleranceAt(member, now), toleranceAt(candidate, now)) &&
+        withinRankBand(member, candidate, now) &&
+        rematchOk(member, candidate, now) &&
+        !this.onCooldown(member.playerId, candidate.playerId, now),
+    );
+  }
+
+  /**
+   * One matchmaking pass. Within each (mode, ruleset, ranked) bucket, oldest ticket first, grow a
+   * group up to that mode's capacity by repeatedly adding the FAIREST admissible candidate. Every
+   * returned group's tickets are removed from the queue.
+   *
+   * "Fairest" for a candidate is its WORST pairing against the current members, minimised. Using the
+   * worst rather than the average is what stops a group of four accepting one badly-matched player
+   * because the other three pull the mean back — in a 2v2 that player is somebody's opponent, and in
+   * a free-for-all they are everybody's.
+   *
+   * A group that cannot be filled is ABANDONED and its tickets stay queued: a half-formed lobby is
+   * not a match, and holding players in one would strand them. They simply wait, and their widening
+   * tolerance makes the next pass more likely to succeed.
+   *
+   * @param sizeFor how many seats a mode's lobby holds — injected rather than imported so this stays
+   *   pure logic with no dependency on the lobby layout module.
+   */
+  form(now: number, sizeFor: (mode: GameMode) => number): Group[] {
     this.pruneCooldowns(now);
 
     const buckets = new Map<string, Ticket[]>();
@@ -200,53 +235,61 @@ export class MatchQueue {
       (buckets.get(key) ?? buckets.set(key, []).get(key)!).push(ticket);
     }
 
-    const pairs: Pair[] = [];
+    const groups: Group[] = [];
 
     for (const bucket of buckets.values()) {
       const waiting = bucket.sort((x, y) => x.enqueuedAt - y.enqueuedAt);
       const matched = new Set<string>();
+      const size = sizeFor(waiting[0].mode);
 
-      for (const a of waiting) {
-        if (matched.has(a.playerId)) {
+      for (const seed of waiting) {
+        if (matched.has(seed.playerId)) {
           continue;
         }
 
-        const tolA = toleranceAt(a, now);
-        let best: Ticket | undefined;
-        let bestUnfairness = Infinity;
+        const members = [seed];
 
-        for (const b of waiting) {
-          if (b.playerId === a.playerId || matched.has(b.playerId)) {
-            continue;
+        // Grow greedily. Each round picks the candidate whose worst pairing with the group so far is
+        // smallest, so the group tightens rather than drifting.
+        while (members.length < size) {
+          let best: Ticket | undefined;
+          let bestWorstUnfairness = Infinity;
+
+          for (const candidate of waiting) {
+            if (
+              matched.has(candidate.playerId) ||
+              members.some((m) => m.playerId === candidate.playerId) ||
+              !this.admissible(members, candidate, now)
+            ) {
+              continue;
+            }
+
+            const worst = Math.max(...members.map((m) => unfairnessOf(m, candidate)));
+
+            if (worst < bestWorstUnfairness) {
+              best = candidate;
+              bestWorstUnfairness = worst;
+            }
           }
 
-          const unfairness = unfairnessOf(a, b);
-
-          // `min` rule: the matchup must fit inside BOTH players' current tolerance windows, AND
-          // (ranked, both settled) inside the rank band, AND clear the recency hold on a rematch.
-          // These are hard filters; among everyone left, the FAIREST by MMR still wins.
-          if (
-            unfairness <= Math.min(tolA, toleranceAt(b, now)) &&
-            withinRankBand(a, b, now) &&
-            rematchOk(a, b, now) &&
-            unfairness < bestUnfairness &&
-            !this.onCooldown(a.playerId, b.playerId, now)
-          ) {
-            best = b;
-            bestUnfairness = unfairness;
+          if (best === undefined) {
+            break; // can't fill this one — leave everyone queued and try again next tick
           }
+
+          members.push(best);
         }
 
-        if (best !== undefined) {
-          matched.add(a.playerId);
-          matched.add(best.playerId);
-          this.tickets.delete(a.playerId);
-          this.tickets.delete(best.playerId);
-          pairs.push({ a, b: best });
+        if (members.length === size) {
+          for (const member of members) {
+            matched.add(member.playerId);
+            this.tickets.delete(member.playerId);
+          }
+
+          groups.push(members);
         }
       }
     }
 
-    return pairs;
+    return groups;
   }
 }

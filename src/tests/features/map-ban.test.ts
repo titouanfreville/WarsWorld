@@ -7,6 +7,7 @@ import {
   survivors,
   type PlayerBanVote,
 } from "server/matchmaking/map-ban";
+import { bansPerPlayer, minMapPoolSize } from "server/matchmaking/constants";
 
 /**
  * Pure map pick & ban rules: survivors after bans, live ban/vote validation, the ban-stage gate that
@@ -35,31 +36,61 @@ describe("ban validation (blind)", () => {
   const players = [pvb("p1", ["m0"], null), pvb("p2", ["m1", "m5"], null)];
 
   it("allows a pool map the player hasn't used up their bans on", () => {
-    expect(canBan(POOL, players[0], "m2")).toBe(true);
+    expect(canBan(POOL, players, players[0], "m2")).toBe(true);
   });
 
   it("rejects a repeat ban, an out-of-pool map, and a maxed-out banner", () => {
-    expect(canBan(POOL, players[0], "m0")).toBe(false); // already banned by p1
-    expect(canBan(POOL, players[0], "zzz")).toBe(false); // not in pool
-    expect(canBan(POOL, players[1], "m2")).toBe(false); // p2 already has 2 bans
+    expect(canBan(POOL, players, players[0], "m0")).toBe(false); // already banned by p1
+    expect(canBan(POOL, players, players[0], "zzz")).toBe(false); // not in pool
+    expect(canBan(POOL, players, players[1], "m2")).toBe(false); // p2 already has 2 bans
   });
 
   it("ALLOWS banning what the opponent already banned — rejecting it would leak their ban", () => {
     // p2 has banned m1. p1 is banning blind and cannot know that; the ban must be accepted (and
     // simply wasted) rather than bounced with an error that reveals p2's choice.
-    expect(canBan(POOL, players[0], "m1")).toBe(true);
+    expect(canBan(POOL, players, players[0], "m1")).toBe(true);
     // The overlap costs a ban but leaves a bigger pool — m1 is removed once, not twice.
     expect(survivors(POOL, [pvb("p1", ["m0", "m1"], null), pvb("p2", ["m1", "m5"], null)])).toEqual(
       ["m2", "m3", "m4", "m6"],
     );
   });
 
-  it("can never empty a legal pool, so no last-survivor guard is needed", () => {
-    // MIN_MAP_POOL_SIZE (2 × 2 + 1 = 5) with zero overlap — the worst case still leaves one map.
-    const minPool = ["m0", "m1", "m2", "m3", "m4"];
-    const allSpent = [pvb("p1", ["m0", "m1"], null), pvb("p2", ["m2", "m3"], null)];
-    expect(banStageComplete(allSpent)).toBe(true);
-    expect(survivors(minPool, allSpent)).toEqual(["m4"]);
+  it("can never empty a pool at the floor, so no last-survivor guard is needed", () => {
+    // The worst case at exactly `minMapPoolSize`: everyone spends every ban with ZERO overlap.
+    // `createReadyCheck` refuses to start a phase below this, which is what makes the blind
+    // `canBan` safe without consulting anyone else's bans.
+    const duel = [pvb("p1", ["m0", "m1"], null), pvb("p2", ["m2", "m3"], null)];
+
+    expect(minMapPoolSize(2)).toBe(5);
+    expect(banStageComplete(duel)).toBe(true);
+    expect(survivors(["m0", "m1", "m2", "m3", "m4"], duel)).toEqual(["m4"]);
+
+    // Four players get ONE ban each, so the floor stays at 5 rather than climbing to 9 — four
+    // players banning twice would strike 8 of a 7-map pool and leave nothing worth voting on.
+    const quad = [
+      pvb("p1", ["m0"], null),
+      pvb("p2", ["m1"], null),
+      pvb("p3", ["m2"], null),
+      pvb("p4", ["m3"], null),
+    ];
+
+    expect(bansPerPlayer(4)).toBe(1);
+    expect(minMapPoolSize(4)).toBe(5);
+    expect(banStageComplete(quad)).toBe(true);
+    expect(survivors(["m0", "m1", "m2", "m3", "m4"], quad)).toEqual(["m4"]);
+  });
+
+  it("gives a four-player lobby one ban each, not two", () => {
+    const quad = [
+      pvb("p1", [], null),
+      pvb("p2", [], null),
+      pvb("p3", [], null),
+      pvb("p4", [], null),
+    ];
+
+    expect(canBan(POOL, quad, quad[0], "m0")).toBe(true);
+    // Having spent their single ban, they're done — the allowance comes from the decider count.
+    expect(canBan(POOL, quad, pvb("p1", ["m0"], null), "m1")).toBe(false);
   });
 });
 

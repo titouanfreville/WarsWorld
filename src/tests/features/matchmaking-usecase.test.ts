@@ -32,19 +32,34 @@ class FakeDb {
   // pool filter has to exclude. Both counts stay at or under MAP_POOL_SIZE (7) on purpose: the
   // pool is shuffled and sliced to that cap, so a larger eligible set would make "does the pool
   // contain m6" depend on the shuffle and the test would flake.
-  maps = Array.from({ length: 7 }, (_, i) => ({
-    id: `m${i}`,
-    name: `Map ${i}`,
-    numberOfPlayers: 2,
-    supportedModes: ["duel"],
-    rankedModes: i === 6 ? [] : ["duel"],
-    // A 2×2 terrain grid: `mapBanView` summarises every pool map for the board's thumbnails, so the
-    // row needs the same shape the real column has.
-    tiles: [
-      [{ type: "plain" }, { type: "city" }],
-      [{ type: "base" }, { type: "plain" }],
-    ],
-  }));
+  maps = [
+    ...Array.from({ length: 7 }, (_, i) => ({
+      id: `m${i}`,
+      name: `Map ${i}`,
+      numberOfPlayers: 2,
+      supportedModes: ["duel"],
+      rankedModes: i === 6 ? [] : ["duel"],
+      tiles: [
+        [{ type: "plain" }, { type: "city" }],
+        [{ type: "base" }, { type: "plain" }],
+      ],
+    })),
+    // Four-seat maps, for the 2v2 / free-for-all queues. Five of them because `minMapPoolSize(4)`
+    // is 5 — below that `createReadyCheck` refuses to start a ban phase at all.
+    ...Array.from({ length: 5 }, (_, i) => ({
+      id: `q${i}`,
+      name: `Quad ${i}`,
+      numberOfPlayers: 4,
+      supportedModes: ["teams", "ffa"],
+      rankedModes: ["teams", "ffa"],
+      // A 2×2 terrain grid: `mapBanView` summarises every pool map for the board's thumbnails, so
+      // the row needs the same shape the real column has.
+      tiles: [
+        [{ type: "plain" }, { type: "city" }],
+        [{ type: "base" }, { type: "plain" }],
+      ],
+    })),
+  ];
   private seq = 0;
 
   private withMembers(id: string) {
@@ -287,6 +302,107 @@ describe("matchmaking usecase", () => {
     events.A = [];
     events.B = [];
     unsubs.push(listen("A", events.A), listen("B", events.B));
+  });
+
+  describe("four-player queues", () => {
+    /** The four-seat modes need four listeners, not the two the outer suite sets up. */
+    const quad = ["A", "B", "C", "D"];
+
+    const queueAll = (mode: "teams" | "ffa", mus: number[]) => {
+      quad.forEach((id, i) => queue.add({ ...ticket(id, mus[i]), mode }));
+    };
+
+    it("forms a FOUR-player 2v2 lobby and seats it as two teams of two", async () => {
+      queueAll("teams", [25, 25.1, 25.2, 25.3]);
+
+      await usecase.tick();
+
+      const lobbyId = firstLobbyId(db);
+      const members = db.members.filter((m) => m.lobbyId === lobbyId);
+
+      expect(members).toHaveLength(4);
+      expect(db.lobbies.get(lobbyId)!.mode).toBe("teams");
+
+      // Two teams of two, each seat distinct — this is what `allMatchSlotsReady` needs downstream,
+      // and what a 2-member lobby on a 4-player map could never satisfy.
+      const seats = members.map((m) => `${m.team}:${m.slot}`).sort();
+
+      expect(seats).toEqual(["0:0", "0:1", "1:0", "1:1"]);
+      expect(new Set(members.map((m) => m.playerId))).toEqual(new Set(quad));
+    });
+
+    it("balances the teams rather than seating them in queue order", async () => {
+      // Queue order would pair the two strongest together (A+B vs C+D) and hand them the match.
+      // The fair split puts one strong and one weak player on each side.
+      queueAll("teams", [30, 29.5, 20.5, 20]);
+
+      await usecase.tick();
+
+      const lobbyId = firstLobbyId(db);
+      const teamOf = new Map(
+        db.members.filter((m) => m.lobbyId === lobbyId).map((m) => [m.playerId, m.team]),
+      );
+
+      expect(teamOf.get("A")).not.toBe(teamOf.get("B"));
+      expect(teamOf.get("C")).not.toBe(teamOf.get("D"));
+    });
+
+    it("seats a free-for-all as four separate teams", async () => {
+      queueAll("ffa", [25, 25.1, 25.2, 25.3]);
+
+      await usecase.tick();
+
+      const lobbyId = firstLobbyId(db);
+      const members = db.members.filter((m) => m.lobbyId === lobbyId);
+
+      expect(members.map((m) => m.team).sort()).toEqual([0, 1, 2, 3]);
+      expect(members.every((m) => m.slot === 0)).toBe(true);
+    });
+
+    it("will not form a group it cannot fill, and leaves those players queued", async () => {
+      // Three waiting for a four-seat mode is not a match. A half-formed lobby would strand them.
+      ["A", "B", "C"].forEach((id) => queue.add({ ...ticket(id), mode: "teams" }));
+
+      await usecase.tick();
+
+      expect(db.lobbies.size).toBe(0);
+      expect(queue.size()).toBe(3);
+    });
+
+    it("runs a 2v2 through one ban each to a spawned match", async () => {
+      queueAll("teams", [25, 25.1, 25.2, 25.3]);
+      await usecase.tick();
+
+      const lobbyId = firstLobbyId(db);
+
+      for (const id of quad) {
+        await usecase.acceptReadyCheck(lobbyId, id);
+      }
+
+      expect(db.lobbies.get(lobbyId)!.status).toBe("map_ban");
+
+      // ONE ban each at four players — four bans of a five-map pool still leaves one to vote on.
+      const pool = db.lobbies.get(lobbyId)!.mapPool as string[];
+
+      await spendBans(usecase, lobbyId, {
+        A: [pool[0]],
+        B: [pool[1]],
+        C: [pool[2]],
+        D: [pool[3]],
+      });
+
+      for (const id of quad) {
+        await usecase.voteMap(lobbyId, id, pool[4]);
+      }
+
+      expect(db.lobbies.get(lobbyId)!.status).toBe("map_reveal");
+      expect(db.lobbies.get(lobbyId)!.mapId).toBe(pool[4]);
+
+      await internals(usecase).onMapRevealDeadline(lobbyId);
+
+      expect(spawn.calls).toHaveLength(1);
+      expect((spawn.calls[0] as { seats: unknown[] }).seats).toHaveLength(4);
+    });
   });
 
   it("runs the full happy path: pair → both accept → both vote → reveal → spawn", async () => {
@@ -667,17 +783,9 @@ describe("matchmaking usecase", () => {
       expect(queue.has("A")).toBe(true);
     });
 
-    it("refuses a 4-seat mode outright rather than spawning an unplayable match", async () => {
-      // `MatchQueue.pair` only forms PAIRS. Left unguarded, a `teams`/`ffa` ticket produced a
-      // 2-member lobby on a correctly-selected 4-player map — slots 2 and 3 holding property with
-      // nobody behind them, so `allMatchSlotsReady` could never be satisfied and the match could
-      // never start. Custom lobbies seat four and remain the way to play these modes.
-      for (const mode of ["teams", "ffa"] as const) {
-        await expect(
-          usecase.joinQueue("A", { mode, ruleset: "standard", ranked: false }),
-        ).rejects.toThrow(/only matches 1v1/);
-        expect(queue.has("A")).toBe(false);
-      }
+    it("accepts a 4-seat mode now that the queue can fill one", async () => {
+      await usecase.joinQueue("A", { mode: "teams", ruleset: "standard", ranked: false });
+      expect(queue.has("A")).toBe(true);
     });
 
     // The Play page reads eligibility to grey the ranked cards out BEFORE the click. It must agree

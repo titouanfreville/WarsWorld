@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { createKeyedLock } from "server/adapters/key-lock";
 import { emitLobby } from "server/emitter/lobby-emitter";
 import { emitQueue } from "server/emitter/matchmaking-emitter";
-import { capacityForMode, DEFAULT_PICK_SECONDS } from "server/matches/layout";
+import { capacityForMode, DEFAULT_PICK_SECONDS, layoutForMode } from "server/matches/layout";
 import type { SpawnRequest } from "server/matches/matches.usecase";
 import { defaultSkill, type Skill } from "server/ranking/skill";
 import { armySchema, type Army } from "server/core/schemas/army";
@@ -11,18 +11,19 @@ import type { MatchRules } from "server/core/schemas/match-rules";
 import { rankedTimeControl } from "server/core/schemas/rule-presets";
 import { logger } from "shared/utils/logger";
 import {
-  BANS_PER_PLAYER,
+  bansPerPlayer,
   LENIENT_GAP,
-  MAP_BAN_SECONDS,
+  mapBanSeconds,
   MAP_POOL_SIZE,
   MAP_REVEAL_SECONDS,
   MAP_VOTE_SECONDS,
-  MIN_MAP_POOL_SIZE,
+  minMapPoolSize,
   READY_SECONDS,
   READY_SECONDS_LENIENT,
   REMATCH_LOOKBACK_MS,
   TICK_MS,
 } from "./constants";
+import { assignSeats, type Seat } from "./team-split";
 import {
   banStageComplete,
   canBan,
@@ -33,7 +34,7 @@ import {
 } from "./map-ban";
 import type { Tile, TileType } from "server/core/schemas/tile";
 import { cancelLobbyPhase, scheduleLobbyPhase } from "./lobby-phase-timer";
-import { MatchQueue, toleranceAt, unfairnessOf, type Ticket } from "./queue";
+import { MatchQueue, toleranceAt, type Group } from "./queue";
 import type { JoinQueueInput } from "./schemas";
 
 /** The narrow cross-feature contracts matchmaking needs (no direct feature-to-feature imports). */
@@ -150,6 +151,20 @@ const LOBBY_MEMBERS = {
   members: { include: { player: { select: { id: true, name: true } } } },
 } as const;
 
+/** "alice+bob vs carol+dave" — teams for the log line, so a 2v2's split is visible at a glance. */
+const describeSeats = (seats: Seat[]): string => {
+  const byTeam = new Map<number, string[]>();
+
+  for (const seat of seats) {
+    byTeam.set(seat.team, [...(byTeam.get(seat.team) ?? []), seat.playerId]);
+  }
+
+  return [...byTeam.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, ids]) => ids.join("+"))
+    .join(" vs ");
+};
+
 /**
  * Serializes everything that mutates one lobby's pick&ban state: both players' bans and votes, and
  * the phase deadline that can fire between any two of their awaits. Different lobbies never wait on
@@ -165,8 +180,8 @@ const lobbyLock = createKeyedLock();
  */
 export class MatchmakingUsecase {
   private tickStarted = false;
-  /** lobbyId → the two tickets that formed it, so a failed ready-check can requeue with the original wait. */
-  private readonly pending = new Map<string, { a: Ticket; b: Ticket }>();
+  /** lobbyId → the tickets that formed it, so a failed ready-check can requeue the original waits. */
+  private readonly pending = new Map<string, Group>();
 
   constructor(
     private readonly db: PrismaClient,
@@ -180,26 +195,6 @@ export class MatchmakingUsecase {
   async joinQueue(playerId: string, input: JoinQueueInput) {
     if (this.queue.has(playerId)) {
       throw new TRPCError({ code: "CONFLICT", message: "You're already in the queue" });
-    }
-
-    // THE QUEUE ONLY FORMS PAIRS. `MatchQueue.pair` is structurally 1v1 — it greedily matches each
-    // ticket to its fairest single partner, cooldowns are keyed per player PAIR, and
-    // `createReadyCheck` seats exactly two members.
-    //
-    // Accepting a 4-seat mode here produced a silently broken match rather than an error: the pool
-    // filter correctly selects a 4-player map, a 2-member lobby is created on it, and the spawned
-    // match has slots 2 and 3 owning property and armies with no player behind them — so
-    // `allMatchSlotsReady` can never be true and the match can never start. Refusing is the honest
-    // answer until group matchmaking exists (4-way fairness, skill-balanced team assignment, and a
-    // 4-player ready-check/ban phase are a feature, not a flag).
-    //
-    // 2v2 and FFA remain fully playable through custom lobbies, which do seat four.
-    if (capacityForMode(input.mode) !== 2) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message:
-          "The queue currently only matches 1v1. Create a custom lobby to play 2v2 or free-for-all.",
-      });
     }
 
     // ONE RANKED MATCH AT A TIME — and only ranked.
@@ -307,6 +302,15 @@ export class MatchmakingUsecase {
       });
     }
 
+    // Force-pairing names exactly TWO players, so it can only produce a lobby for a mode that seats
+    // two. A 4-seat mode would leave half the seats empty and the match unable to start.
+    if (capacityForMode(a.mode) !== 2) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Force-pair takes two players; ${a.mode} seats ${capacityForMode(a.mode)}`,
+      });
+    }
+
     // Remove before creating the ready-check — createReadyCheck owns them now, exactly as the pairing
     // tick hands its pairs over.
     this.queue.remove(playerAId);
@@ -315,7 +319,7 @@ export class MatchmakingUsecase {
     let created: boolean;
 
     try {
-      created = await this.createReadyCheck(a, b);
+      created = await this.createReadyCheck([a, b]);
     } catch (error) {
       // An unexpected failure (e.g. a DB error building the lobby) would otherwise strand both players
       // dequeued with no match. Put their tickets back before surfacing the error so a transient
@@ -450,17 +454,20 @@ export class MatchmakingUsecase {
 
   /** One pairing pass: everything pairable this tick becomes a ready-check. */
   async tick(): Promise<void> {
-    for (const { a, b } of this.queue.pair(Date.now())) {
+    for (const group of this.queue.form(Date.now(), capacityForMode)) {
       try {
-        await this.createReadyCheck(a, b);
+        await this.createReadyCheck(group);
       } catch (error) {
         logger.error(
-          `[matchmaking] failed to create ready-check for ${a.playerId}/${b.playerId}:`,
+          `[matchmaking] failed to create ready-check for ` +
+            `${group.map((t) => t.playerId).join("/")}:`,
           error instanceof Error ? error.message : error,
         );
-        // Put both back so a transient DB error doesn't silently drop players from the queue.
-        this.queue.add(a);
-        this.queue.add(b);
+
+        // Put everyone back so a transient DB error doesn't silently drop players from the queue.
+        for (const ticket of group) {
+          this.queue.add(ticket);
+        }
       }
     }
   }
@@ -468,42 +475,45 @@ export class MatchmakingUsecase {
   // ── Ready-check ─────────────────────────────────────────────────────────────
 
   /**
-   * Returns `true` when a ready-check lobby was created, `false` when an empty map pool forced both
-   * tickets back into the queue — the caller decides whether that's a silent retry (the tick) or a
-   * reported failure (an admin force-pair).
+   * Returns `true` when a ready-check lobby was created, `false` when an unusable map pool sent the
+   * group away — the caller decides whether that's a silent retry (the tick) or a reported failure
+   * (an admin force-pair).
    */
-  private async createReadyCheck(a: Ticket, b: Ticket): Promise<boolean> {
-    // Both tickets share a bucket, so a's mode and ranked flag are b's too (enforced when the pair
-    // is formed).
-    const mapPool = await this.buildMapPool(a.mode, a.ranked);
+  private async createReadyCheck(group: Group): Promise<boolean> {
+    // Every ticket shares a bucket, so the first one's mode and ranked flag are everyone's (enforced
+    // when the group is formed).
+    const [first] = group;
+    const layout = layoutForMode(first.mode);
+    const mapPool = await this.buildMapPool(first.mode, first.ranked);
+    const floor = minMapPoolSize(group.length);
 
     // REFUSE anything below the floor — this is a correctness gate, not a quality warning.
     //
     // Bans are blind, so `canBan` cannot reject the ban that empties the pool without leaking what
-    // the opponent banned. With fewer than MIN_MAP_POOL_SIZE maps, two players spending every ban
-    // can leave zero survivors: `canVote` then refuses every map, neither player can vote, and
-    // `onMapPhaseDeadline` flags BOTH as abandoners for doing exactly what the UI asked. Starting a
-    // ban phase we know can deadlock is worse than not starting one.
-    if (mapPool.length < MIN_MAP_POOL_SIZE) {
+    // someone else banned. Below the floor, players spending every ban can leave zero survivors:
+    // `canVote` then refuses every map, nobody can vote, and `onMapPhaseDeadline` flags EVERYONE as
+    // an abandoner for doing exactly what the UI asked. Starting a ban phase we know can deadlock is
+    // worse than not starting one.
+    if (mapPool.length < floor) {
       logger.error(
-        `[matchmaking] only ${mapPool.length} eligible ${a.ranked ? "ranked" : "casual"} map(s) ` +
-          `for ${a.mode} (need exactly ${capacityForMode(a.mode)} players, and at least ` +
-          `${MIN_MAP_POOL_SIZE} maps for a ban phase); dropping pair — add eligible maps`,
+        `[matchmaking] only ${mapPool.length} eligible ${first.ranked ? "ranked" : "casual"} ` +
+          `map(s) for ${first.mode} (need exactly ${capacityForMode(first.mode)} players, and at ` +
+          `least ${floor} maps for a ban phase); dropping group — add eligible maps`,
       );
 
-      // DROP them, don't requeue. Requeueing put the pair straight back into the same bucket to be
-      // re-paired on the next tick and fail identically — an invisible loop running every TICK_MS
-      // forever, with no event ever reaching either client. Nothing about waiting longer fixes an
+      // DROP them, don't requeue. Requeueing put the group straight back into the same bucket to be
+      // re-formed on the next tick and fail identically — an invisible loop running every TICK_MS
+      // forever, with no event ever reaching any client. Nothing about waiting longer fixes an
       // empty map pool; it needs an operator. So end the wait and say why.
       //
       // This is the failure mode a fresh deployment hits head-on: `rankedModes` is deliberately
       // backfilled empty (balance can't be inferred from seat count), so until maps are vetted for
       // the ladder the ranked pool really is empty.
-      for (const ticket of [a, b]) {
+      for (const ticket of group) {
         emitQueue(ticket.playerId, {
           type: "unavailable",
           reason:
-            `No ${a.ranked ? "ranked" : ""} maps are currently available for ${a.mode}.`.replace(
+            `No ${first.ranked ? "ranked" : ""} maps are currently available for ${first.mode}.`.replace(
               /\s+/g,
               " ",
             ),
@@ -513,45 +523,50 @@ export class MatchmakingUsecase {
       return false;
     }
 
-    // How lopsided this pairing is, as |P(win) − 0.5|. Accounts for both players' uncertainty, so a
-    // "wide gap" means genuinely one-sided rather than merely distant on some rating scale.
-    const unfairness = unfairnessOf(a, b);
+    // Seat the group, choosing the fairest team split the layout allows — forming a fair GROUP and
+    // forming fair TEAMS are different problems, and four even players can still be split 2v2 into a
+    // walkover. `unfairness` is the lopsidedness of the arrangement actually chosen, as |P(win) −
+    // 0.5|, which accounts for every player's uncertainty.
+    const { seats, unfairness } = assignSeats(group, layout);
     const fairnessGap = Math.round(unfairness * 100);
     // The wide-gap escape hatch is CASUAL-ONLY. Ranked is bounded to a rank band at pairing time, so
     // it can't produce a lopsided game that needs a bail — and ranked is a commitment regardless.
-    // (a.ranked === b.ranked: they share the bucket.)
-    const lenient = !a.ranked && unfairness > LENIENT_GAP;
+    // (every ticket shares the bucket, so the first one's `ranked` is everyone's.)
+    const lenient = !first.ranked && unfairness > LENIENT_GAP;
     const readySeconds = lenient ? READY_SECONDS_LENIENT : READY_SECONDS;
     const readyEndsAt = new Date(Date.now() + readySeconds * 1000);
 
     const lobby = await this.db.lobby.create({
       data: {
         hostPlayerId: null,
-        // Both tickets share a bucket keyed by (mode, ruleset, ranked), so a's values are b's too.
-        mode: a.mode,
-        isRanked: a.ranked,
-        ruleset: a.ruleset,
-        rules: defaultRulesFor(a.ruleset),
+        // Every ticket shares a bucket keyed by (mode, ruleset, ranked), so the first one's values
+        // are everyone's.
+        mode: first.mode,
+        isRanked: first.ranked,
+        ruleset: first.ruleset,
+        rules: defaultRulesFor(first.ruleset),
         status: "ready_check",
         readyEndsAt,
         readyCheckLenient: lenient,
         fairnessGap,
         mapPool,
-        teamFactions: rollTeamFactions(2),
+        teamFactions: rollTeamFactions(layout.teamCount),
         members: {
-          create: [
-            { playerId: a.playerId, membership: "active", team: 0, slot: 0 },
-            { playerId: b.playerId, membership: "active", team: 1, slot: 0 },
-          ],
+          create: seats.map((seat) => ({
+            playerId: seat.playerId,
+            membership: "active" as const,
+            team: seat.team,
+            slot: seat.slotWithinTeam,
+          })),
         },
       },
     });
 
-    this.pending.set(lobby.id, { a, b });
+    this.pending.set(lobby.id, group);
     scheduleLobbyPhase(lobby.id, readyEndsAt, (id) => this.onReadyDeadline(id));
 
-    for (const playerId of [a.playerId, b.playerId]) {
-      emitQueue(playerId, {
+    for (const ticket of group) {
+      emitQueue(ticket.playerId, {
         type: "ready-check-started",
         lobbyId: lobby.id,
         readyEndsAt: readyEndsAt.toISOString(),
@@ -561,8 +576,9 @@ export class MatchmakingUsecase {
     }
 
     logger.info(
-      `[matchmaking] ready-check ${lobby.id}: ${a.playerId} vs ${b.playerId} ` +
-        `(${50 + fairnessGap}/${50 - fairnessGap}${lenient ? ", lenient" : ""})`,
+      `[matchmaking] ready-check ${lobby.id} (${first.mode}): ` +
+        `${describeSeats(seats)} (${50 + fairnessGap}/${50 - fairnessGap}` +
+        `${lenient ? ", lenient" : ""})`,
     );
 
     return true;
@@ -663,6 +679,17 @@ export class MatchmakingUsecase {
     }
   }
 
+  /** Put every pairing within a declined group on rematch cooldown. */
+  private coolDownGroup(group: Group): void {
+    const now = Date.now();
+
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        this.queue.addCooldown(group[i].playerId, group[j].playerId, now);
+      }
+    }
+  }
+
   /**
    * Cancel the lobby, flag non-lenient offenders, and requeue the accepters with their original wait.
    * `cooldown` blocks the pair from being re-offered for a while — right for an explicit decline (a
@@ -701,15 +728,18 @@ export class MatchmakingUsecase {
 
     if (pend !== undefined) {
       // Requeue accepters from their original ticket (preserves enqueuedAt → their place in line).
-      for (const ticket of [pend.a, pend.b]) {
+      for (const ticket of pend) {
         if (accepterIds.includes(ticket.playerId)) {
           this.queue.add(ticket);
           emitQueue(ticket.playerId, { type: "requeued" });
         }
       }
 
+      // Cool down EVERY pairing in the group, not just one. A decline rejects the matchup as a
+      // whole, and re-offering the same four players in a different arrangement would be the same
+      // rejected match wearing a hat.
       if (cooldown) {
-        this.queue.addCooldown(pend.a.playerId, pend.b.playerId, Date.now());
+        this.coolDownGroup(pend);
       }
     }
 
@@ -725,7 +755,15 @@ export class MatchmakingUsecase {
   // ── Map pick & ban ──────────────────────────────────────────────────────────
 
   private async enterMapBan(lobbyId: string): Promise<void> {
-    const mapPhaseEndsAt = new Date(Date.now() + MAP_BAN_SECONDS * 1000);
+    const members = await this.db.playerInLobby.findMany({
+      where: { lobbyId },
+      select: { playerId: true, isSpectator: true },
+    });
+
+    // The ban window is budgeted per BAN, and the allowance depends on how many are picking — four
+    // players get one ban each, so their phase is correspondingly shorter.
+    const deciders = members.filter((m) => !m.isSpectator).length;
+    const mapPhaseEndsAt = new Date(Date.now() + mapBanSeconds(deciders) * 1000);
 
     await this.db.lobby.update({
       where: { id: lobbyId },
@@ -733,11 +771,6 @@ export class MatchmakingUsecase {
     });
 
     scheduleLobbyPhase(lobbyId, mapPhaseEndsAt, (id) => this.onMapPhaseDeadline(id));
-
-    const members = await this.db.playerInLobby.findMany({
-      where: { lobbyId },
-      select: { playerId: true },
-    });
 
     for (const { playerId } of members) {
       emitQueue(playerId, { type: "map-phase-started", lobbyId });
@@ -761,10 +794,11 @@ export class MatchmakingUsecase {
     const { lobby, member } = await this.loadMapBanMember(lobbyId, playerId);
     const pool = (lobby.mapPool ?? []) as string[];
 
-    // Blind: validated against this player's own bans only, so the rejection can't leak the
-    // opponent's. Concurrent bans need no atomicity either — with a pool of at least
-    // MIN_MAP_POOL_SIZE they can't collide into an empty pool (see map-ban.ts).
-    if (!canBan(pool, toPlayerBanVote(member), mapId)) {
+    // Blind: validated against this player's own bans only, so the rejection can't leak anyone
+    // else's. The full member list goes in for its LENGTH alone — how many are picking sets the ban
+    // allowance, and that is public. Concurrent bans need no atomicity either: the pool cleared
+    // `minMapPoolSize` before the phase started, so they can't collide into an empty one.
+    if (!canBan(pool, playerBanVotes(lobby.members), toPlayerBanVote(member), mapId)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "You can't ban that map" });
     }
 
@@ -901,7 +935,7 @@ export class MatchmakingUsecase {
     const players = playerBanVotes(lobby.members);
     const behind = banStageComplete(players)
       ? (p: PlayerBanVote) => p.votedMapId === null
-      : (p: PlayerBanVote) => p.bannedMapIds.length < BANS_PER_PLAYER;
+      : (p: PlayerBanVote) => p.bannedMapIds.length < bansPerPlayer(players.length);
     const offenders = players.filter(behind).map((p) => p.playerId);
 
     if (offenders.length === 0) {
@@ -942,14 +976,14 @@ export class MatchmakingUsecase {
     this.pending.delete(lobbyId);
 
     if (pend !== undefined) {
-      for (const ticket of [pend.a, pend.b]) {
+      for (const ticket of pend) {
         if (innocentIds.includes(ticket.playerId)) {
           this.queue.add(ticket);
           emitQueue(ticket.playerId, { type: "requeued" });
         }
       }
 
-      this.queue.addCooldown(pend.a.playerId, pend.b.playerId, Date.now());
+      this.coolDownGroup(pend);
     }
 
     for (const playerId of offenderIds) {
@@ -1090,6 +1124,12 @@ export class MatchmakingUsecase {
         : bansRevealed
           ? ("vote" as const)
           : ("ban" as const),
+      /**
+       * How many bans each player gets. Sent rather than assumed, because it depends on how many are
+       * picking — two in a duel, one in a four-player lobby. A client with the number baked in would
+       * render "1/2" in a lobby where a single ban is the whole allowance.
+       */
+      bansPerPlayer: bansPerPlayer(playerBanVotes(lobby.members).length),
       bansRevealed,
       votesRevealed,
       mapPhaseEndsAt: lobby.mapPhaseEndsAt?.toISOString() ?? null,
