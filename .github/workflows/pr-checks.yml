@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node: ["21.x"]
+        node: ["22.x"]
         os: [ubuntu-latest]
 
     services:
@@ -50,8 +50,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: "npm"
 
+      # `npm ci` (not `npm install`): it installs exactly the lockfile and FAILS if the lock has
+      # drifted from package.json, instead of silently repairing it. That drift is what previously
+      # broke the Docker build while CI stayed green.
       - name: Install deps (with cache)
-        run: npm install
+        run: npm ci
 
       # @prisma/client generates on install, but do it explicitly so a cached node_modules can never
       # leave a stale client behind — the type errors that causes are baffling to debug.

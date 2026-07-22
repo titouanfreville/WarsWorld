@@ -102,5 +102,9 @@ void (async () => {
   createTRPCwebSocketServer({ server });
   server.listen(port);
 
-  logger.info(`Production mode: Server listening at ${process.env.NEXT_PUBLIC_WS_URL}${port}`);
+  // Deliberately the PORT, not NEXT_PUBLIC_WS_URL: that variable is inlined into the client bundle
+  // at build time and is simply absent from the server's runtime environment, so the old message
+  // printed "listening at undefined3001" in a real deployment — alarming and useless. The public
+  // origin belongs to the reverse proxy, which this process knows nothing about.
+  logger.info(`Production mode: HTTP + WebSocket server listening on port ${port}`);
 })();

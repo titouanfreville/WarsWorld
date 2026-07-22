@@ -13,9 +13,9 @@ instance is not a compromise; it is the design.
 
 Co-locating Postgres also removes a storage cliff. The event log is append-only and grows roughly
 **80 MB/month** at ~30 games/day. That is a problem against a managed free tier (500 MB) and a
-non-issue against a 40 GB VPS disk.
+non-issue against local VPS disk — even the 20 GB entry tiers hold years of it.
 
-Rough cost: **€4–8/month** all-in on Hetzner or Scaleway. Verify current pricing — it moves.
+Rough cost: **€4–8/month** all-in (see "Choosing a host"). Verify current pricing — it moves.
 
 > **Not Cloud Run / serverless.** The turn clock, pick deadlines and matchmaking queue tick are
 > in-process timers, and `matchStore` is in-process memory. That forces always-allocated CPU, which
@@ -24,19 +24,41 @@ Rough cost: **€4–8/month** all-in on Hetzner or Scaleway. Verify current pri
 
 ## What is in the stack
 
-| Service | Role |
-|---|---|
-| `app` | the one Node process (Next + tRPC + WS) |
-| `postgres` | Postgres 17, **not** published to the internet |
-| `caddy` | TLS termination + reverse proxy; the only service with open ports |
-| `backup` | nightly `pg_dump`, rotated |
+| Service    | Role                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `app`      | the one Node process (Next + tRPC + WS)                           |
+| `postgres` | Postgres 17, **not** published to the internet                    |
+| `caddy`    | TLS termination + reverse proxy; the only service with open ports |
+| `backup`   | nightly `pg_dump`, rotated                                        |
+
+## Image build (CI, once per change)
+
+The image is **built by GitHub Actions and pushed to GHCR** — the VPS only pulls it, so the box
+never runs the memory-hungry `next build` and a 2 GB instance is enough.
+
+The workflow `.github/workflows/publish-image.yml` builds on every push to `main` that touches app
+code (and on manual dispatch) and pushes `ghcr.io/<owner>/warsworld:latest` plus a `sha-<short>` tag.
+
+**One-time setup in the GitHub repo** (Settings → Secrets and variables → Actions → **Variables**):
+
+| Variable              | Value                   |
+| --------------------- | ----------------------- |
+| `NEXT_PUBLIC_APP_URL` | `https://<your-domain>` |
+| `NEXT_PUBLIC_WS_URL`  | `wss://<your-domain>`   |
+
+These are **build-time** values inlined into the client bundle, which is why they are CI variables,
+not VPS env. They are public URLs, not secrets — hence _variables_, not _secrets_. Change the domain
+⇒ update them and re-run the workflow. The first run also publishes the package; make it **public**
+once (repo → Packages → the image → Package settings → Change visibility) so the VPS can pull
+without a login.
 
 ## First deploy
 
 ### 1. Prepare the host
 
 A VPS with Docker and Compose, and a DNS `A`/`AAAA` record for your domain already pointing at it —
-Caddy needs that resolving before it can obtain a certificate.
+Caddy needs that resolving before it can obtain a certificate. **2 GB RAM / 20 GB disk is enough**
+(no build happens here). See "Choosing a host" below.
 
 ### 2. Configure
 
@@ -46,15 +68,14 @@ cp .env.production.example .env.production
 ```
 
 Generate real secrets (`openssl rand -base64 32`) for `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET` and
-`AUTH_SECRET`. **Never reuse the placeholders from `.env.example`** — they are public.
+`AUTH_SECRET`. **Never reuse the placeholders from `.env.example`** — they are public. Set
+`APP_IMAGE` to the ghcr.io ref from the build above.
 
-⚠️ `NEXT_PUBLIC_APP_URL` and `NEXT_PUBLIC_WS_URL` are **inlined into the client bundle at build
-time**. Changing them later needs a rebuild, not a restart.
-
-### 3. Build and start
+### 3. Pull and start
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.production pull
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 ```
 
 ### 4. Apply the schema
@@ -93,14 +114,21 @@ deployment takes traffic, or in a maintenance window when refreshing content.
 
 ## Updating
 
+CI publishes a new image on merge to `main`. On the VPS:
+
 ```bash
-git pull
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.production pull
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm app npm run prisma:deploy
+docker image prune -f    # drop the now-unused previous image so disk doesn't creep
 ```
 
 Run `prisma:deploy` **after** the new image is up only when migrations are additive. For a
 destructive change, stop the app first so it never talks to a schema it was not built for.
+
+`pull_policy: always` on the `app` service means `up -d` alone also fetches the newest `latest`; the
+explicit `pull` just makes the download a distinct, watchable step. To roll back, set `APP_IMAGE` to
+a specific `sha-<short>` tag and re-run `pull` + `up -d`.
 
 ## Backups
 
@@ -139,22 +167,51 @@ months on the free tier) and a ~$25/month decision after that.
 
 Supabase runs **Postgres 17**. Pick the connection mode deliberately:
 
-| Mode | Host | Migrations? |
-|---|---|---|
-| Direct | `db.<ref>.supabase.co:5432` | ✅ best fit. IPv6-only without the IPv4 add-on |
-| Session pooler | `…pooler.supabase.com:5432` | ✅ safe fallback |
+| Mode               | Host                        | Migrations?                                    |
+| ------------------ | --------------------------- | ---------------------------------------------- |
+| Direct             | `db.<ref>.supabase.co:5432` | ✅ best fit. IPv6-only without the IPv4 add-on |
+| Session pooler     | `…pooler.supabase.com:5432` | ✅ safe fallback                               |
 | Transaction pooler | `…pooler.supabase.com:6543` | ❌ **cannot run DDL**; needs `?pgbouncer=true` |
+
+## Choosing a host
+
+Because CI builds the image, the box only needs to **pull and run** — so **2 vCPU / 2 GB RAM /
+20 GB disk** is enough. Growth is the append-only event log at ~80 MB/month, so 20 GB lasts years;
+`docker image prune -f` on update keeps old image layers from creeping. Prices below are mid-2026
+(all three EU providers raised entry tiers that year); **verify in the console before ordering**.
+
+| Provider | Plan    | Specs                 | ~Price/mo | Notes                                               |
+| -------- | ------- | --------------------- | --------- | --------------------------------------------------- |
+| OVH      | Starter | 2 vCPU · 2 GB · 40 GB | ~€3.99    | French; unlimited traffic; 40 GB is free headroom   |
+| Scaleway | DEV1-S  | 2 vCPU · 2 GB · 20 GB | ~€6.34    | French; 20 GB fits but is the tightest; free egress |
+| Hetzner  | CX22    | 2 vCPU · 4 GB · 40 GB | ~€3.79    | German (EU DCs); most RAM+disk for the price        |
+
+Any of them runs this stack identically. Pick on price and familiarity, not capability.
 
 ## Notes and constraints
 
 - **Single instance only** — see "Why one box". Do not scale `app`.
 - **Prisma engine targets.** `schema.prisma` declares `debian-openssl-3.0.x` for the production
-  image (node:21-slim, glibc). Switching the base image to Alpine or to **ARM** needs the matching
+  image (node:22-slim, glibc). Switching the base image to Alpine or to **ARM** needs the matching
   target (`linux-musl-openssl-3.0.x`, `linux-arm64-openssl-3.0.x`) or Prisma fails at container
   start with a confusing "query engine not found".
-- **Dev dependencies ship in the image** on purpose: the `prisma` CLI lives there and the release
-  step runs inside the container.
-- **Node 21 is past its support window.** Moving to a current LTS means bumping `engines`, the
-  Dockerfile base image and CI together.
+- **Dev dependencies — and `src/` + `tsconfig.json` — ship in the image** on purpose. The `prisma`
+  CLI runs the release step, and `prisma:seed:reference` executes TypeScript through `tsx` whose
+  imports (`frontend/utils/sprites`, engine constants) resolve via tsconfig's `baseUrl: ./src`.
+  Drop any of them and the seed fails with `Cannot find package 'frontend'`.
+- **The CI image is `linux/amd64`** (see the `platforms:` line in the publish workflow), matching an
+  x86 VPS (OVH / Scaleway / Hetzner CX). To run on an **ARM** box (Hetzner CAX) add `,linux/arm64`
+  there — the `linux-arm64-openssl-3.0.x` Prisma engine is already declared, so it just works, at
+  the cost of a slower multi-arch build.
+- **Node 22 LTS everywhere** — `engines`, `.node-version`, `nixpacks.toml`, the Dockerfile and CI.
+  Node 21 was EOL, and `vitest@4` / `vite@8` / `rolldown` require `^20.19.0 || >=22.12.0`, so 21 was
+  never a supported target for the test toolchain. Keep these five in step when upgrading.
+- **`.npmrc` sets `legacy-peer-deps=true`** because `@auth/core@0.24` wants `nodemailer@^6` while
+  `next-auth@4.24` wants `^7`. npm 11 papers over that silently, npm 10 (Docker, CI) fails hard —
+  which is precisely how the lockfile drifted while local installs kept working. Remove the flag
+  once those two agree on a nodemailer major.
+- **`.dockerignore` is load-bearing.** Without it `COPY . .` overwrites the Linux `node_modules`
+  installed by `npm ci` with the host's — on macOS that puts darwin-arm64 binaries for `sharp`,
+  `bcrypt` and the Prisma engine into a Linux image, which fails at run time, not build time.
 - `deployment/` holds an older, unfinished Terraform/AWS setup from upstream. It is superseded by
   this document.

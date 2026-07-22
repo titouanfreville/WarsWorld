@@ -1,0 +1,79 @@
+name: Publish image
+
+# Builds the production image in CI and pushes it to the GitHub Container Registry (ghcr.io), so the
+# VPS only ever `docker pull`s — it never runs `next build`. That is what lets the box be a 2 GB
+# instance: the memory-hungry build happens here, not there.
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when something in the image could have changed. Docs / CI-of-other-kinds don't.
+    paths:
+      - "src/**"
+      - "prisma/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "next.config.mjs"
+      - ".github/workflows/publish-image.yml"
+  # … or build on demand (e.g. to rebuild after changing a NEXT_PUBLIC_* repo variable, which the
+  # paths filter above cannot see).
+  workflow_dispatch: {}
+
+env:
+  # ghcr.io/<owner>/<repo>, lowercased by metadata-action. The image is public because the repo is.
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # required to push to GHCR with the built-in GITHUB_TOKEN
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # x86 to match the target VPS (OVH / Scaleway / Hetzner CX). To also serve an ARM box
+          # (Hetzner CAX), add `,linux/arm64` — the Prisma engine for it is already declared.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # NEXT_PUBLIC_* are inlined into the client bundle at BUILD time, so the image is tied to
+          # one public origin. They are not secret (public URLs); set them as repository VARIABLES
+          # (Settings → Secrets and variables → Actions → Variables), not secrets. If unset the build
+          # falls back to the tRPC client's own guard, which throws at boot — so set them.
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXT_PUBLIC_WS_URL=${{ vars.NEXT_PUBLIC_WS_URL }}
+          # Speed up repeat builds without a self-hosted cache.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

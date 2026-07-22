@@ -1,14 +1,18 @@
 # Production stack for a single small VPS: app + Postgres + nightly backups + TLS terminator.
 #
+# The `app` image is BUILT IN CI and PULLED here — the VPS never runs `next build`. That is what
+# keeps this viable on a 2 GB box: the memory-hungry build happens in GitHub Actions
+# (.github/workflows/publish-image.yml → ghcr.io), not on the instance.
+#
 # Deliberately ONE box. The app cannot be scaled horizontally — `matchStore` holds live match state
 # in process memory and the emitters hold WebSocket subscriber handles, so a second replica would be
-# a second, divergent world. Co-locating Postgres also removes the managed-database storage cliff:
-# the event log is append-only and grows ~80 MB/month, which is a problem against a 500 MB free tier
-# and a non-issue against a 40 GB disk.
+# a second, divergent world. Co-locating Postgres keeps the append-only event log (~80 MB/month) on
+# cheap local disk instead of a metered managed database.
 #
-# Usage:
-#   cp .env.production.example .env.production   # then fill it in
-#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Usage (no `--build` anywhere — the image is pulled):
+#   cp .env.production.example .env.production   # then fill it in (incl. APP_IMAGE)
+#   docker compose -f docker-compose.prod.yml --env-file .env.production pull
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 #   docker compose -f docker-compose.prod.yml --env-file .env.production run --rm app npm run prisma:deploy
 #   docker compose -f docker-compose.prod.yml --env-file .env.production run --rm app npm run prisma:seed:reference
 
@@ -31,12 +35,11 @@ services:
       retries: 5
 
   app:
-    build:
-      context: .
-      args:
-        # Build-time, not runtime — see the Dockerfile comment.
-        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:?set NEXT_PUBLIC_WS_URL}
+    # Pulled from GHCR, built by CI. NEXT_PUBLIC_APP_URL / NEXT_PUBLIC_WS_URL are baked into this
+    # image at build time (they are inlined into the client bundle), so the image is tied to one
+    # public origin — they are set as repo VARIABLES in the publish workflow, not here.
+    image: ${APP_IMAGE:?set APP_IMAGE to the ghcr.io ref, e.g. ghcr.io/<owner>/warsworld:latest}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       postgres:

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "engines": {
-    "node": "^21.0.0"
+    "node": ">=22.12.0"
   },
   "type": "module",
   "scripts": {
@@ -63,6 +63,7 @@
     "@tanstack/react-table": "^8.11.7",
     "@trpc/client": "^10.45.0",
     "@trpc/next": "^10.45.0",
+    "@trpc/react-query": "10.45.0",
     "@trpc/server": "^10.45.0",
     "bcrypt": "^5.1.1",
     "esbuild": "^0.25.2",
@@ -109,7 +110,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "npm-run-all": "^4.1.5",
     "postcss": "^8.4.33",
-    "prettier": "^3.5.3",
+    "prettier": "3.5.3",
     "prisma": "^5.8.1",
     "resolve-tspaths": "^0.8.23",
     "tailwindcss": "^3.4.1",

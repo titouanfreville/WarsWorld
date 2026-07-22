@@ -7,7 +7,7 @@
 # binaries target glibc, so musl tends to force a source build (and a whole toolchain in the image).
 # The matching Prisma engine is declared in schema.prisma as `debian-openssl-3.0.x`.
 
-FROM node:21-slim AS base
+FROM node:22-slim AS base
 # Prisma's query engine needs OpenSSL; ca-certificates for outbound TLS.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
@@ -52,6 +52,12 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/public ./public
 # Needed by `prisma migrate deploy` at release time.
 COPY --from=build --chown=node:node /app/prisma ./prisma
+# The release-time seed (`npm run prisma:seed:reference`) runs the TypeScript under prisma/scripts
+# through tsx, and those scripts import engine constants and `frontend/utils/sprites` as bare
+# specifiers resolved through tsconfig's `baseUrl: ./src`. Without BOTH of these the seed dies with
+# "Cannot find package 'frontend'" — and an unseeded deployment cannot start a match.
+COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/tsconfig.json ./tsconfig.json
 # Next reads its config at runtime, not just at build.
 COPY --from=build --chown=node:node /app/next.config.mjs ./next.config.mjs
 COPY --from=build --chown=node:node /app/package.json ./package.json
