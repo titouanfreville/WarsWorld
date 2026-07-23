@@ -13,6 +13,14 @@ const port = parseInt(process.env.PORT ?? "3001", 10);
 const app = next({ dev: false });
 const handler = app.getRequestHandler();
 
+/**
+ * This process serves BOTH the Next app and the tRPC WebSocket on the same port, so the only
+ * origin the browser ever talks to is our own. `NEXT_PUBLIC_APP_URL` is that origin (the public
+ * one, e.g. `https://<host>`); behind a TLS-terminating proxy it's what CORS must echo — never a
+ * hardcoded localhost.
+ */
+const appOrigin = process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${port}`;
+
 void (async () => {
   await matchStore.rebuild();
   // Warm the game-data cache (CO profiles) from the DB so the first request is fast.
@@ -25,18 +33,20 @@ void (async () => {
   await app.prepare();
 
   const server = http.createServer((req, res) => {
+    // A throw here would be an uncaught exception in the request listener — i.e. the whole server
+    // dies on one malformed request. Answer it instead.
     if (req.url === undefined) {
-      throw new Error("Request url is undefined");
+      res.writeHead(400);
+      res.end();
+      return;
     }
 
-    if (req.headers["x-forwarded-proto"] === "http") {
-      if (req.headers.host === undefined || typeof req.headers.url !== "string") {
-        throw new Error("Headers are incorrect");
-      }
-
+    // Behind a TLS-terminating proxy, bounce plain HTTP to HTTPS. Opt-in: with no proxy (or one
+    // that doesn't set the header) this never fires, so a plain-HTTP deployment still works.
+    if (req.headers["x-forwarded-proto"] === "http" && req.headers.host !== undefined) {
       // redirect to ssl
       res.writeHead(303, {
-        location: `https://` + req.headers.host + req.headers.url,
+        location: `https://${req.headers.host}${req.url}`,
       });
       res.end();
 
@@ -45,7 +55,7 @@ void (async () => {
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
-        "Access-Control-Allow-Origin": "http://localhost:3000",
+        "Access-Control-Allow-Origin": appOrigin,
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -54,7 +64,7 @@ void (async () => {
       return;
     }
 
-    res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000");
+    res.setHeader("Access-Control-Allow-Origin", appOrigin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
 
     // set browsers to deny framing into an iframe (framebusting)
@@ -76,5 +86,5 @@ void (async () => {
   createTRPCwebSocketServer({ server });
   server.listen(port);
 
-  logger.info(`Production mode: Server listening at ${process.env.NEXT_PUBLIC_WS_URL}${port}`);
+  logger.info(`Production mode: HTTP + tRPC WebSocket listening on port ${port} (${appOrigin})`);
 })();

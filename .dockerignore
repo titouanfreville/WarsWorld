@@ -1,0 +1,34 @@
+# Never bake secrets or local env into an image. This also protects the build itself: Next loads
+# `.env.production` ahead of `.env`, and the copy tracked in git points every NEXT_PUBLIC_* var at
+# localhost — inside the build context it would silently poison the client bundle.
+.env
+.env.*
+!.env.example
+
+# Build outputs — rebuilt inside the image, and copying a host build (darwin/arm64 binaries,
+# stale .next) is how "works locally, breaks in the container" happens.
+node_modules
+.next
+dist
+tsconfig.tsbuildinfo
+
+# VCS / editor / tooling noise
+.git
+.github
+.gitignore
+.idea
+.vscode
+.DS_Store
+.ai
+.omc
+.moonlight
+.moonlight-local
+
+# Local infra + docs the image never needs
+docker-compose.yaml
+docker-compose.prod.yaml
+deployment
+docs
+# Only the root-level docs — `src/frontend/utils/articles/**/*.md` is seed input and must stay.
+/*.md
+!/README.md

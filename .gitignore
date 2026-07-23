@@ -5,6 +5,7 @@
 # secrets
 .env*
 !.env.example
+!.env.prod.example
 
 # generated files
 /.next

@@ -3,14 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "engines": {
-    "node": "^21.0.0"
+    "node": ">=21"
   },
   "type": "module",
   "scripts": {
     "db:up": "docker compose up -d",
     "db:destroy": "docker compose down --volumes --remove-orphans",
     "prisma:push": "prisma db push",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
+    "prisma:seed:prod": "tsx prisma/scripts/seed-production.ts",
     "prisma:reset": "prisma migrate reset",
     "prisma:generate-once": "prisma generate",
     "prisma:generate-watch": "prisma generate --watch",
@@ -29,9 +31,7 @@
     "build:next": "cross-env NODE_ENV=production next build",
     "build:server": "node bundleServer.mjs",
     "build": "concurrently \"npm:build:*\"",
-    "start:next": "next start",
-    "start:server": "cross-env NODE_ENV=production \"npm run prisma:push &&  node dist/server/main-production.mjs\"",
-    "start": "concurrently \\\"npm:start:*\\\"\"",
+    "start": "cross-env NODE_ENV=production node dist/server/main-production.mjs",
     "redundant-code": "npx jscpd --ignore node_modules,dist,public,.next --reporters consoleFull .",
     "update-depencencies": "npx npm-check-updates -i",
     "fix-paths": "fix-esm-import-path  dist ",

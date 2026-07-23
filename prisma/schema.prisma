@@ -8,7 +8,8 @@ datasource db {
 
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x"]
+  // debian-openssl-3.0.x: production runs on node:22-bookworm-slim (Debian 12) — see Dockerfile.
+  binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 generator json {
