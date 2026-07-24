@@ -35,11 +35,13 @@ export const createBoardMenu = (
       ? x * baseTileSize - baseTileSize * widthInTiles
       : x * baseTileSize + baseTileSize;
 
-  if (y >= height / 2 && height - y < elements.length) {
-    menu.y = (y - Math.abs(height - y - elements.length)) * baseTileSize;
-  } else {
-    menu.y = y * baseTileSize;
-  }
+  // Anchor at the tile, but never let the menu run off the board. Lift it up when the rows would
+  // overflow the bottom (this used to be gated on the anchor being in the map's bottom half, which
+  // let a long build list anchored just above the midpoint spill past the bottom edge and clip the
+  // last rows), and clamp the top to 0 so a list taller than the map shows from the top instead of
+  // above it. `elements.length` rows are each one tile tall (see `createUnitMenuElement`).
+  const rows = elements.length;
+  menu.y = Math.max(0, Math.min(y, height - rows)) * baseTileSize;
 
   for (const element of elements) {
     menu.addChild(element);
