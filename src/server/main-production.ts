@@ -99,7 +99,38 @@ void (async () => {
     void handler(req, res, parsedUrl);
   });
 
-  createTRPCwebSocketServer({ server });
+  // tRPC WebSocket. Attach it in `noServer` mode and drive the HTTP `upgrade` ourselves (below),
+  // rather than letting `ws` bind the server's 'upgrade' event directly.
+  const wss = createTRPCwebSocketServer({ noServer: true });
+
+  // Next.js hijacks WebSockets on a custom server. On the FIRST request its handler lazily attaches
+  // its OWN 'upgrade' listener to this server — it reads the server off `req.socket.server`, since
+  // we never hand the server to next(). That listener then destroys any upgrade it doesn't own,
+  // which is our tRPC socket: `ws` completes the handshake, Next tears the socket down a few ms
+  // later, and the browser sees close code 1006 "WebSocket closed prematurely" on every query and
+  // subscription. The page renders (SSR is fine) but nothing live works.
+  //
+  // Next only needs upgrades for dev HMR; in production it has no native WebSocket. So we take sole
+  // ownership of the event: route every upgrade to tRPC, and refuse any later 'upgrade' listener
+  // (Next's) from being registered on this server.
+  server.on("upgrade", (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (client) => {
+      wss.emit("connection", client, req);
+    });
+  });
+
+  // `setupWebSocketHandler` in next/dist/server/next.js registers via `server.on("upgrade", …)`, so
+  // shadowing `.on` (Node aliases `.addListener` to it) drops that one registration while leaving
+  // every other event untouched. Our own handler above is already attached, so it stays sole owner.
+  const registerListener = server.on.bind(server);
+  server.on = function guardedOn(event: string, listener: (...args: unknown[]) => void) {
+    if (event === "upgrade") {
+      return server;
+    }
+
+    return registerListener(event, listener);
+  } as typeof server.on;
+
   server.listen(port);
 
   // Deliberately the PORT, not NEXT_PUBLIC_WS_URL: that variable is inlined into the client bundle
