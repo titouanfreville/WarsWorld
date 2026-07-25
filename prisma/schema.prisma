@@ -92,7 +92,11 @@ model User {
   id            String    @id @default(cuid())
   state         UserState @default(active)
   roles         Role[]    @default([])
-  name          String?
+  /// Account handle. UNIQUE is load-bearing, not cosmetic: sign-in looks an account up by name, so
+  /// two rows sharing one meant `findFirst` picked an arbitrary winner — registering a second
+  /// account under someone's name either locked them out or, once row order shifted, handed their
+  /// players to the impostor. Still nullable: OAuth sign-ups can arrive without one.
+  name          String?   @unique
   password      String?
   email         String?   @unique
   emailVerified DateTime?
@@ -102,6 +106,21 @@ model User {
   identities    Player[]
   accounts      Account[]
   devToolAudits DevToolAudit[]
+}
+
+/// Failed sign-in / sign-up attempts, so the cost of guessing grows with every miss.
+///
+/// Persisted rather than in-memory because an in-process counter resets on every deploy and is
+/// trivially outlasted — the DB record is what makes the backoff survive a restart. The in-memory
+/// window limiter in `auth/throttle.ts` sits in front of this for burst traffic; this is the part
+/// that remembers.
+model AuthAttempt {
+  /// What is being throttled: the lowercased account name for sign-in, `ip:<addr>` for sign-up.
+  key         String    @id
+  failures    Int       @default(0)
+  /// Set once past the grace allowance; every further miss roughly doubles the wait.
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
 }
 
 model Account {

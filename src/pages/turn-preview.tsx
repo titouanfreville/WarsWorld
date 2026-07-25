@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
  * DEV-ONLY preview of the start-of-turn banner ({@link TurnStartBanner}) — the acting CO's mugshot +
  * name (army-themed), "DAY N", and the own-turn upkeep line vs the opponent's "enemy turn". Pick any
  * CO / army / perspective and replay the entrance. Not linked anywhere; safe to delete. The real
- * banner is driven live from the board (see useTurnBanner in MatchBoardV2).
+ * banner is driven live from the board (see useTurnBanner).
  */
 
 const input: React.CSSProperties = {

@@ -311,6 +311,20 @@ export default function LobbyRoom({ lobbyId }: Props) {
         </p>
       )}
 
+      {/* Terrain preview of the CHOSEN map. Same component and palette as the picker grid and the
+          in-match minimap, so the map a player clicked is the one they keep looking at while the
+          lobby fills. The empty frame holds the slot before a map is picked, so choosing one
+          doesn't shove the rest of the dossier down the page. */}
+      <div className="@mb-4 @overflow-hidden @rounded-lg @outline @outline-1 @outline-white/10">
+        {map === undefined ? (
+          <div className="@flex @h-32 @items-center @justify-center @bg-black/40 @text-xs @uppercase @tracking-[0.2em] @text-slate-600">
+            Awaiting map…
+          </div>
+        ) : (
+          <MapThumbnail terrain={map.terrain} className="@w-full @bg-black/40" />
+        )}
+      </div>
+
       {/* Rules chips */}
       <div className="@mb-4 @flex @flex-wrap @gap-1.5">
         {[

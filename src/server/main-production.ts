@@ -7,6 +7,7 @@ import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
 import { matchActionUsecase, matchesUsecase } from "./composition-root";
 import { matchmakingUsecase } from "./composition-root";
+import { startAuthAttemptSweep } from "./auth/throttle.dbo";
 import { prisma } from "./prisma/prisma-client";
 
 const port = parseInt(process.env.PORT ?? "3001", 10);
@@ -44,6 +45,9 @@ void (async () => {
   // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
   await matchmakingUsecase.rescheduleLobbyPhases();
   matchmakingUsecase.startQueueTick();
+  // Retire sign-in/sign-up failure counters that have gone quiet, so a name-spraying run can't
+  // grow the table without bound.
+  startAuthAttemptSweep();
   await app.prepare();
 
   const server = http.createServer((req, res) => {

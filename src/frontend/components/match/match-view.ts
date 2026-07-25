@@ -37,9 +37,12 @@ export const DIRECTION_OFFSET: Record<BoardDirection, BoardPosition> = {
 /** Stable string key for a position (`"x,y"`) — for Map/Set lookups over the board. */
 export const posKey = (p: BoardPosition): string => `${p[0]},${p[1]}`;
 
+/** Copy a readonly position into a plain mutable tuple, for wire/query/mutation call sites. */
+export const toTuple = (p: BoardPosition): [number, number] => [p[0], p[1]];
+
 /** Copy a readonly path into plain mutable `[number, number]` tuples, for wire/mutation call sites. */
 export const toMutablePath = (path: readonly (readonly [number, number])[]): [number, number][] =>
-  path.map((p) => [p[0], p[1]]);
+  path.map(toTuple);
 
 /**
  * The tile shown at a position — a changeable tile (owned property, silo, pipe seam) wins over the

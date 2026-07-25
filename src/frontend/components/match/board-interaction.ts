@@ -25,7 +25,7 @@ import {
 
 /**
  * Pure board-interaction logic for the v2 snapshot board — the game-affordance decisions the board
- * makes, lifted out of `MatchBoardV2`'s imperative pixi effect so they can be unit-tested. Nothing
+ * makes, lifted out of the board's imperative pixi effect so they can be unit-tested. Nothing
  * here touches pixi, React, refs, or the network: functions take the current view / snapshot / queue
  * and return plain descriptions of what's possible. The component maps those to rendering + enqueues.
  */

@@ -4,6 +4,12 @@ import {
   renderedTileSize,
 } from "frontend/components/match/render-constants";
 import { intentArrows, phantomPositions } from "frontend/components/match/buffered-intent";
+import type {
+  CapturePulse,
+  CrashPulse,
+  MovePulse,
+  TurnStartPulse,
+} from "frontend/components/match/board-pulses";
 import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
 import { getArmyForSlot, getUnitAt } from "frontend/components/match/match-view";
 import type { TurnSnapshot, UnloadDrop } from "frontend/components/match/turn-snapshot-view";
@@ -42,7 +48,7 @@ const REACHABLE_COLOR = "#ffffff";
 const ATTACK_COLOR = "#e02424";
 const UNLOAD_COLOR = "#3fb950";
 
-/** Every ref the scene reads/writes, owned by `MatchBoardV2` and passed in so state survives re-renders. */
+/** Every ref the scene reads/writes, owned React-side and passed in so state survives re-renders. */
 export type BoardSceneRefs = {
   reachableHighlightRef: MutableRefObject<Container | null>;
   attackHighlightRef: MutableRefObject<Container | null>;
@@ -122,8 +128,7 @@ export type BoardRenderer = {
   closeMenu: () => void;
 };
 
-/** One unit's confirmed/buffered move to animate: the full tile path it travelled. */
-export type MovePulse = { path: readonly BoardPosition[] };
+export type { MovePulse };
 
 export type MountBoardSceneParams = {
   app: Application;
@@ -138,13 +143,13 @@ export type MountBoardSceneParams = {
    * upkeep — plays the one-shot start-of-turn flourish over them. Omit on every other render (the
    * caller gates it so it fires once per turn, not on each within-turn refetch).
    */
-  turnStartPulse?: { repaired: readonly BoardPosition[]; refuelled: readonly BoardPosition[] };
+  turnStartPulse?: TurnStartPulse;
   /**
    * When this render is the first to observe a new upkeep, the tiles where units ran out of fuel —
    * plays the one-shot crash flourish over them. Unlike `turnStartPulse` this can cover EITHER army:
    * a crash is public, so the opponent sees it too (fog-masked by the BE). Omit on every other render.
    */
-  crashPulse?: { positions: readonly BoardPosition[] };
+  crashPulse?: CrashPulse;
   /**
    * When this render is the first to observe a new CO-power activation, everything the launch flourish
    * draws: the units it touched (each tagged repaired/damaged/spawned/empowered) plus the offensive
@@ -172,7 +177,7 @@ export type MountBoardSceneParams = {
    * lightweight chevrons/flash show (the "no-animation" indicator). Fog-safe upstream (the BE only
    * reports the ability at a tile this viewer can see).
    */
-  capturePulses?: { position: BoardPosition; completed: boolean; full: boolean }[];
+  capturePulses?: CapturePulse[];
   /** Surfaces the hovered attack engagement to React for the floating combat-forecast box. */
   onAttackTargetFocus?: (focus: AttackForecastFocus | null) => void;
   /** Surfaces a right-clicked unit's position to React for the unit-detail card. */
@@ -189,10 +194,10 @@ export type MountBoardSceneParams = {
 
 /**
  * (Re)builds the pixi stage content for the v2 snapshot board — the imperative render layer
- * extracted from `MatchBoardV2`'s render effect. Pure "data in, events out": takes the current
+ * extracted from the board's render effect. Pure "data in, events out": takes the current
  * view/snapshot/queue and the refs the component owns, builds a `BoardRenderer` and hands it to
  * `board-controller` for the click/hover handlers and menus, then appends everything to
- * `app.stage`. See `MatchBoardV2` for the effect that calls this.
+ * `app.stage`. See `useBoardScene` for the effect that calls this.
  */
 export function mountBoardScene(params: MountBoardSceneParams): void {
   const { app, view, spriteSheets, playerId, queue, dispatchQueue, refs } = params;

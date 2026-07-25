@@ -13,10 +13,23 @@ import GithubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
 import { prisma } from "server/prisma/prisma-client";
 import { loginSchema } from "server/auth/schemas";
+import { clientIp } from "server/auth/client-ip";
+import { signInThrottle } from "server/auth/throttle.dbo";
+import { RateLimiter } from "server/auth/throttle";
 import { z } from "zod";
 import WarsWorldAdapter from "./WarsWorldAdapter";
 
 const adapter = WarsWorldAdapter(prisma) as Adapter;
+
+/**
+ * Burst guard on sign-in: more than 3 attempts per IP per minute fails, whatever credentials they
+ * carry. Someone who knows their password needs one; someone who mistyped needs two or three.
+ *
+ * This caps the DB backoff's grace allowance in practice — reaching 6 recorded failures now takes a
+ * couple of minutes rather than seconds. That's the point: the two layers answer different
+ * questions, this one "how fast", the other "how many, ever".
+ */
+const signInLimiter = new RateLimiter(3, 60_000);
 
 const envCredential = z.string().trim().min(1);
 
@@ -54,7 +67,7 @@ const providers: Provider[] = [
         placeholder: "Password",
       },
     },
-    async authorize(credentials) {
+    async authorize(credentials, req) {
       if (!credentials) {
         return null;
       }
@@ -65,19 +78,56 @@ const providers: Provider[] = [
         return null;
       }
 
-      const dbUser = await prisma.user.findFirst({
-        where: { name: loginParse.data.name },
+      const { name, password } = loginParse.data;
+      const now = new Date();
+
+      // First line: cap how fast one caller can hit sign-in at all. Cheap, in-memory, and applies
+      // even to correct credentials, which the per-account backoff below deliberately doesn't.
+      const ip = clientIp(req);
+
+      signInLimiter.prune(now.getTime());
+
+      if (!signInLimiter.take(ip, now.getTime())) {
+        throw new Error("Too many sign-in attempts. Please wait a minute and try again.");
+      }
+
+      // Second line: the per-account backoff, which survives restarts and IP rotation.
+      const lockedFor = await signInThrottle.remainingLock(name, now);
+
+      if (lockedFor !== null) {
+        throw new Error(`Too many failed attempts. Try again in ${lockedFor} seconds.`);
+      }
+
+      // The ONE query in the codebase allowed to see the password hash, and the only reason the
+      // guard in `prisma/password-guard.ts` has an opt-in at all: without this explicit `select`
+      // the hash comes back `undefined` and every login is rejected. Selecting field-by-field also
+      // keeps the rest of the row (roles, state, timestamps) out of a request that doesn't need it.
+      // `findUnique` is now possible — and correct — because `User.name` is unique.
+      const dbUser = await prisma.user.findUnique({
+        where: { name },
+        select: { id: true, name: true, email: true, password: true },
       });
 
+      // An unknown account and a wrong password are recorded and answered identically: any
+      // difference here is a user-enumeration oracle, which is exactly what we just removed from
+      // `findFirstUserByName`.
       if (dbUser?.password == undefined) {
+        await signInThrottle.recordFailure(name, now);
+
         return null;
       }
 
-      const doPasswordsMatch = await compare(loginParse.data.password, dbUser.password);
+      const doPasswordsMatch = await compare(password, dbUser.password);
 
       if (!doPasswordsMatch) {
+        await signInThrottle.recordFailure(name, now);
+
         return null;
       }
+
+      // Signing in successfully clears the record, so an honest user who fumbled a few times never
+      // carries a lock into their next session.
+      await signInThrottle.clear(name);
 
       return {
         id: dbUser.id,

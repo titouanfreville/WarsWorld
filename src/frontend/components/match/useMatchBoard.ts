@@ -24,7 +24,7 @@ const boardLog = createLogger("v2");
  * Data layer for the v2 snapshot board: the match + turn-snapshot queries, the optimistic view
  * (authoritative state + buffered intent), and the action buffer with its drain/reconcile/turn-reset
  * effects. NO client engine, NO `MatchWrapper` — the backend stays authoritative (any event ->
- * refetch), so the client can't desync. See `MatchBoardV2` for the interaction/rendering half.
+ * refetch), so the client can't desync. See `useBoardScene` for the interaction/rendering half.
  */
 export function useMatchBoard({ matchId, playerId }: Params) {
   // The unit price table is static within a turn (production doesn't change prices), so latch the

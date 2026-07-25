@@ -3,6 +3,7 @@ import { createTRPCwebSocketServer } from "./common-server";
 import { matchStore } from "./match-store";
 import { matchActionUsecase, matchesUsecase } from "./composition-root";
 import { matchmakingUsecase } from "./composition-root";
+import { startAuthAttemptSweep } from "./auth/throttle.dbo";
 
 void (async () => {
   await matchStore.rebuild();
@@ -14,6 +15,9 @@ void (async () => {
   // Re-arm matchmaking ready-check / map-ban deadlines, then start the pairing loop.
   await matchmakingUsecase.rescheduleLobbyPhases();
   matchmakingUsecase.startQueueTick();
+  // Retire sign-in/sign-up failure counters that have gone quiet, so a name-spraying run can't
+  // grow the table without bound.
+  startAuthAttemptSweep();
 
   const wss = createTRPCwebSocketServer({
     port: 3001,

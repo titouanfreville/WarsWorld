@@ -31,7 +31,7 @@ export type PowerLaunchEffect = {
 
 /**
  * FE-local mirrors of the wire power types (the BE re-validates; these stay structurally in sync with
- * the engine unions — a drift surfaces as a tsc error at the mapping site in MatchBoardV2).
+ * the engine unions — a drift surfaces as a tsc error at the mapping site in usePowerBoardPulse).
  */
 export type PowerEffectKind = "repaired" | "damaged" | "spawned" | "empowered";
 export type PowerAffectedUnit = { position: BoardPosition; kind: PowerEffectKind };
