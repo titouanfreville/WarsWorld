@@ -4,7 +4,7 @@ import {
   getBaseDamage,
 } from "shared/match-logic/game-constants/base-damage";
 import type { Position } from "shared/schemas/position";
-import { getDistance, getNeighbourPositions } from "shared/schemas/position";
+import { getDistance, getNeighbourPositions, isSamePosition } from "shared/schemas/position";
 import type { MapWrapper } from "shared/wrappers/map";
 import type { MatchWrapper } from "shared/wrappers/match";
 import type { UnitWrapper } from "shared/wrappers/unit";
@@ -131,8 +131,10 @@ export const getAttackableTiles = (
     const visited = makeVisitedMatrix(match.map);
 
     for (const [pos] of accessibleNodes.entries()) {
-      if (match.getUnit(pos) !== undefined && pos !== unit.data.position) {
+      if (match.getUnit(pos) !== undefined && !isSamePosition(pos, unit.data.position)) {
         //another unit occupies this spot so we can't move to it to attack
+        //(compare by value: an explicit `fromPosition` is a fresh tuple, so `!==` would wrongly
+        // treat the unit's own tile as occupied and drop its neighbours — breaking in-place attack)
         continue;
       }
 

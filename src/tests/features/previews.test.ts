@@ -59,6 +59,19 @@ describe("previews", () => {
     expect(has(getAttackTargetTiles(match, tank), [2, 0])).toBe(true);
   });
 
+  it("lists an adjacent enemy for a direct unit attacking in place (explicit fromPosition)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(2),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+    });
+    const tank = addUnit(match.getPlayerBySlot(0)!, "tank", [0, 0]);
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [1, 0]);
+
+    // fromPosition = the tank's own tile, passed as a fresh tuple: it must still see its neighbours
+    // (a value comparison, not reference) so an in-place attack finds the adjacent enemy.
+    expect(has(getAttackTargetTiles(match, tank, [0, 0]), [1, 0])).toBe(true);
+  });
+
   it("forecasts a direct engagement's damage for both sides", () => {
     const match = createTestMatch({
       tiles: roadRow(2),
