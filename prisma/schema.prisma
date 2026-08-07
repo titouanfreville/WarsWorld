@@ -89,20 +89,20 @@ enum Role {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  state         UserState @default(active)
-  roles         Role[]    @default([])
+  id            String         @id @default(cuid())
+  state         UserState      @default(active)
+  roles         Role[]         @default([])
   /// Account handle. UNIQUE is load-bearing, not cosmetic: sign-in looks an account up by name, so
   /// two rows sharing one meant `findFirst` picked an arbitrary winner — registering a second
   /// account under someone's name either locked them out or, once row order shifted, handed their
   /// players to the impostor. Still nullable: OAuth sign-ups can arrive without one.
-  name          String?   @unique
+  name          String?        @unique
   password      String?
-  email         String?   @unique
+  email         String?        @unique
   emailVerified DateTime?
   image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   identities    Player[]
   accounts      Account[]
   devToolAudits DevToolAudit[]
@@ -206,27 +206,51 @@ model Player {
   lobbyMemberships PlayerInLobby[]
 
   // Ranked: hidden skill (never leaves the server) + the ladder the player actually sees.
-  skills      PlayerSkill[]
-  ranks       PlayerRank[]
-  meritEvents MeritEvent[]
-  hostedLobbies    Lobby[]            @relation(name: "lobbyHost")
-  infractions      PlayerInfraction[]
+  skills        PlayerSkill[]
+  ranks         PlayerRank[]
+  meritEvents   MeritEvent[]
+  hostedLobbies Lobby[]            @relation(name: "lobbyHost")
+  infractions   PlayerInfraction[]
 
   // Minimal social & communication linkages (queried explicitly on demand)
-  sentFriendships      Friendship[]              @relation("sentFriendships")
-  receivedFriendships  Friendship[]              @relation("receivedFriendships")
-  ownedCategories      FriendCategory[]          @relation("ownedCategories")
-  blockedUsers         Block[]                   @relation("blockedUsers")
-  blockedByUsers       Block[]                   @relation("blockedByUsers")
-  mutedUsers           Mute[]                    @relation("mutedUsers")
-  mutedByUsers         Mute[]                    @relation("mutedByUsers")
-  notifications        Notification[]            @relation("notifications")
-  conversationsJoined  ConversationParticipant[]
-  sentMessages         Message[]                 @relation("sentMessages")
+  sentFriendships     Friendship[]              @relation("sentFriendships")
+  receivedFriendships Friendship[]              @relation("receivedFriendships")
+  ownedCategories     FriendCategory[]          @relation("ownedCategories")
+  blockedUsers        Block[]                   @relation("blockedUsers")
+  blockedByUsers      Block[]                   @relation("blockedByUsers")
+  mutedUsers          Mute[]                    @relation("mutedUsers")
+  mutedByUsers        Mute[]                    @relation("mutedByUsers")
+  notifications       Notification[]            @relation("notifications")
+  conversationsJoined ConversationParticipant[]
+  sentMessages        Message[]                 @relation("sentMessages")
 
   // Honor: medals awarded to opponents post-match (see Commendation).
   commendationsGiven    Commendation[] @relation("commendationsGiven")
   commendationsReceived Commendation[] @relation("commendationsReceived")
+
+  // Maps this player authored in the builder.
+  authoredMaps WWMap[] @relation("mapAuthor")
+}
+
+/// Whether a map is visible to anyone but its author.
+///
+/// Only two values, because visibility is the only thing this decides. Whether a map is in the
+/// ranked pool is `rankedModes`, and whether it is queued for review is `rankedReview` — folding
+/// those into one enum would make "published and pending review" unspellable.
+enum MapStatus {
+  /// Only the author can see it. Where every builder session starts.
+  draft
+  /// In the public library, playable in custom matches.
+  published
+}
+
+/// Where a map sits in the ranked-pool review queue. Distinct from `rankedModes`, which is the
+/// result a moderator writes on approval — this is the request, not the outcome.
+enum RankedReview {
+  none
+  pending
+  rejected
+  approved
 }
 
 // Right now maps need to be immutable but we
@@ -259,6 +283,35 @@ model WWMap {
   // TODO maps should have different sets of captureLimits and bannedUnitTypes
   // per league type.
 
+  /// Visibility. Defaults to `draft` because the builder inserts the row before the first tile is
+  /// painted — a map is private until its author decides otherwise.
+  ///
+  /// NOTE for the migration: every map that predates the builder is in use and must be flipped to
+  /// `published`, or the whole existing library disappears from the browser. Those rows are exactly
+  /// the ones with no author, so the backfill is
+  /// `UPDATE "Map" SET status = 'published' WHERE "authorId" IS NULL;`
+  status MapStatus @default(draft)
+
+  /// Who built it. Nullable: every seeded and AWBW-imported map predates authorship, and deleting
+  /// a player must not take their published maps out of matches that reference them.
+  author   Player? @relation(name: "mapAuthor", fields: [authorId], references: [id])
+  authorId String?
+
+  rankedReview RankedReview @default(none)
+  /// A moderator's reason, shown to the author on rejection.
+  reviewNote   String?
+
+  /// The last stored verdict from `evaluateMap`, so the library can show a map's standing without
+  /// re-running the checker over every row.
+  /// [MapFairnessReport]
+  fairnessReport Json?
+  evaluatedAt    DateTime?
+
+  /// Doubles as the optimistic-concurrency token: autosave sends the value it last saw and the
+  /// update is conditional on it, so two open tabs cannot silently overwrite each other.
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([authorId, status])
   @@map("Map")
 }
 
@@ -365,11 +418,11 @@ model MatchPlayerStats {
   economy  Int
 
   /// Funds-value of enemy HP destroyed / own HP lost in combat.
-  damageDealt Int
-  damageTaken Int
-  unitsKilled Int
-  unitsLost   Int
-  captures    Int
+  damageDealt   Int
+  damageTaken   Int
+  unitsKilled   Int
+  unitsLost     Int
+  captures      Int
   /// Economy: funds spent building, and total income earned across the match.
   producedFunds Int
   incomeEarned  Int
@@ -414,19 +467,19 @@ model PlayerSkill {
 ///
 /// Phase 6 (seasons) adds `seasonId` to this key and resets these rows at a rollover.
 model PlayerRank {
-  Player   Player   @relation(fields: [playerId], references: [id])
-  playerId String
-  mode     GameMode
-  rank     Rank     @default(cadet)
+  Player           Player   @relation(fields: [playerId], references: [id])
+  playerId         String
+  mode             GameMode
+  rank             Rank     @default(cadet)
   /// 5..1, 5 being the lowest. Meaningless for cadet (placements) and marechal (apex).
-  division Int      @default(5)
+  division         Int      @default(5)
   /// 0..99 within a division. Unbounded at marechal, so the top of the ladder still sorts.
-  merit    Int      @default(0)
-  peakRank Rank?
+  merit            Int      @default(0)
+  peakRank         Rank?
   /// Set by the admin visible-rank override: this rank is authoritative and must NOT be masked as
   /// "placements", even while the hidden skill estimate (sigma) is still provisional. Normal play
   /// leaves it false, so the placement gate governs everyone else exactly as before.
-  placementsExempt Boolean @default(false)
+  placementsExempt Boolean  @default(false)
 
   @@id([playerId, mode])
 }
@@ -568,10 +621,10 @@ model Event {
 // status is the general-picker round. See .ai/plans/lobby-backend-plan.md.
 
 model Lobby {
-  id           String     @id @default(cuid())
-  host         Player?    @relation(name: "lobbyHost", fields: [hostPlayerId], references: [id])
+  id           String   @id @default(cuid())
+  host         Player?  @relation(name: "lobbyHost", fields: [hostPlayerId], references: [id])
   hostPlayerId String? // set for custom lobbies; null for matchmaking
-  isRanked     Boolean    @default(false)
+  isRanked     Boolean  @default(false)
   /// Drives team count + slots. Cast in place from the old free-text "1v1"/"2v2"/"ffa4" by
   /// utils/phase1-league-backfill.sql — `db push` can't express the USING clause and would have
   /// dropped the column instead.
@@ -591,7 +644,7 @@ model Lobby {
   readyEndsAt DateTime? // AFK ready-check deadline (matchmaking, ~30s)
 
   // --- matchmaking map pick & ban (status = map_ban) ---
-  readyCheckLenient Boolean @default(false) // wide MMR gap: longer window + no sanction on decline
+  readyCheckLenient Boolean   @default(false) // wide MMR gap: longer window + no sanction on decline
   /// How lopsided the pairing was, in percentage points away from an even 50/50 (0..50) — e.g. 18
   /// means the favourite had ~68% odds. Audit/display only.
   ///
@@ -629,7 +682,7 @@ model PlayerInLobby {
   bannedMapIds Json?
   votedMapId   String? // this player's single map vote (must be a non-banned pool member)
 
-  joinedAt    DateTime        @default(now())
+  joinedAt DateTime @default(now())
 
   @@unique([lobbyId, playerId])
   @@index([playerId])
@@ -771,7 +824,7 @@ model CoPhase {
   luckGood    Int? // luck roll bonus (Nell/Rachel/Flak/Jugger)
   luckBad     Int?
   // The power's own activation animation (AW-style cutscene). Owned by the power, not its effects.
-  visualKey String? // "missile" | "meteor" | "blast" | "healWave" | …
+  visualKey   String? // "missile" | "meteor" | "blast" | "healWave" | …
 
   modifiers CoModifier[]
   effects   CoPhaseEffect[]
@@ -789,27 +842,27 @@ model CoModifier {
   unitType     UnitType? @relation(fields: [unitTypeId], references: [id])
   unitTypeId   String?
 
-  attackPct     Int? // firepower % delta (+20, -10)
-  defensePct    Int?
-  rangeDelta    Int?
-  movementDelta Int?
-  visionDelta   Int?
-  buildCostPct  Int?
-  terrainStarsPct Int? // reserved: scale terrain stars by a percent
+  attackPct         Int? // firepower % delta (+20, -10)
+  defensePct        Int?
+  rangeDelta        Int?
+  movementDelta     Int?
+  visionDelta       Int?
+  buildCostPct      Int?
+  terrainStarsPct   Int? // reserved: scale terrain stars by a percent
   terrainStarsDelta Int? // Drake: flat +N terrain stars on the defender's own units
   terrainStarsMult  Int? // Lash SCOP: multiply the defender's terrain stars (×2)
   // Sturm-style: flat movement cost on every terrain (overrides per-terrain cost).
-  movementCostAll Int?
+  movementCostAll   Int?
 
   // Conditional application (null/false = always).
-  onTerrainKey String? // Jake = "plain", Koal = "road"
-  onProperty   Boolean @default(false) // Kindle
-  onWeather    String? // Olaf AWDS = "snow"
-  notWeather   String? // Sturm/Lash all-terrain-cost-1 = NOT "snow"
-  onFacility   String? // Eagle/Sensei/Drake target by build facility ("airport" | "port" | "base")
-  facilityNot  String? // Lash firepower skips "airport" units
+  onTerrainKey   String? // Jake = "plain", Koal = "road"
+  onProperty     Boolean @default(false) // Kindle
+  onWeather      String? // Olaf AWDS = "snow"
+  notWeather     String? // Sturm/Lash all-terrain-cost-1 = NOT "snow"
+  onFacility     String? // Eagle/Sensei/Drake target by build facility ("airport" | "port" | "base")
+  facilityNot    String? // Lash firepower skips "airport" units
   requiresWeapon Boolean @default(false) // Max movement bonus excludes transports (no attackRange)
-  vsGroup      String? // opponent condition: Javier defence vs "indirect" attackers
+  vsGroup        String? // opponent condition: Javier defence vs "indirect" attackers
 
   // Scaling by an injectable runtime variable: the stat gains floor(variable / scaleDivisor) *
   // scaleFactor percent. Colin SCOP = {scaleStat:"attack", scaleVariable:"funds", scaleDivisor:300,
@@ -887,16 +940,16 @@ enum NotificationType {
 }
 
 model Friendship {
-  id          String           @id @default(cuid())
-  senderId    String
-  receiverId  String
-  status      FriendshipStatus @default(PENDING)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id         String           @id @default(cuid())
+  senderId   String
+  receiverId String
+  status     FriendshipStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 
-  sender      Player           @relation("sentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver    Player           @relation("receivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
-  categories  FriendCategory[] @relation("CategoryFriendships")
+  sender     Player           @relation("sentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   Player           @relation("receivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
+  categories FriendCategory[] @relation("CategoryFriendships")
 
   @@unique([senderId, receiverId])
   @@index([senderId])
@@ -904,10 +957,10 @@ model Friendship {
 }
 
 model FriendCategory {
-  id          String       @id @default(cuid())
-  name        String       // e.g. "Family", "In-Game Friends", "Scrim Partners"
-  ownerId     String
-  createdAt   DateTime     @default(now())
+  id        String   @id @default(cuid())
+  name      String // e.g. "Family", "In-Game Friends", "Scrim Partners"
+  ownerId   String
+  createdAt DateTime @default(now())
 
   owner       Player       @relation("ownedCategories", fields: [ownerId], references: [id], onDelete: Cascade)
   friendships Friendship[] @relation("CategoryFriendships")
@@ -917,50 +970,50 @@ model FriendCategory {
 }
 
 model Block {
-  id          String   @id @default(cuid())
-  blockerId   String
-  blockedId   String
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
 
-  blocker     Player   @relation("blockedUsers", fields: [blockerId], references: [id], onDelete: Cascade)
-  blocked     Player   @relation("blockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
+  blocker Player @relation("blockedUsers", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked Player @relation("blockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
 
   @@unique([blockerId, blockedId])
   @@index([blockerId])
 }
 
 model Mute {
-  id          String   @id @default(cuid())
-  muterId     String
-  mutedId     String
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  muterId   String
+  mutedId   String
+  createdAt DateTime @default(now())
 
-  muter       Player   @relation("mutedUsers", fields: [muterId], references: [id], onDelete: Cascade)
-  muted       Player   @relation("mutedByUsers", fields: [mutedId], references: [id], onDelete: Cascade)
+  muter Player @relation("mutedUsers", fields: [muterId], references: [id], onDelete: Cascade)
+  muted Player @relation("mutedByUsers", fields: [mutedId], references: [id], onDelete: Cascade)
 
   @@unique([muterId, mutedId])
   @@index([muterId])
 }
 
 model Notification {
-  id          String           @id @default(cuid())
-  playerId    String
-  type        NotificationType
-  content     String           @db.Text // JSON string containing custom payloads (senderName, lobbyId, etc.)
-  isRead      Boolean          @default(false)
-  createdAt   DateTime         @default(now())
+  id        String           @id @default(cuid())
+  playerId  String
+  type      NotificationType
+  content   String           @db.Text // JSON string containing custom payloads (senderName, lobbyId, etc.)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
 
-  player      Player           @relation("notifications", fields: [playerId], references: [id], onDelete: Cascade)
+  player Player @relation("notifications", fields: [playerId], references: [id], onDelete: Cascade)
 
   @@index([playerId, isRead, createdAt(desc)])
 }
 
 model Conversation {
-  id          String                    @id @default(cuid())
-  name        String?                   // Display name (null for DMs, custom name for Groups)
-  kind        ConversationKind
-  createdAt   DateTime                  @default(now())
-  updatedAt   DateTime                  @updatedAt
+  id        String           @id @default(cuid())
+  name      String? // Display name (null for DMs, custom name for Groups)
+  kind      ConversationKind
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   // In-match channel linkage (null for DMs/groups). teamIndex: -1 = whole-match "All" channel,
   // >= 0 = that team's team-only channel. The (matchId, teamIndex) pair uniquely identifies a
@@ -982,24 +1035,24 @@ model ConversationParticipant {
   joinedAt       DateTime @default(now())
   lastReadAt     DateTime @default(now()) // Keeps track of participant's view cursor
 
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  player         Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  player       Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@id([conversationId, playerId])
   @@index([playerId])
 }
 
 model Message {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   conversationId String
   senderId       String
-  content        String   @db.Text
-  createdAt      DateTime @default(now())
+  content        String    @db.Text
+  createdAt      DateTime  @default(now())
   editedAt       DateTime? // Set when a player modifies their message
   deletedAt      DateTime? // Soft-delete timestamp (hidden in standard queries)
 
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         Player       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       Player       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
 }
@@ -1056,9 +1109,9 @@ model DevToolAudit {
   /// the capability that authorised this call, as evaluated at call time
   capability String
   /// tool name, e.g. "addFunds" / "forceOutcome"
-  tool String
+  tool       String
   /// the validated action payload
-  payload Json
+  payload    Json
 
   /// impersonation forensics — a stolen admin session usually shows up as a new origin
   ip        String?

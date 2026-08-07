@@ -182,6 +182,15 @@ export function createTestMatch(options: ScenarioOptions): MatchWrapper {
     // so the values only need to be present and consistent with the seat count.
     supportedModes: players.length === 2 ? ["duel"] : ["teams", "ffa"],
     rankedModes: [],
+    // Builder/lifecycle columns. A scenario map is a fixture, not something anyone authored, so it
+    // stands in for the seeded pool: published, unowned, never submitted for review.
+    status: "published",
+    authorId: null,
+    rankedReview: "none",
+    reviewNote: null,
+    fairnessReport: null,
+    evaluatedAt: null,
+    updatedAt: new Date(),
   };
 
   return new MatchWrapper(

@@ -20,9 +20,17 @@ function buildScenario() {
     name: "",
     numberOfPlayers: 0,
     predeployedUnits: [],
-    // Damage maths never reaches the mode guards; these are here to satisfy the row shape.
+    // Damage maths never reaches the mode guards or the builder lifecycle; these are here to
+    // satisfy the row shape.
     supportedModes: [],
     rankedModes: [],
+    status: "published",
+    authorId: null,
+    rankedReview: "none",
+    reviewNote: null,
+    fairnessReport: null,
+    evaluatedAt: null,
+    updatedAt: new Date(),
     tiles: [
       [
         { type: "road", variant: "right-left" },

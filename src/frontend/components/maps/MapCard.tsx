@@ -35,6 +35,14 @@ export default function MapCard({ map, onOpen }: Props) {
         <p className="@mt-auto @text-xs @tabular-nums @text-white/50">
           {map.size.width}×{map.size.height} · {map.numberOfPlayers} players
         </p>
+
+        {/*
+          Plain text, not a PlayerLink: this card is a <button>, and an <a> nested inside a button
+          is invalid HTML. The linked byline lives in MapDetail, which has no such wrapper.
+        */}
+        {map.author !== null && (
+          <p className="@truncate @text-xs @text-white/40">by {map.author.displayName}</p>
+        )}
       </div>
     </button>
   );

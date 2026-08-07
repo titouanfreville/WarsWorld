@@ -19,11 +19,21 @@ export type MapFilter = {
   players?: number;
 };
 
+/**
+ * Who built a map, or `null` for the seeded and AWBW-imported pool — those predate authorship and
+ * there is nobody to credit. `name` is the profile handle the byline links to; `displayName` is
+ * what a reader sees.
+ */
+export type MapAuthor = {
+  name: string;
+  displayName: string;
+};
+
 /** One row of the library, as `map.getAll` returns it. */
 export type MapSummary = {
   id: string;
   name: string;
-  author: string;
+  author: MapAuthor | null;
   numberOfPlayers: number;
   size: { width: number; height: number };
   /** Terrain type per cell, row-major. Fed straight to `MapThumbnail`. */

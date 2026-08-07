@@ -1,4 +1,5 @@
 import MapThumbnail from "frontend/components/matchmaking/MapThumbnail";
+import { PlayerLink } from "frontend/components/PlayerLink";
 import { useEffect, useRef } from "react";
 import MapModeTags from "./MapModeTags";
 import { MODE_LABEL, PROPERTY_LABEL, PROPERTY_ORDER, type MapSummary } from "./map-browser-types";
@@ -87,6 +88,13 @@ export default function MapDetail({ map, onClose }: Props) {
             <p className="@text-xs @tabular-nums @text-white/50">
               {map.size.width}×{map.size.height} · {map.numberOfPlayers} players
             </p>
+
+            {map.author !== null && (
+              <div className="@flex @items-center @gap-1.5 @text-xs @text-white/50">
+                <span>Built by</span>
+                <PlayerLink name={map.author.name} label={map.author.displayName} hideAvatar />
+              </div>
+            )}
 
             <div className="@flex @flex-col @gap-1.5">
               <h3 className="@text-[0.65rem] @uppercase @tracking-widest @text-white/40">

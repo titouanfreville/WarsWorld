@@ -13,6 +13,8 @@ import { SocialUsecase } from "server/social/social.usecase";
 import { DevToolsUsecase } from "server/dev-tools/dev-tools.usecase";
 import { AdminToolsUsecase } from "server/admin/admin-tools.usecase";
 import { AdminUsecase } from "server/admin/admin.usecase";
+import { MapsUsecase } from "server/maps/maps.usecase";
+import { engineTerrainAccess, engineUnitDefaults } from "server/adapters/engine-map-access";
 
 /**
  * The single startup composition root: construct every feature usecase once, in explicit
@@ -21,6 +23,7 @@ import { AdminUsecase } from "server/admin/admin.usecase";
  * concrete wiring, so no router imports a sibling router's singleton (see src/server/CLAUDE.md
  * "Explicit wiring": compose once, don't stash module singletons on shared mutable state).
  */
+export const mapsUsecase = new MapsUsecase(prisma, engineTerrainAccess, engineUnitDefaults);
 export const rankingUsecase = new RankingUsecase(prisma);
 export const matchesUsecase = new MatchesUsecase(prisma, matchStore, {
   // Lazy on purpose: the action usecase is built further down (it needs ranking + endgame first),

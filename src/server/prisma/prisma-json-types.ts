@@ -10,12 +10,15 @@ import type { Tile } from "server/core/schemas/tile";
 import type { UnitWithVisibleStats } from "server/core/schemas/unit";
 import type { MainEventWithSubEvents } from "server/engine/types/events";
 import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
+import type { FairnessReport } from "server/maps/fairness";
 
 declare global {
   namespace PrismaJson {
     type PrismaPreferences = Preferences;
     type PrismaTiles = Tile[][];
     type PrismaUnits = UnitWithVisibleStats[];
+    // WWMap.fairnessReport — the last stored verdict from the map checker.
+    type MapFairnessReport = FairnessReport;
     // v1 durable player state (kept for the v1 game — see Match.playerState).
     type PrismaPlayerState = PlayerInMatch[];
     type PrismaEvent = MainEventWithSubEvents;

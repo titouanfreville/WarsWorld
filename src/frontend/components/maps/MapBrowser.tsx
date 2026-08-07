@@ -1,4 +1,5 @@
 import { trpc } from "frontend/utils/trpc-client";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import MapCard from "./MapCard";
 import MapDetail from "./MapDetail";
@@ -49,6 +50,18 @@ export default function MapBrowser() {
 
   return (
     <div className="@flex @w-full @max-w-[90rem] @flex-col @gap-6 @px-4">
+      <div className="@flex @items-center @justify-between @gap-4">
+        <p className="@text-sm @text-white/50">
+          Every map here was built by someone. Yours can be too.
+        </p>
+        <Link
+          href="/maps/builder"
+          className="@shrink-0 @rounded @bg-primary @px-4 @py-2 @text-sm @font-bold @text-black @transition hover:@bg-primary-light"
+        >
+          Build a map
+        </Link>
+      </div>
+
       <MapFilters
         filter={filter}
         onChange={setFilter}
