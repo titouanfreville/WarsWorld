@@ -17,11 +17,22 @@ import type { MainAction } from "shared/schemas/action";
  */
 
 /**
- * The four buffered action kinds. Simple ones (move/capture/production) apply optimistically; an
- * `attack` is BE-resolved and, crucially, blocks buffering the *next* attack until it resolves
- * (its outcome — a unit dying, a tile freeing — is unknowable to the client).
+ * The buffered action kinds. Simple ones (move/capture/production/ability/delete) apply
+ * optimistically as presentation deltas; `attack` is BE-resolved and, crucially, blocks buffering
+ * the *next* attack until it resolves (its outcome — a unit dying, a tile freeing — is unknowable to
+ * the client). `launch` (missile) and `repair` (black boat) also resolve on the BE — their move
+ * previews optimistically but the damage/heal/funds effect is applied only when the BE confirms.
  */
-export type ActionKind = "move" | "capture" | "production" | "attack";
+export type ActionKind =
+  | "move"
+  | "capture"
+  | "production"
+  | "attack"
+  | "ability"
+  | "delete"
+  | "launch"
+  | "repair"
+  | "coPower";
 
 export type QueuedActionStatus =
   /** Buffered locally, not yet sent to the BE. */
@@ -95,6 +106,33 @@ export const optimisticActions = (state: ActionQueueState): QueuedAction[] =>
 /** True while an attack is still buffered or in flight — its outcome isn't known yet. */
 export const hasUnresolvedAttack = (state: ActionQueueState): boolean =>
   state.actions.some((a) => a.kind === "attack" && (a.status === "pending" || a.status === "sent"));
+
+/**
+ * True while any action is still buffered or in flight (i.e. not yet accepted or rejected by the BE).
+ * `rejected` actions linger in the queue for visibility until the turn resets, so they must NOT count
+ * here — otherwise a single failed action would block ending the turn for the rest of it.
+ */
+export const hasUnresolvedActions = (state: ActionQueueState): boolean =>
+  state.actions.some((a) => a.status === "pending" || a.status === "sent");
+
+/** Counts by status for a buffer indicator — lets the player see what's queued / sending / failed. */
+export const bufferSummary = (
+  state: ActionQueueState,
+): { pending: number; sent: number; rejected: number } => {
+  const summary = { pending: 0, sent: 0, rejected: 0 };
+
+  for (const action of state.actions) {
+    if (action.status === "pending") {
+      summary.pending += 1;
+    } else if (action.status === "sent") {
+      summary.sent += 1;
+    } else if (action.status === "rejected") {
+      summary.rejected += 1;
+    }
+  }
+
+  return summary;
+};
 
 /**
  * Whether the player may start a NEW attack right now. Attacks serialize only against other
