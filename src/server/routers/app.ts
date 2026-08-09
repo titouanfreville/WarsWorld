@@ -4,6 +4,7 @@ import { actionRouter } from "./action";
 import { matchRouter } from "./match";
 import { matchPreviewRouter } from "./match/previews";
 import { articleRouter } from "./article";
+import { systemRouter } from "./system";
 import { userRouter } from "./user";
 
 export const appRouter = router({
@@ -12,6 +13,7 @@ export const appRouter = router({
   matchPreview: matchPreviewRouter,
   map: mapRouter,
   action: actionRouter,
+  system: systemRouter,
   user: userRouter,
 });
 
