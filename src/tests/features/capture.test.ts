@@ -4,6 +4,15 @@ import { createTestMatch, dispatchMainAction, property, tiles } from "../helpers
 
 // Stand on the property (path = start tile only) and use the capture ability.
 const CAPTURE: MainAction = { type: "move", path: [[0, 0]], subAction: { type: "ability" } };
+const PASS_TURN: MainAction = { type: "passTurn" };
+
+// A unit is spent for the turn once it acts (even standing still), so continuing a capture means
+// resuming it on a later turn. In these 2-player scenarios, two passes bring the turn back to
+// slot 0 with its capturing unit readied and its capture progress preserved.
+function endRoundBackToSlot0(match: ReturnType<typeof createTestMatch>): void {
+  dispatchMainAction(match, PASS_TURN);
+  dispatchMainAction(match, PASS_TURN);
+}
 
 describe("capture feature", () => {
   it("captures an enemy property over two turns, flipping ownership at zero points", () => {
@@ -23,6 +32,8 @@ describe("capture feature", () => {
     dispatchMainAction(match, CAPTURE);
     expect(infantry.data).toMatchObject({ currentCapturePoints: 10 });
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+
+    endRoundBackToSlot0(match);
 
     // Second tick: 10 - 10 = 0, capture completes and ownership flips.
     dispatchMainAction(match, CAPTURE);
@@ -46,14 +57,17 @@ describe("capture feature", () => {
     dispatchMainAction(match, CAPTURE);
     expect(infantry.data).toMatchObject({ currentCapturePoints: 15 }); // 20 - 5
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+    endRoundBackToSlot0(match);
 
     dispatchMainAction(match, CAPTURE);
     expect(infantry.data).toMatchObject({ currentCapturePoints: 10 }); // 15 - 5
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+    endRoundBackToSlot0(match);
 
     dispatchMainAction(match, CAPTURE);
     expect(infantry.data).toMatchObject({ currentCapturePoints: 5 }); // 10 - 5
     expect(match.getTile([0, 0])).toMatchObject({ playerSlot: 1 });
+    endRoundBackToSlot0(match);
 
     // Fourth tick: 5 - 5 = 0, capture finally completes.
     dispatchMainAction(match, CAPTURE);
@@ -81,8 +95,9 @@ describe("capture feature", () => {
       stats: { fuel: 99, hp: 100 },
     });
 
-    // Two ticks to bring the HQ to zero capture points.
+    // Two ticks (one per turn) to bring the HQ to zero capture points.
     dispatchMainAction(match, CAPTURE);
+    endRoundBackToSlot0(match);
     dispatchMainAction(match, CAPTURE);
 
     expect(p1.data.status).toBe("captured");
