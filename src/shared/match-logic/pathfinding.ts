@@ -46,9 +46,14 @@ export const getAccessibleNodes = (
 
   const visited = makeVisitedMatrix(match.map);
 
-  for (const unit of ownerUnitPlayer.team.getEnemyUnits()) {
-    //enemy tiles are impassible
-    visited[unit.data.position[0]][unit.data.position[1]] = true;
+  for (const enemy of ownerUnitPlayer.team.getEnemyUnits()) {
+    // Only enemies the owner's team can SEE block movement. A fog-hidden or dived enemy must NOT
+    // shrink the reachable set — that would leak its position on the preview; the move traps on it at
+    // execution instead (see the move handler's `trap`). In a non-fog game canSeeUnitAtPosition is
+    // true for every ordinary unit, so this only changes behaviour for genuinely concealed units.
+    if (ownerUnitPlayer.team.canSeeUnitAtPosition(enemy.data.position)) {
+      visited[enemy.data.position[0]][enemy.data.position[1]] = true;
+    }
   }
 
   let currentDist = 0; //will check from closest to furthest, to find the shortest path
@@ -175,7 +180,13 @@ export const getAttackTargetTiles = (
         attackTargetPositions.push(position);
       }
     } else {
-      if (enemy.player.team !== unit.player.team && getBaseDamage(unit, enemy) !== null) {
+      // Only VISIBLE enemies are offered as targets: a fog-hidden / dived enemy must not appear as a
+      // red target (that would leak it). Non-fog games see every ordinary unit, so no change there.
+      if (
+        enemy.player.team !== unit.player.team &&
+        unit.player.team.canSeeUnitAtPosition(position) &&
+        getBaseDamage(unit, enemy) !== null
+      ) {
         attackTargetPositions.push(position);
       }
     }

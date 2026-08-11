@@ -185,15 +185,17 @@ export const buildTurnSnapshot = (match: MatchWrapper, player: PlayerInMatchWrap
       position: unit.data.position,
       type: unit.data.type,
       isReady: unit.data.isReady,
-      // Tiles this unit can move to, each with its shortest-path parent so the client can
-      // reconstruct a move path (a plain parent-walk, no pathfinding). Empty once the unit has
-      // acted this turn.
-      // TODO(fog): computed against all enemies; when fog lands, compute over the player's VISIBLE
-      // state so a hidden unit doesn't shrink the set and leak its position.
+      // Tiles this unit can move to, each with its shortest-path parent (for a plain parent-walk) and
+      // the movement cost to ENTER it (for cursor-drawn manual routing — the client sums these along
+      // the traced path and checks against `movementPoints`). Fog-aware: pathfinding only blocks on
+      // enemies the owner can see, so a hidden unit doesn't shrink this set. Empty once the unit acted.
       reachableTiles: Array.from(nodes.values()).map((node) => ({
         position: node.pos,
         parent: node.parent,
+        cost: unit.getMovementCost(node.pos) ?? 0,
       })),
+      // Total movement budget this turn — the ceiling for a manually-routed (non-shortest) path.
+      movementPoints: unit.getMovementPoints(),
       // Enemy positions this unit can attack, keyed by the tile it fires from (see above).
       attacksByTile,
       // Friendly-occupied reachable tiles this unit can validly load/join into.
