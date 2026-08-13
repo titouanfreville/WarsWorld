@@ -89,7 +89,8 @@ const inList = (list: readonly BoardPosition[], pos: BoardPosition): boolean =>
  * the BE turn snapshot + preview endpoints — NO client engine, NO `MatchWrapper`, NO rules geometry.
  * Selection is a plain position; reachable tiles and the move path come from the snapshot, attack
  * targets from the `attackTargets` endpoint. The backend stays authoritative (any event -> refetch),
- * so the client can't desync. Behind `?v2`.
+ * so the client can't desync. This is now the DEFAULT board; the old engine-on-client board is the
+ * `?v1` fallback during the cutover.
  *
  * Interaction: select a unit (blue reachable tiles), click a reachable tile to stage a move there,
  * then pick from an in-board contextual menu (ATTACK / CAPTURE / WAIT). ATTACK reveals red enemies
@@ -791,8 +792,8 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       const snapshot = snapshotRef.current;
       const selected = selectionRef.current;
 
-      if (currentMatch === null) {
-        return;
+      if (currentMatch === null || currentMatch.gameOver !== null) {
+        return; // the match is decided — the board is read-only
       }
 
       // --- Arming a missile: the next in-bounds click is the strike target. ---
@@ -966,6 +967,9 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     return <p>error {":("}</p>;
   }
 
+  // Match outcome (derived by the BE from player elimination); non-null => banner + no more actions.
+  const gameOver = optimisticView?.gameOver ?? null;
+
   return (
     <div className="@w-full @h-full @flex @flex-col @items-center @justify-center @py-4">
       <PingIndicator />
@@ -1001,7 +1005,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           className="btn @select-none"
           // Can't end the turn on UNRESOLVED intent — wait for pending/in-flight actions to drain.
           // Rejected actions linger for visibility but must not block the turn (that was a bug).
-          disabled={!isMyTurn || hasUnresolvedActions(queue)}
+          disabled={!isMyTurn || gameOver !== null || hasUnresolvedActions(queue)}
           onClick={() => {
             resetInteractionRef.current();
             actionMutation.mutate(
@@ -1013,8 +1017,31 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           {isMyTurn ? "Pass Turn" : "Not your turn"}
         </button>
       </div>
-      {/* pixi appends its own canvas here (created once, StrictMode-safe) */}
-      <div ref={containerRef} style={{ imageRendering: "pixelated" }} />
+      {/* pixi appends its own canvas here (created once, StrictMode-safe); the game-over banner
+          overlays it once the match is decided. */}
+      <div className="@relative" style={{ imageRendering: "pixelated" }}>
+        <div ref={containerRef} />
+        {gameOver !== null && (
+          <div className="@absolute @inset-0 @flex @flex-col @items-center @justify-center @gap-1 @bg-black/60 @text-white">
+            <p
+              className={`@text-5xl @font-extrabold @drop-shadow ${
+                gameOver.viewerWon
+                  ? "@text-emerald-400"
+                  : gameOver.winnerTeamIndex === null
+                    ? "@text-slate-200"
+                    : "@text-red-400"
+              }`}
+            >
+              {gameOver.viewerWon
+                ? "Victory!"
+                : gameOver.winnerTeamIndex === null
+                  ? "Draw"
+                  : "Defeat"}
+            </p>
+            <p className="@opacity-80 @text-sm">Game over</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

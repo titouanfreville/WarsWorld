@@ -19,13 +19,13 @@ const MatchLoaderNoSSR = dynamic(
   },
 );
 
-// Snapshot-driven board being built for the FE engine cut. Behind `?v2` so the working
-// engine-based board stays the default while this is developed and live-tested.
+// Snapshot-driven, server-authoritative board — now the DEFAULT (the FE-engine cut). The old
+// engine-on-client board is kept behind `?v1` as a fallback during the cutover.
 const MatchBoardV2NoSSR = dynamic(
   () => import("components/client-only/MatchBoardV2").then((res) => res.MatchBoardV2),
   {
     ssr: false,
-    loading: () => <p>Loading v2 board...</p>,
+    loading: () => <p>Loading board...</p>,
   },
 );
 
@@ -44,9 +44,10 @@ const MatchPage = ({ spritesheetDataByArmy }: Props) => {
     return <p>Loading...</p>;
   }
 
-  if (query.v2 !== undefined) {
+  // Old engine-on-client board, kept as a fallback during the cutover.
+  if (query.v1 !== undefined) {
     return (
-      <MatchBoardV2NoSSR
+      <MatchLoaderNoSSR
         matchId={matchIdResult.data}
         playerId={currentPlayer.id}
         spritesheetDataByArmy={spritesheetDataByArmy}
@@ -55,11 +56,11 @@ const MatchPage = ({ spritesheetDataByArmy }: Props) => {
   }
 
   return (
-    <MatchLoaderNoSSR
+    <MatchBoardV2NoSSR
       matchId={matchIdResult.data}
       playerId={currentPlayer.id}
       spritesheetDataByArmy={spritesheetDataByArmy}
-    ></MatchLoaderNoSSR>
+    />
   );
 };
 
