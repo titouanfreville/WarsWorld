@@ -1,8 +1,8 @@
 import type { Match, WWMap } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import type { MapWrapper } from "shared/wrappers/map";
-import type { MatchWrapper } from "shared/wrappers/match";
-import type { PlayerInMatch } from "shared/types/server-match-state";
+import type { MapWrapper } from "server/engine/entities/map";
+import type { MatchWrapper } from "server/engine/entities/match";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 
 export const throwIfMatchNotInSetupState = (match: MatchWrapper) => {
   if (match.status !== "setup") {

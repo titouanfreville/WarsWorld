@@ -131,10 +131,48 @@ const eslintConfig = {
       },
     },
     {
-      // src/shared has its own stricter override above. Exclude it here so ESLint's
-      // "last matching override wins per rule" doesn't clobber the shared restrictions.
+      // The game engine now lives in src/server/engine (moved out of src/shared). It stays
+      // Prisma-free and free of frontend/pixi runtime imports so it can run isomorphically. It MAY
+      // import sibling server infra (adapters/core), so — unlike the shared override — server
+      // imports are not banned here.
+      files: ["src/server/engine/**/*.*"],
+      rules: {
+        "@typescript-eslint/no-restricted-imports": [
+          "error",
+          {
+            paths: [
+              {
+                name: "@prisma/client",
+                message:
+                  "The engine is Prisma-free: map rows to engine/types/domain-entities at the adapter boundary.",
+                allowTypeImports: false,
+              },
+            ],
+            patterns: [
+              {
+                group: ["**/frontend/**"],
+                message: "Don't import frontend code into the engine",
+                allowTypeImports: true,
+              },
+              {
+                group: ["**pixi**"],
+                message: "Non-type Pixi.js can't be imported into the engine (SSR has no window)",
+                allowTypeImports: true,
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      // src/shared and src/server/engine have their own stricter overrides above. Exclude them here
+      // so ESLint's "last matching override wins per rule" doesn't clobber those restrictions.
       files: ["src/**/*.*"],
-      excludedFiles: ["src/{components/client-only,pixi}/**/*.*", "src/shared/**/*.*"],
+      excludedFiles: [
+        "src/{components/client-only,pixi}/**/*.*",
+        "src/shared/**/*.*",
+        "src/server/engine/**/*.*",
+      ],
       rules: {
         "@typescript-eslint/no-restricted-imports": [
           "error",

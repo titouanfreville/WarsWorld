@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MovementType } from "shared/match-logic/game-constants/unit-properties";
-import { getBaseMovementCost } from "shared/match-logic/movement-cost";
+import type { MovementType } from "server/engine/constants/unit-properties";
+import { getBaseMovementCost } from "server/engine/rules/movement-cost";
 import type { GameVersion } from "shared/schemas/game-version";
 import type { TileType } from "shared/schemas/tile";
 import type { Weather } from "shared/schemas/weather";

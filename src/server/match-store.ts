@@ -1,16 +1,16 @@
 import type { Match, WWMap } from "@prisma/client";
 import { prisma } from "server/prisma/prisma-client";
-import { MatchWrapper } from "shared/wrappers/match";
+import { MatchWrapper } from "server/engine/entities/match";
 import { logger } from "shared/utils/logger";
 import { pageMatchIndex } from "./page-match-index";
 import { playerMatchIndex } from "./player-match-index";
-import type { ChangeableTile } from "../shared/types/server-match-state";
+import type { ChangeableTile } from "server/core/schemas/tile-state";
 import { willBeChangeableTile } from "../shared/schemas/tile";
 import {
   applyMainEventToMatch,
   applySubEventToMatch,
-} from "../shared/match-logic/events/apply-event-to-match";
-import { UnitWrapper } from "shared/wrappers/unit";
+} from "../server/engine/events/apply-event-to-match";
+import { UnitWrapper } from "server/engine/entities/unit";
 import { finalizeIfGameOver } from "./routers/match/finalize";
 
 const getChangeableTilesFromMap = (map: WWMap): ChangeableTile[] => {

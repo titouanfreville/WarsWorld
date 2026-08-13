@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyMainEventToMatch } from "shared/match-logic/events/apply-event-to-match";
-import { createMatchStartEvent } from "shared/match-logic/events/handlers/match-start";
+import { applyMainEventToMatch } from "server/engine/events/apply-event-to-match";
+import { createMatchStartEvent } from "server/engine/events/handlers/match-start";
 import { createTestMatch, property, tiles } from "../helpers/scenario";
 
 describe("match start", () => {

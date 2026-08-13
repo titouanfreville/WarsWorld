@@ -1,15 +1,15 @@
-import { getCOProperties } from "shared/match-logic/co";
-import { throwIfCantMoveIntoUnit } from "shared/match-logic/events/handlers/move";
-import { getUnloadablePositions } from "shared/match-logic/events/handlers/unload/checkUnloadTiles";
-import type { Facility } from "shared/match-logic/game-constants/unit-properties";
-import { unitPropertiesMap } from "shared/match-logic/game-constants/unit-properties";
-import type { PathNode } from "shared/match-logic/pathfinding";
-import { getAccessibleNodes, getAttackTargetTiles } from "shared/match-logic/pathfinding";
+import { getCOProperties } from "server/engine/rules/co";
+import { throwIfCantMoveIntoUnit } from "server/engine/events/handlers/move";
+import { getUnloadablePositions } from "server/engine/events/handlers/unload/checkUnloadTiles";
+import type { Facility } from "server/engine/constants/unit-properties";
+import { unitPropertiesMap } from "server/engine/constants/unit-properties";
+import type { PathNode } from "server/engine/previews/pathfinding";
+import { getAccessibleNodes, getAttackTargetTiles } from "server/engine/previews/pathfinding";
 import type { Direction, Position } from "shared/schemas/position";
 import { addDirection, allDirections, getDirection, isSamePosition } from "shared/schemas/position";
 import type { UnitType } from "shared/schemas/unit";
-import type { MatchWrapper } from "shared/wrappers/match";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
+import type { MatchWrapper } from "server/engine/entities/match";
+import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
 
 /**
  * Build the turn snapshot for a player: everything the client needs to buffer this turn's simple

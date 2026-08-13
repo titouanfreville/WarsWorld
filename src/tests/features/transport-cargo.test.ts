@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { throwIfCantMoveIntoUnit } from "shared/match-logic/events/handlers/move";
+import { throwIfCantMoveIntoUnit } from "server/engine/events/handlers/move";
 import type { UnitType } from "shared/schemas/unit";
 import { addUnit, createTestMatch, tiles } from "../helpers/scenario";
 

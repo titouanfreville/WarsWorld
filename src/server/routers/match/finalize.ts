@@ -1,4 +1,4 @@
-import type { MatchWrapper } from "shared/wrappers/match";
+import type { MatchWrapper } from "server/engine/entities/match";
 import { deriveGameOver } from "./game-over";
 
 export type FinalizeResult = { winnerTeamIndex: number | null };

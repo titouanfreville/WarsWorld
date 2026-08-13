@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unitPropertiesMap } from "shared/match-logic/game-constants/unit-properties";
+import { unitPropertiesMap } from "server/engine/constants/unit-properties";
 import type { MainAction } from "shared/schemas/action";
 import { createTestMatch, dispatchMainAction, tiles } from "../helpers/scenario";
 

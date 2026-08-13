@@ -4,11 +4,11 @@ import { prisma } from "server/prisma/prisma-client";
 import {
   validateMainActionAndToEvent,
   validateSubActionAndToEvent,
-} from "shared/match-logic/events/action-to-event";
+} from "server/engine/events/action-to-event";
 import {
   applyMainEventToMatch,
   applySubEventToMatch,
-} from "shared/match-logic/events/apply-event-to-match";
+} from "server/engine/events/apply-event-to-match";
 import { mainActionSchema } from "shared/schemas/action";
 import { getFinalPositionSafe } from "shared/schemas/position";
 import { logger } from "shared/utils/logger";
@@ -18,11 +18,11 @@ import type {
   MainEventsWithoutSubEvents,
   MainEventWithSubEvents,
   SubEvent,
-} from "shared/types/events";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
-import { mainEventToEmittables } from "../../shared/match-logic/events/event-to-emittable";
-import { updateMoveVision } from "../../shared/match-logic/events/handlers/move";
-import { fillDiscoveredUnitsAndProperties } from "../../shared/match-logic/events/vision-update";
+} from "server/engine/types/events";
+import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
+import { mainEventToEmittables } from "../../server/engine/events/event-to-emittable";
+import { updateMoveVision } from "../../server/engine/events/handlers/move";
+import { fillDiscoveredUnitsAndProperties } from "../../server/engine/events/vision-update";
 import { matchBaseProcedure, playerInMatchBaseProcedure, router } from "../trpc/trpc-setup";
 import { finalizeIfGameOver } from "./match/finalize";
 

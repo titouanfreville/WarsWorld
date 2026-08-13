@@ -3,14 +3,31 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { armySchema } from "shared/schemas/army";
 import { coSchema } from "shared/schemas/co";
-import type { FrontendMatch } from "shared/types/component-data";
-import type { PlayerInMatch } from "shared/types/server-match-state";
+import type { MatchStatus, WWMap } from "server/engine/types/domain-entities";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 import MatchStatusBadge from "../lobby/MatchStatusBadge";
 import type { MatchActionVariant } from "../lobby/match-status";
 import { STATUS_META, deriveLobbyStatus, matchAction, openSlots } from "../lobby/match-status";
 import MatchCardSetup from "./MatchCardSetup";
 import MatchCardTop from "./MatchCardTop";
 import MatchPlayer from "./MatchPlayer";
+
+/**
+ * FE-owned mirror of the match-list contract. Lived in `shared/types/component-data` until the
+ * engine moved to `src/server/engine`; it is presentation shape, not engine vocabulary, so it
+ * belongs to its only consumer rather than following the engine.
+ */
+export type MapBasic = Pick<WWMap, "id" | "name" | "numberOfPlayers">;
+
+export type FrontendMatch = {
+  id: string;
+  map: MapBasic;
+  players: PlayerInMatch[];
+  state: MatchStatus;
+  turn: number;
+  /** Derived match end (status isn't persisted as "finished" yet) — lets the list mark Completed. */
+  finished?: boolean;
+};
 
 type matchData = {
   match: FrontendMatch;

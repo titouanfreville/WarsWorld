@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { deriveGameOver } from "server/routers/match/game-over";
 import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
-import { getBattleForecast } from "shared/match-logic/combat-forecast";
+import { getBattleForecast } from "server/engine/previews/combat-forecast";
 import {
   getAccessibleNodes,
   getAttackableTiles,
   getAttackTargetTiles,
-} from "shared/match-logic/pathfinding";
+} from "server/engine/previews/pathfinding";
 import type { Position } from "shared/schemas/position";
 import { isSamePosition } from "shared/schemas/position";
 import {

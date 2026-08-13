@@ -1,9 +1,9 @@
 import type { WWMap } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { attackActionToEvent } from "shared/match-logic/events/handlers/attack/attackActionToEvent";
-import type { PlayerInMatch } from "shared/types/server-match-state";
-import { MatchWrapper } from "shared/wrappers/match";
-import { UnitWrapper } from "shared/wrappers/unit";
+import { attackActionToEvent } from "server/engine/events/handlers/attack/attackActionToEvent";
+import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
+import { MatchWrapper } from "server/engine/entities/match";
+import { UnitWrapper } from "server/engine/entities/unit";
 
 /**
  * Characterization test: pins the CURRENT behavior of an attack engagement so the upcoming

@@ -1,5 +1,5 @@
-import type { MatchWrapper } from "shared/wrappers/match";
-import type { TeamWrapper } from "shared/wrappers/team";
+import type { MatchWrapper } from "server/engine/entities/match";
+import type { TeamWrapper } from "server/engine/entities/team";
 
 /**
  * Derives the match outcome from the engine's elimination status. A team is out once none of its
