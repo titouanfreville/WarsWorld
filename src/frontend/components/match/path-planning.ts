@@ -1,6 +1,6 @@
 import type { BoardPosition } from "./match-view";
-import { samePosition } from "./match-view";
-import type { SnapshotUnit } from "./turn-snapshot-view";
+import { posKey, samePosition } from "./match-view";
+import { reconstructPath, type SnapshotUnit } from "./turn-snapshot-view";
 
 /**
  * AW-style cursor path routing, driven purely by the turn snapshot (no engine). As the cursor moves
@@ -11,8 +11,6 @@ import type { SnapshotUnit } from "./turn-snapshot-view";
 
 type ReachInfo = { parent: BoardPosition | null; cost: number };
 
-const key = (p: BoardPosition) => `${p[0]},${p[1]}`;
-
 const areNeighbours = (a: BoardPosition, b: BoardPosition): boolean =>
   Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
 
@@ -20,7 +18,7 @@ const reachableMap = (unit: SnapshotUnit): Map<string, ReachInfo> => {
   const map = new Map<string, ReachInfo>();
 
   for (const tile of unit.reachableTiles) {
-    map.set(key(tile.position), { parent: tile.parent, cost: tile.cost });
+    map.set(posKey(tile.position), { parent: tile.parent, cost: tile.cost });
   }
 
   return map;
@@ -31,26 +29,10 @@ const pathDistance = (reachable: Map<string, ReachInfo>, path: BoardPosition[]):
   let dist = 0;
 
   for (let i = 1; i < path.length; i++) {
-    dist += reachable.get(key(path[i]))?.cost ?? 0;
+    dist += reachable.get(posKey(path[i]))?.cost ?? 0;
   }
 
   return dist;
-};
-
-/** Shortest path to `dest`, reconstructed by walking the snapshot's parent pointers. */
-const shortestPath = (reachable: Map<string, ReachInfo>, dest: BoardPosition): BoardPosition[] => {
-  const out: BoardPosition[] = [];
-  const seen = new Set<string>();
-  let current: BoardPosition | undefined = dest;
-
-  while (current !== undefined && !seen.has(key(current))) {
-    seen.add(key(current));
-    out.push(current);
-    const info = reachable.get(key(current));
-    current = info?.parent ?? undefined;
-  }
-
-  return out.reverse();
 };
 
 export const updateTracedPath = (
@@ -61,7 +43,7 @@ export const updateTracedPath = (
   const reachable = reachableMap(unit);
 
   // Can only route onto reachable tiles (the origin is always in the reachable set).
-  if (reachable.get(key(newPos)) === undefined) {
+  if (reachable.get(posKey(newPos)) === undefined) {
     return path;
   }
 
@@ -75,7 +57,7 @@ export const updateTracedPath = (
 
     // Extend: an affordable neighbour of the current end just appends onto the trace.
     const end = path[path.length - 1];
-    const info = reachable.get(key(newPos));
+    const info = reachable.get(posKey(newPos));
 
     if (
       info !== undefined &&
@@ -86,8 +68,9 @@ export const updateTracedPath = (
     }
   }
 
-  // Cursor jumped (or the trace can't reach): recompute the shortest path to it.
-  const rebuilt = shortestPath(reachable, newPos);
+  // Cursor jumped (or the trace can't reach): fall back to the snapshot's shortest path to it —
+  // the same parent-walk reused from turn-snapshot-view (single source of truth).
+  const rebuilt = reconstructPath(unit, newPos);
 
-  return rebuilt.length === 0 ? path : rebuilt;
+  return rebuilt === null || rebuilt.length === 0 ? path : rebuilt;
 };

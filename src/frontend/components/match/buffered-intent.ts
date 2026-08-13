@@ -1,6 +1,6 @@
 import type { QueuedAction } from "frontend/utils/action-queue";
 import type { BoardPosition } from "./match-view";
-import { samePosition } from "./match-view";
+import { samePosition, toMutablePath } from "./match-view";
 
 /**
  * On-board visualisation of the optimistic action buffer (see `src/frontend/CLAUDE.md`). Pure
@@ -13,9 +13,6 @@ import { samePosition } from "./match-view";
 /** A buffered move's path, tagged by kind so the arrow can be coloured (attack red, capture green…). */
 export type IntentArrow = { path: BoardPosition[]; kind: QueuedAction["kind"] };
 
-const toPath = (path: readonly (readonly [number, number])[]): BoardPosition[] =>
-  path.map((position) => [position[0], position[1]]);
-
 /** One arrow per buffered move-like action that actually travels (its start and end tiles differ). */
 export const intentArrows = (actions: QueuedAction[]): IntentArrow[] => {
   const arrows: IntentArrow[] = [];
@@ -25,7 +22,7 @@ export const intentArrows = (actions: QueuedAction[]): IntentArrow[] => {
       continue;
     }
 
-    const path = toPath(action.path);
+    const path = toMutablePath(action.path);
 
     // An in-place action (capture/ability while standing still) doesn't travel — no arrow.
     if (!samePosition(path[0], path[path.length - 1])) {

@@ -23,6 +23,24 @@ export type BoardPosition = readonly [number, number];
 export const samePosition = (a: BoardPosition, b: BoardPosition): boolean =>
   a[0] === b[0] && a[1] === b[1];
 
+/** The four cardinal directions a unit can drop cargo / face, matching the wire `Direction` enum. */
+export type BoardDirection = "up" | "down" | "left" | "right";
+
+/** Direction -> `[dx, dy]` offset — the one FE-side table, shared by every direction lookup. */
+export const DIRECTION_OFFSET: Record<BoardDirection, BoardPosition> = {
+  up: [0, -1],
+  down: [0, 1],
+  left: [-1, 0],
+  right: [1, 0],
+};
+
+/** Stable string key for a position (`"x,y"`) — for Map/Set lookups over the board. */
+export const posKey = (p: BoardPosition): string => `${p[0]},${p[1]}`;
+
+/** Copy a readonly path into plain mutable `[number, number]` tuples, for wire/mutation call sites. */
+export const toMutablePath = (path: readonly (readonly [number, number])[]): [number, number][] =>
+  path.map((p) => [p[0], p[1]]);
+
 /**
  * The tile shown at a position — a changeable tile (owned property, silo, pipe seam) wins over the
  * static map tile, mirroring the engine's `getTile`.

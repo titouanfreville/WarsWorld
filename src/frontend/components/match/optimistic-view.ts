@@ -1,6 +1,6 @@
 import type { QueuedAction } from "frontend/utils/action-queue";
 import type { BoardPosition, MatchUnit, MatchView } from "./match-view";
-import { samePosition } from "./match-view";
+import { DIRECTION_OFFSET, samePosition } from "./match-view";
 import type { TurnSnapshot } from "./turn-snapshot-view";
 
 /**
@@ -23,14 +23,6 @@ type PriceTable = TurnSnapshot["production"]["priceTable"];
 
 const costOf = (priceTable: PriceTable, unitType: string): number =>
   priceTable.find((entry) => entry.type === unitType)?.cost ?? 0;
-
-// Local direction→offset (a trivial util duplicated rather than imported from the engine).
-const DIRECTION_OFFSET: Record<string, [number, number]> = {
-  up: [0, -1],
-  down: [0, 1],
-  left: [-1, 0],
-  right: [1, 0],
-};
 
 /** A transport's cargo as read from the plain view data (loadedUnit lives on transport variants). */
 type WithCargo = {
@@ -103,6 +95,11 @@ export const applyBufferedActions = (
       continue; // passTurn and standalone attack/ability don't buffer as presentation deltas
     }
 
+    // A malformed/empty path would make `from`/`to` undefined and crash samePosition/slideUnit below.
+    if (action.path.length === 0) {
+      continue;
+    }
+
     const from = action.path[0];
     const to = action.path[action.path.length - 1];
 
@@ -136,9 +133,17 @@ export const applyBufferedActions = (
     // from the board — it's now cargo / merged, exactly what authoritative state will show. Don't
     // stack two sprites on one tile. If the BE rejects the load, the buffer rolls back and it
     // reappears at its origin, so nothing is ever really lost.
+    // Only an OWN unit already on `to` is a load/join — an enemy-occupied tile must never make us
+    // silently absorb (delete) the moved unit. The board's movableTiles filter should keep us off
+    // enemy tiles anyway, but this reducer must not depend on a guarantee enforced elsewhere.
     const isLoadOrJoin =
       !samePosition(from, to) &&
-      units.some((unit) => samePosition(unit.position, to) && !samePosition(unit.position, from));
+      units.some(
+        (unit) =>
+          samePosition(unit.position, to) &&
+          !samePosition(unit.position, from) &&
+          unit.playerSlot === me.slot,
+      );
 
     if (isLoadOrJoin) {
       const moved = units.find((unit) => samePosition(unit.position, from));

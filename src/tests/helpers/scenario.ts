@@ -23,7 +23,7 @@ import type {
 import type { ChangeableTile, PlayerInMatch } from "shared/types/server-match-state";
 import type { UnitType, UnitWithVisibleStats } from "shared/schemas/unit";
 import { MatchWrapper } from "shared/wrappers/match";
-import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
+import type { DistributiveOmit, PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
 import { UnitWrapper } from "shared/wrappers/unit";
 
 /**
@@ -94,7 +94,7 @@ export function makeUnit(
   type: UnitType,
   position: Position,
   overrides: Partial<UnitWithVisibleStats> = {},
-): Omit<UnitWithVisibleStats, "playerSlot"> {
+): DistributiveOmit<UnitWithVisibleStats, "playerSlot"> {
   const stats = AMMO_UNITS.has(type) ? { fuel: 50, hp: 100, ammo: 5 } : { fuel: 50, hp: 100 };
   const unit: Record<string, unknown> = { type, position, isReady: true, stats };
 
@@ -110,7 +110,7 @@ export function makeUnit(
     unit.loadedUnit2 = null;
   }
 
-  return { ...unit, ...overrides } as Omit<UnitWithVisibleStats, "playerSlot">;
+  return { ...unit, ...overrides } as DistributiveOmit<UnitWithVisibleStats, "playerSlot">;
 }
 
 /** Add a unit of the given type to a player and return its wrapper. */

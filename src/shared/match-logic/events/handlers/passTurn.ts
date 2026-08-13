@@ -110,6 +110,19 @@ export const applyPassTurnEvent: ApplyEvent<PassTurnEvent> = (match, event) => {
 
     unwaitUnits(lastTurnPlayer);
 
+    // A player who ENDS their turn with no units — having produced at least one earlier — is
+    // eliminated. Losing your last unit isn't an instant loss (you may self-destruct to deny a power
+    // charge and rebuild the same turn); the check happens at the turn boundary and only once you've
+    // built a unit. Set status here in the apply step so it survives replay, like combat/crash
+    // elimination. (Fuel-out crashes are handled below via `eliminationReason`.)
+    if (
+      lastTurnPlayer.data.hasBuiltUnit === true &&
+      lastTurnPlayer.data.status === "alive" &&
+      lastTurnPlayer.getUnits().length === 0
+    ) {
+      lastTurnPlayer.data.status = "routed";
+    }
+
     lastTurnPlayer.data.hasCurrentTurn = false;
 
     const nextTurnPlayer = lastTurnPlayer.getNextAlivePlayer();

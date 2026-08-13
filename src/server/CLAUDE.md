@@ -6,37 +6,43 @@ backend is server-authoritative and owns all rules, knowledge, and state. Read t
 
 ## Layers
 
-Feature-sliced, with one narrow shared domain — the game engine.
+Feature-sliced, with a small **shared kernel** (`core`) for common game vocabulary. The game engine
+is one feature — the rich one — not a blessed shared `domain/`.
 
 ```
-src/server/<feature>  FEATURE   router + schemas + logic per feature: auth, articles, players,
-                                ranking, maps, matches. Thin vertical slices.
-src/server/domain     DOMAIN    THE GAME ENGINE only: gameplay rules, match state, event sourcing,
-                                game-presentation vocabulary. Framework-free, Prisma-free.
+src/server/core       KERNEL    game vocabulary (position, tile, unit, army, co, action, …) +
+                                cross-domain utils. Framework-free, Prisma-free. Imports nothing.
+src/server/engine     FEATURE   THE GAME ENGINE: entities, rules, constants, event sourcing, and
+                                preview/snapshot usecases. Rich, Prisma-free. Owns all game logic.
+src/server/<feature>  FEATURE   router + schemas + usecase per feature: auth, articles, players,
+                                ranking, maps. Thin vertical slices; import `core`, never `engine`.
 src/server/trpc       TRANSPORT procedures, middleware (auth/player/match), context
 src/server/adapters   INFRA     Prisma access + row↔domain mappers, WS emitter, live-match store
 src/server/prisma     INFRA     Prisma client
 ```
 
-**Engine scope is strict.** `domain` holds only what is directly about the game and how it's
+**Engine scope is strict.** `engine` holds only what is directly about the game and how it's
 presented to the user. Accounts, articles, preferences, ranking, and **map management** are
-features, not engine. (The `maps` feature owns the `WWMap` entity + CRUD and _depends on_ the
-engine's tile/terrain vocabulary; the vocabulary itself stays in `domain`.)
+features, not engine. (The `maps` feature owns the `WWMap` entity + CRUD and imports the
+tile/terrain _vocabulary_ from `core` — not from `engine`.) Keep the engine **whole**: split it into
+internal modules (`entities/`, `rules/`, `constants/`, `events/`, `previews/`) rather than into
+sibling features that would import one another.
 
-**Feature modules** are thin: a router, its `zod` schemas, and its logic. Only the game has a rich
-domain (the engine). A feature may depend on `domain` (e.g. `maps`, `matches`) and on `adapters`,
-but **features never import each other** — cross-feature needs go through a narrow interface.
+**Feature modules** are thin: a router, its `zod` schemas, and its usecase. Only the game engine is
+rich. Every feature may import `core` and `adapters`, but **features never import each other**, and
+**only `engine` owns game logic** — cross-feature needs go through a narrow usecase interface.
 
 > Today the engine + every feature's schema still live in `src/shared`, and engine entities import
-> `@prisma/client`. Target: engine → `src/server/domain` (Prisma-free), each feature's schema →
-> `src/server/<feature>`. New/edited code follows the target, not the current coupling. See the
-> root migration map.
+> `@prisma/client`. Target: engine logic → `src/server/engine` (Prisma-free), game vocabulary →
+> `src/server/core`, each feature's own schema → `src/server/<feature>`. New/edited code follows the
+> target, not the current coupling. See the root migration map.
 
 ## Module anatomy (mirrors our Python backend)
 
 Every module under `src/server/<module>/` is a vertical slice with a **Usecase as its entry point**
 — the same shape as our Python services (`<domain>/<domain>.py` + optional `dbo.py`/validators).
-The **game engine is one such domain module** (the richest one); features are leaner modules.
+The **`engine` feature is one such module** (the richest one); the other features are leaner
+modules, and `core` is a plain kernel (schemas + utils, no usecase).
 
 ```
 src/server/<module>/
@@ -65,25 +71,28 @@ Rules (ported from the Python/Go skeletons):
   `match` — ride on the tRPC `ctx`; that's the sanctioned channel, not a service locator.)
 - **`dbo.ts` owns Prisma complexity; the usecase owns the flow.** No multi-step query building
   interleaved with business logic in a usecase method.
-- **Features never import each other** — only `domain` (the engine) and `adapters`, plus other
-  features through their usecase interface.
+- **Features never import each other** — only `core` (the kernel) and `adapters`. `engine` is the
+  one feature that owns game logic; other features reach engine results through transport, not by
+  importing `engine`.
 
-### The game engine as a domain module
+### The game engine feature
 
 - It is **pure**: gameplay rules + state + event sourcing, Prisma-free, no `dbo` (it does no I/O).
   Its usecase is the engine's public API (apply an action → events, compute available actions /
   previews, derive state).
-- **Persistence of engine output lives in the `matches` module's `dbo`** (load/append the `Event`
-  log, hydrate state), not in the engine. The engine computes; the feature persists.
-- The engine usually has **no router of its own** — it's consumed by the `matches` (and `maps`)
-  usecases. Expose engine results to the client through those features' routers.
+- **Persistence of engine output lives in the engine feature's own `dbo`/adapter seam** (load/append
+  the `Event` log, hydrate state) — kept apart from the pure rule modules. The rules compute; the
+  seam persists.
+- The engine **owns its own router** (the transport binding for match play). It imports `core` for
+  vocabulary; other features do **not** import `engine`.
 
 **Dependency direction (load-bearing):**
 
-- **Domain imports nothing outward** — no `src/server/routers`, no `src/pages/frontend/pixi`, no
-  `@prisma/client`, no framework. It defines the entity types it needs; adapters map persistence to
-  them.
-- Inner layers never import outer ones. Transport may import domain + infra; domain imports neither.
+- **`core` imports nothing outward**, and the **`engine` feature imports only `core` + `adapters`** —
+  no `src/server/routers`, no `src/pages/frontend/pixi`, no `@prisma/client`, no framework. The
+  engine defines the entity types it needs; adapters map persistence to them.
+- Inner layers never import outer ones. Transport may import `core`/`engine` + infra; `core` imports
+  neither.
 - **No cross-handler imports.** Action handlers (attack, move, build, capture, coPower, unload, …)
   must not import one another. Shared behaviour goes through common domain helpers.
 
@@ -155,10 +164,16 @@ Match state is **derived from an ordered event log**, never mutated directly.
 
 ## Logging
 
-- Log around I/O and meaningful domain transitions: identify the operation + key ids, log success
-  on the happy path, **warn** on expected failures (validation, not-found, illegal action),
-  **error** on unexpected ones (DB down, unhandled). Don't log secrets or full request bodies; no
-  stray `console.log` in committed code.
+- **Use the shared logger, never `console.*`.** Import `logger` (or `createLogger("prefix")`) from
+  `shared/utils/logger` — it's level-gated and isomorphic (the engine runs on the FE too). No stray
+  `console.log` in committed code.
+- **Pick the level by intent:** `debug` for per-action/per-move hot-path traces (silent in prod),
+  `info` for lifecycle transitions (boot, rebuild, shutdown), **`warn`** for expected failures
+  (validation, not-found, illegal action), **`error`** for unexpected ones (DB down, unhandled).
+- **Configurable via env:** `LOG_LEVEL` (server/engine) and `NEXT_PUBLIC_LOG_LEVEL` (browser).
+  Default is `warn` in production, `debug` otherwise, so prod views stay quiet unless opted in.
+- Log around I/O and meaningful domain transitions: identify the operation + key ids. Don't log
+  secrets or full request bodies.
 
 ## Adding a feature (the standard flow)
 

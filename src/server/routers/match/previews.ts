@@ -9,7 +9,7 @@ import { unitTypeSchema } from "shared/schemas/unit";
 import { buildTurnSnapshot } from "./turn-snapshot";
 import type { MatchWrapper } from "shared/wrappers/match";
 import type { PlayerInMatchWrapper } from "shared/wrappers/player-in-match";
-import { positionSchema } from "shared/schemas/position";
+import { positionSchema, isSamePosition } from "shared/schemas/position";
 import type { Position } from "shared/schemas/position";
 import { z } from "zod";
 
@@ -19,10 +19,10 @@ import { z } from "zod";
  * merely renders them (it must not run the engine). Each is turn- and ownership-gated by
  * `playerInMatchBaseProcedure`.
  *
- * TODO(fog): these still compute over full match state. `matchRouter.full` now fog-filters its
- * units and exposes `visibleTiles`, so previews are the remaining leak: they must be derived from
- * the requesting player's visible state, otherwise a reachable set that stops short of a hidden
- * unit reveals its position.
+ * TODO(fog): reachability still computes over full match state. `matchRouter.full` already
+ * fog-filters its units and exposes `visibleTiles`, and `combatForecast` below is gated on
+ * fog-aware targeting — so the remaining leak is `reachableTiles`/`turnSnapshot`, where a reachable
+ * set that stops short of a hidden unit reveals its position.
  */
 
 const getOwnedUnitOrThrow = (
@@ -111,6 +111,16 @@ export const matchPreviewRouter = router({
     )
     .query(({ ctx: { match, player }, input }) => {
       const attacker = getOwnedUnitOrThrow(match, player, input.attackerPosition);
+
+      // Only forecast against a target the attacker can actually, VISIBLY attack from `toPosition`.
+      // getAttackTargetTiles is fog-aware (hidden/dived enemies aren't offered), so gating on it both
+      // rejects illegal/stale targets with a typed error instead of a raw 500, AND closes the fog
+      // probe leak — a concealed enemy can't be forecast because it is never a valid target here.
+      const targets = getAttackTargetTiles(match, attacker, input.toPosition);
+
+      if (!targets.some((target) => isSamePosition(target, input.targetPosition))) {
+        throw new DispatchableError("That target can't be attacked from that position");
+      }
 
       return getBattleForecast(match, attacker, input.toPosition, input.targetPosition);
     }),

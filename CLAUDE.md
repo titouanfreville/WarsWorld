@@ -34,40 +34,47 @@ differs, the rule wins and code gets adapted to match. Scoped rules live next to
    The only contract across the boundary is the **tRPC API surface**: the client gets its types by
    **tRPC type inference** from the server routers and the WS subscription outputs — never by
    importing backend/domain code.
-4. **Engine is Prisma-free domain.** The game engine defines and owns its own entity types.
-   Prisma rows are mapped to/from domain entities at the **adapter boundary** — `@prisma/client`
-   must not appear in domain code.
+4. **Engine is a Prisma-free feature.** The game engine defines and owns its own entity types.
+   Prisma rows are mapped to/from engine entities at the **adapter boundary** — `@prisma/client`
+   must not appear in engine code.
 5. **Turn-based, queue-resilient client.** It's a turn-per-turn game, so round-trips for validation
    are acceptable. The FE keeps an **action queue** so a move survives a lost/flaky connection:
    queue locally, submit, reconcile with the BE's authoritative result (see `src/frontend/CLAUDE.md`).
 
 ## Target layering & dependency direction
 
-Feature-sliced backend with one narrow shared domain — **the game engine**. Most features are thin
-vertical slices; only the game has a rich domain.
+Feature-sliced backend. Every feature is a vertical slice under `src/server/<feature>`; the game
+engine is **the one rich feature** (`engine`), the rest are thin. A single **shared kernel**
+(`core`) holds the game _vocabulary_ and cross-domain utils that features have in common — this is
+the only thing features share, and it replaces the old "one blessed `domain/`" idea.
 
 ```
 PRESENTATION   src/pages · src/frontend · src/pixi · src/components
       │ tRPC hooks / WS subscription — types inferred from the API. No engine/server imports.
       ▼
 BACKEND   src/server/
-   ├─ <feature>/   per-feature module = router + schemas + logic for that feature:
-   │               auth · articles · players · ranking · maps · matches
-   │               (depends on `domain` only for game stuff, and on `adapters`)
-   ├─ domain/      THE GAME ENGINE, and nothing else: gameplay rules, match state,
-   │               event sourcing, and the game-presentation vocabulary.
-   │               Framework-free. Prisma-free. Imports nothing outward.
+   ├─ core/        SHARED KERNEL — game vocabulary (position, tile, unit, army, co, action,
+   │               player-slot, match-rules …) + cross-domain utils. Framework-free, Prisma-free.
+   │               Any feature may import it; it imports nothing outward.
+   ├─ engine/      THE GAME FEATURE (rich): entities, rules, constants, event sourcing, and the
+   │               preview/snapshot usecases. Prisma-free. The ONLY feature that owns game logic.
+   ├─ <feature>/   auth · articles · players · ranking · maps — thin slices: router + schemas +
+   │               usecase. Import `core` (and `adapters`); never `engine`, never each other.
    ├─ adapters/    Prisma access + row↔domain mappers, WS emitter, live-match store
    └─ trpc/        procedures, middleware, context
 ```
 
-Inner layers never import outer ones. `domain` imports neither features, transport, infra, nor any
-framework. A feature module may depend on `domain` (e.g. `maps`, `matches`) but features never
-import each other — cross-feature needs go through a narrow interface, not a direct import.
+Inner layers never import outer ones. `core` imports nothing outward; the `engine` feature imports
+`core` (and `adapters`) but no transport or framework. **Features never import each other** — they
+share through `core`, and **only the `engine` feature owns game logic** (so e.g. `maps` gets its
+tiles from `core`, not from `engine`). Cross-feature needs go through a narrow usecase interface,
+not a direct import.
 
-**Engine scope (strict):** the engine contains only things directly about the game itself and how
-the game is presented to the user. Accounts, articles, preferences, ranking, and map _management_
-are **not** the engine — they are their own features.
+**Engine scope (strict):** the `engine` feature contains only things directly about the game itself
+and how it's presented to the user. Accounts, articles, preferences, ranking, and map _management_
+are **not** the engine — they are their own features. Keep the engine **whole**: split it into
+internal modules (`entities/`, `rules/`, `constants/`, `events/`, `previews/`) to keep files small,
+rather than fragmenting it into sibling features that would have to import one another.
 
 ## `src/shared` is deprecated — migration map
 
@@ -76,15 +83,21 @@ fuses the game engine with several unrelated features and Prisma-coupled, FE-con
 the source of the FE↔BE coupling we are removing. Redistribute its contents to the **rightful
 owner** — it is not all "engine".
 
-**→ Game engine** (`src/server/domain`, Prisma-free; FE consumes its output as data, never imports it):
+**→ Game engine feature** (`src/server/engine`, Prisma-free; FE consumes its output as data, never imports it):
+| Today in `src/shared/…` | Target inside `engine/` |
+|---|---|
+| `match-logic/` (damage, movement, weather, CO, hooks) | `engine/rules/` |
+| `match-logic/{pathfinding,combat-forecast}` + turn-snapshot/previews | `engine/previews/` (usecases) + `engine/rules/` |
+| `match-logic/events/` + `handlers/` (action→event→apply, available-actions) | `engine/events/` |
+| `match-logic/game-constants/` (unit/terrain/CO tables, funds) | `engine/constants/` |
+| `wrappers/{match,unit,player-in-match,team,vision}` | `engine/entities/`, **decoupled from Prisma** |
+| `types/{events,server-match-state,component-data}` | `engine/` (engine + game-presentation types) |
+
+**→ Shared kernel** (`src/server/core` — game vocabulary + cross-domain utils any feature may import):
 | Today in `src/shared/…` | Notes |
 |---|---|
-| `match-logic/` (damage, movement, weather, CO, hooks) | engine rules |
-| `match-logic/events/` + `handlers/` (action→event→apply, available-actions) | event sourcing |
-| `match-logic/game-constants/` (unit/terrain/CO tables) | engine knowledge |
-| `wrappers/{match,unit,player-in-match,team,vision}` | engine entities, **decoupled from Prisma** |
-| `types/{events,server-match-state,component-data}` | engine + game-presentation types |
 | `schemas/{action,army,co,game-version,match-rules,player-slot,position,tile,unit,unit-traits,variable-tiles,weather,spritesheet-data}` | gameplay + game-presentation vocabulary |
+| `math-utils.ts` (position math) | cross-domain util (import from `core`, don't re-duplicate) |
 
 **→ Feature modules** (`src/server/<feature>` — NOT the engine):
 | Today in `src/shared/…` | Target feature |
@@ -95,14 +108,14 @@ owner** — it is not all "engine".
 | `schemas/map.ts`, `wrappers/map.ts` | `maps` — **map management** (WWMap entity + create/list/edit) |
 
 > **Maps split:** tile/terrain/predeployed-unit _vocabulary_ (`schemas/tile`, `variable-tiles`)
-> stays in the engine — it's the game's language. The `maps` feature owns the `WWMap` entity and
-> CRUD, and **depends on** the engine vocabulary.
+> lives in `core` — it's the game's shared language. The `maps` feature owns the `WWMap` entity and
+> CRUD, and **imports that vocabulary from `core`** (not from `engine`).
 
 **→ Frontend** (`src/frontend` / `src/pixi`): presentation-only rendering code, and FE-owned form
 schemas (login/signup/article forms re-declare or infer their schema; the BE re-validates anyway).
 
-**→ Utilities:** `DispatchedError.ts` → engine (typed domain error); `math-utils.ts` → its user
-(duplicate a trivial util rather than re-share); `rph.txt` → delete (stray note).
+**→ Utilities:** `DispatchedError.ts` → `engine` (typed domain error); `math-utils.ts` → `core`
+(cross-domain util; import it, don't re-duplicate); `rph.txt` → delete (stray note).
 
 Do **not** add a `CLAUDE.md` inside `src/shared` or grow it — it is being dissolved, not blessed.
 

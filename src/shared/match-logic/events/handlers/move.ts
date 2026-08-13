@@ -1,9 +1,9 @@
 import { DispatchableError } from "shared/DispatchedError";
-import { logger } from "shared/utils/logger";
 import { unitPropertiesMap } from "shared/match-logic/game-constants/unit-properties";
 import type { MoveAction } from "shared/schemas/action";
 import { getFinalPositionSafe, isSamePosition } from "shared/schemas/position";
 import type { UnitWithVisibleStats } from "shared/schemas/unit";
+import { logger } from "shared/utils/logger";
 import type { MoveEventWithoutSubEvent, MoveEventWithSubEvent } from "shared/types/events";
 import type { MatchWrapper } from "shared/wrappers/match";
 import type { UnitWrapper } from "../../../wrappers/unit";
@@ -264,6 +264,13 @@ export const applyMoveEvent = (match: MatchWrapper, event: MoveEventWithoutSubEv
   const unit = match.getUnit(event.path[0]);
 
   if (unit === undefined) {
+    // Expected only for stale events during replay. If it fires on the LIVE apply path it signals a
+    // real desync — so warn loudly rather than swallowing it silently, so the bug is discoverable.
+    logger.warn(
+      `[applyMoveEvent] no unit at ${JSON.stringify(event.path[0])} — skipping move event ` +
+        `(normal for stale events during rebuild; investigate if seen during live play)`,
+    );
+
     return;
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MainAction } from "shared/schemas/action";
-import { addUnit, createTestMatch, dispatchMainAction, tiles } from "../helpers/scenario";
+import { createTestMatch, dispatchMainAction, tiles } from "../helpers/scenario";
 
 const LOAD: MainAction = {
   type: "move",
@@ -18,7 +18,13 @@ describe("transport (load/unload) feature", () => {
       players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
     });
     const p0 = match.getPlayerBySlot(0)!;
-    const apc = addUnit(p0, "apc", [1, 0], { stats: { fuel: 60, hp: 100 } });
+    const apc = p0.addUnwrappedUnit({
+      type: "apc",
+      isReady: true,
+      position: [1, 0],
+      stats: { fuel: 60, hp: 100 },
+      loadedUnit: null,
+    });
     p0.addUnwrappedUnit({
       type: "infantry",
       isReady: true,
@@ -39,7 +45,13 @@ describe("transport (load/unload) feature", () => {
       players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
     });
     const p0 = match.getPlayerBySlot(0)!;
-    const apc = addUnit(p0, "apc", [1, 0], { stats: { fuel: 60, hp: 100 } });
+    const apc = p0.addUnwrappedUnit({
+      type: "apc",
+      isReady: true,
+      position: [1, 0],
+      stats: { fuel: 60, hp: 100 },
+      loadedUnit: null,
+    });
     p0.addUnwrappedUnit({
       type: "infantry",
       isReady: true,

@@ -78,13 +78,13 @@ export class MapsUsecase {
   async createMap(input: CreatableMap) {
     const numberOfPlayers = getPlayerAmountOfMap(input);
 
-    if (numberOfPlayers > 2) {
+    if (numberOfPlayers < 2) {
       throw new Error("Map must be playable by at least 2 players");
     }
 
     const tiles = input.tiles;
 
-    if (tiles.every((row) => row.length === tiles[0].length)) {
+    if (!tiles.every((row) => row.length === tiles[0].length)) {
       throw new Error("All rows of the map must have the same length");
     }
 

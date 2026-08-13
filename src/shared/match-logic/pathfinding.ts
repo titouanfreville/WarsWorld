@@ -40,8 +40,20 @@ export const getAccessibleNodes = (
 
   const accessibleTiles = new Map<Position, PathNode>(); //return variable
 
+  const movementPoints = unit.getMovementPoints();
+
+  // A unit with no movement (0 fuel, or a CO/weather hook zeroing movement) can only "reach" its own
+  // tile. Guard here: `Array.from({length: 0})` yields an empty queue array and the `queues[0].push`
+  // below would throw — and buildTurnSnapshot calls this per ready unit, so one stranded unit would
+  // crash the whole turn snapshot.
+  if (movementPoints <= 0) {
+    accessibleTiles.set(unit.data.position, { pos: unit.data.position, dist: 0, parent: null });
+
+    return accessibleTiles;
+  }
+
   //queues[a] has current queued nodes with distance a from origin (technically a "stack", not a queue, but the result doesn't change)
-  const queues: PathNode[][] = Array.from({ length: unit.getMovementPoints() }, () => []);
+  const queues: PathNode[][] = Array.from({ length: movementPoints }, () => []);
   queues[0].push({ pos: unit.data.position, dist: 0, parent: null }); //queues[0] has the origin node, initially
 
   const visited = makeVisitedMatrix(match.map);
@@ -83,13 +95,16 @@ export const getAccessibleNodes = (
 
       const movementCost = unit.getMovementCost(pos);
 
-      if (movementCost === null) {
+      // Skip if the unit can't enter (null). Also skip a non-positive cost: entering a tile always
+      // costs >= 1 in AW, and a 0 cost would compute `nodeDist - 1 = -1` below → `queues[-1].push` →
+      // crash. Guarding here keeps a bad terrain/weather/CO cost from taking down the snapshot.
+      if (movementCost === null || movementCost <= 0) {
         continue;
-      } //skip if unit can't move there
+      }
 
       const nodeDist = currNode.dist + movementCost;
 
-      if (nodeDist <= unit.getMovementPoints()) {
+      if (nodeDist <= movementPoints) {
         queues[nodeDist - 1].push({
           pos: pos,
           dist: nodeDist,
