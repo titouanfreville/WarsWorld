@@ -1,4 +1,4 @@
-import { baseTileSize, mapBorder } from "components/client-only/MatchRenderer";
+import { baseTileSize, mapBorder } from "frontend/components/match/render-constants";
 import type { SpriteAnimationKeys } from "frontend/components/match/getSpritesheetData";
 import type {
   BoardPosition,

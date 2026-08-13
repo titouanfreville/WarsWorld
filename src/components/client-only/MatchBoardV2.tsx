@@ -15,7 +15,7 @@ import { mountBoardScene } from "../../pixi/v2/board-scene";
 import type { Container } from "pixi.js";
 import { Application, Assets } from "pixi.js";
 import { useEffect, useRef } from "react";
-import { renderMultiplier } from "./MatchRenderer";
+import { renderMultiplier } from "frontend/components/match/render-constants";
 
 type Props = {
   matchId: string;

@@ -1,4 +1,4 @@
-import { mapBorder, renderedTileSize } from "components/client-only/MatchRenderer";
+import { mapBorder, renderedTileSize } from "frontend/components/match/render-constants";
 import { intentArrows, phantomPositions } from "frontend/components/match/buffered-intent";
 import type { BoardPosition, MatchView } from "frontend/components/match/match-view";
 import type { TurnSnapshot, UnloadDrop } from "frontend/components/match/turn-snapshot-view";

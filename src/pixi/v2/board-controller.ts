@@ -1,4 +1,4 @@
-import { baseTileSize } from "components/client-only/MatchRenderer";
+import { baseTileSize } from "frontend/components/match/render-constants";
 import {
   buildableUnits,
   classifyTileClick,

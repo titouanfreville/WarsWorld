@@ -11,16 +11,8 @@ import path from "node:path";
 import { spritesheetDataSchema } from "shared/schemas/spritesheet-data";
 import { z } from "zod";
 
-const MatchLoaderNoSSR = dynamic(
-  () => import("components/client-only/MatchLoader").then((res) => res.MatchLoader),
-  {
-    ssr: false,
-    loading: () => <p>Loading MatchLoader component...</p>,
-  },
-);
-
-// Snapshot-driven, server-authoritative board — now the DEFAULT (the FE-engine cut). The old
-// engine-on-client board is kept behind `?v1` as a fallback during the cutover.
+// Snapshot-driven, server-authoritative board — the only board. The FE consumes BE
+// snapshot/preview endpoints and never runs the engine.
 const MatchBoardV2NoSSR = dynamic(
   () => import("components/client-only/MatchBoardV2").then((res) => res.MatchBoardV2),
   {
@@ -42,17 +34,6 @@ const MatchPage = ({ spritesheetDataByArmy }: Props) => {
 
   if (currentPlayer === undefined) {
     return <p>Loading...</p>;
-  }
-
-  // Old engine-on-client board, kept as a fallback during the cutover.
-  if (query.v1 !== undefined) {
-    return (
-      <MatchLoaderNoSSR
-        matchId={matchIdResult.data}
-        playerId={currentPlayer.id}
-        spritesheetDataByArmy={spritesheetDataByArmy}
-      />
-    );
   }
 
   return (

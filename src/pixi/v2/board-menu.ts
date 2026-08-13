@@ -1,4 +1,4 @@
-import { baseTileSize } from "components/client-only/MatchRenderer";
+import { baseTileSize } from "frontend/components/match/render-constants";
 import type { BoardPosition } from "frontend/components/match/match-view";
 import { AnimatedSprite, BitmapText, Container, Sprite, Texture } from "pixi.js";
 import type { UnitType } from "shared/schemas/unit";
