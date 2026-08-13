@@ -3,6 +3,7 @@ import { router } from "../trpc/trpc-setup";
 import { actionRouter } from "./action";
 import { matchRouter } from "./match";
 import { matchPreviewRouter } from "./match/previews";
+import { rankingRouter } from "./ranking";
 import { articleRouter } from "./article";
 import { systemRouter } from "./system";
 import { userRouter } from "./user";
@@ -11,6 +12,7 @@ export const appRouter = router({
   article: articleRouter,
   match: matchRouter,
   matchPreview: matchPreviewRouter,
+  ranking: rankingRouter,
   map: mapRouter,
   action: actionRouter,
   system: systemRouter,
