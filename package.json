@@ -61,6 +61,7 @@
     "gray-matter": "^4.0.3",
     "next": "^14.1.0",
     "next-auth": "^4.24.5",
+    "openskill": "^5.0.1",
     "pixi.js": "^7.4.0",
     "prisma-json-types-generator": "^3.0.3",
     "react": "^18.3.1",
