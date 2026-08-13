@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildTurnSnapshot } from "server/routers/match/turn-snapshot";
 import { getBattleForecast } from "shared/match-logic/combat-forecast";
-import { getAccessibleNodes, getAttackTargetTiles } from "shared/match-logic/pathfinding";
+import {
+  getAccessibleNodes,
+  getAttackableTiles,
+  getAttackTargetTiles,
+} from "shared/match-logic/pathfinding";
 import type { Position } from "shared/schemas/position";
 import { isSamePosition } from "shared/schemas/position";
 import {
@@ -10,6 +14,7 @@ import {
   dispatchMainAction,
   makeUnit,
   property,
+  recomputeVision,
   tiles,
 } from "../helpers/scenario";
 
@@ -193,6 +198,79 @@ describe("previews", () => {
     addUnit(p0, "tank", [3, 0]);
     const withTank = buildTurnSnapshot(match, p0);
     expect(withTank.units.find((u) => u.type === "tank")?.ability).toBeNull();
+  });
+
+  it("under fog of war, a player sees only tiles and enemy units within their vision", () => {
+    const match = createTestMatch({
+      tiles: roadRow(10),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    const p1 = match.getPlayerBySlot(1)!;
+    addUnit(p0, "infantry", [0, 0]); // vision 2 around [0,0]
+    addUnit(p1, "infantry", [9, 0]); // far away, out of p0's vision
+    recomputeVision(match); // Vision is built before test units exist, so recompute it
+
+    // p0 sees around its own unit but not the distant tile...
+    expect(p0.team.isPositionVisible([0, 0])).toBe(true);
+    expect(p0.team.isPositionVisible([9, 0])).toBe(false);
+    // ...so it can't see p1's far infantry, while p1 sees its own.
+    expect(p0.team.canSeeUnitAtPosition([9, 0])).toBe(false);
+    expect(p1.team.canSeeUnitAtPosition([9, 0])).toBe(true);
+  });
+
+  it("under fog, an owned property grants vision on its own tile even with no unit on it", () => {
+    const match = createTestMatch({
+      tiles: roadRow(10),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+      changeableTiles: [property("city", 0, [7, 0])], // p0 owns a city far from any unit
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    addUnit(p0, "infantry", [0, 0]); // vision 2 around [0,0], nowhere near the city
+
+    // No recomputeVision: the owned property must be visible from construction alone. This pins the
+    // bug where Vision was built before the team was registered, so ownership never resolved.
+    expect(p0.team.isPositionVisible([7, 0])).toBe(true); // owned property self-vision
+    expect(p0.team.isPositionVisible([4, 0])).toBe(false); // gap: no unit, no property
+  });
+
+  it("under fog, an unseen enemy doesn't shrink the reachable preview (no position leak)", () => {
+    const match = createTestMatch({
+      tiles: roadRow(6),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    const infantry = addUnit(p0, "infantry", [0, 0]); // vision 2, moves 3
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [3, 0]); // in move range, outside vision (dist 3)
+    recomputeVision(match);
+
+    expect(p0.team.isPositionVisible([3, 0])).toBe(false); // genuinely unseen
+
+    // The unseen enemy must not truncate the range — [3,0] stays reachable; the move traps there at
+    // execution rather than the preview revealing the enemy by stopping short.
+    const reached = Array.from(getAccessibleNodes(match, infantry).values()).map((n) => n.pos);
+    expect(has(reached, [3, 0])).toBe(true);
+  });
+
+  it("under fog, an unseen enemy in range is not offered as an attack target", () => {
+    const match = createTestMatch({
+      tiles: roadRow(6),
+      players: [{ slot: 0, hasCurrentTurn: true }, { slot: 1 }],
+      rules: { fogOfWar: true },
+    });
+    const p0 = match.getPlayerBySlot(0)!;
+    const artillery = addUnit(p0, "artillery", [0, 0]); // vision 1, range [2,3]
+    addUnit(match.getPlayerBySlot(1)!, "infantry", [3, 0]); // in range, but outside vision
+    recomputeVision(match);
+
+    expect(p0.team.isPositionVisible([3, 0])).toBe(false);
+    // The tile is genuinely in firing range...
+    expect(has(getAttackableTiles(match, artillery, [0, 0]), [3, 0])).toBe(true);
+    // ...but the unseen enemy on it isn't a target (targeting it would leak its position).
+    expect(has(getAttackTargetTiles(match, artillery, [0, 0]), [3, 0])).toBe(false);
   });
 
   it("hides a concealed sub from the enemy unless they have an adjacent unit", () => {

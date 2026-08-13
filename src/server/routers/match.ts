@@ -11,6 +11,7 @@ import { createMatchStartEvent } from "shared/match-logic/events/handlers/match-
 import type { Army } from "shared/schemas/army";
 import { armySchema } from "shared/schemas/army";
 import { coIdSchema } from "shared/schemas/co";
+import { getCOProperties } from "shared/match-logic/co";
 import { playerSlotForUnitsSchema } from "shared/schemas/player-slot";
 import { positionSchema } from "shared/schemas/position";
 import { z } from "zod";
@@ -25,6 +26,21 @@ import {
 import { createMatchProcedure } from "./match/create";
 import { allMatchSlotsReady, matchToFrontend, throwIfMatchNotInSetupState } from "./match/util";
 
+/**
+ * Reject a CO that isn't implemented for its game version (e.g. von-bolt only exists in AWDS). If it
+ * slips through, `getCOProperties` throws deep in the engine and takes down that player's whole turn
+ * snapshot — they can't move or build. Validate at selection so the bad combo never persists.
+ */
+const throwIfCOUnavailable = (selectedCO: z.infer<typeof coIdSchema>) => {
+  try {
+    getCOProperties(selectedCO);
+  } catch {
+    throw new DispatchableError(
+      `CO "${selectedCO.name}" is not available in game version ${selectedCO.version}.`,
+    );
+  }
+};
+
 export const matchRouter = router({
   create: createMatchProcedure,
 
@@ -38,19 +54,49 @@ export const matchRouter = router({
     ({ ctx: { currentPlayer } }) =>
       playerMatchIndex.getPlayerMatches(currentPlayer.id)?.map(matchToFrontend) ?? [],
   ),
-  full: matchBaseProcedure.query(({ ctx: { match } }) => ({
-    id: match.id,
-    leagueType: match.leagueType,
-    changeableTiles: match.changeableTiles,
-    currentWeather: match.getCurrentWeather(),
-    map: match.map.data,
-    players: match.getAllPlayers().map((player) => player.data),
-    rules: match.rules,
-    status: match.status,
-    turn: match.turn,
-    units: match.units.map((u) => u.data),
-    // match.getPlayerById(currentPlayer.id)?.team.getEnemyUnitsInVision() ?? []
-  })),
+  full: matchBaseProcedure.query(({ ctx: { match, currentPlayer } }) => {
+    const fogOfWar = match.isFogOfWar();
+    const viewerTeam = match.getPlayerById(currentPlayer.id)?.team;
+
+    // Only send units the viewer can actually see. `canSeeUnitAtPosition` is the single engine rule
+    // for both modes: fog off → every non-concealed unit is visible (a concealed sub/stealth only to
+    // its owner or an adjacent enemy); fog on → additionally gated by the team's tile vision. A
+    // spectator has no team, so it sees the non-fog view minus concealed units.
+    const visibleUnits = match.units.filter((unit) =>
+      viewerTeam === undefined
+        ? !("hidden" in unit.data && unit.data.hidden)
+        : viewerTeam.canSeeUnitAtPosition(unit.data.position),
+    );
+
+    // Under fog, the tiles the viewer currently has vision of — the client darkens the rest. Empty
+    // when fog is off (no overlay) or for a spectator (no team vision to expose).
+    const visibleTiles: [number, number][] = [];
+
+    if (fogOfWar && viewerTeam !== undefined) {
+      for (let y = 0; y < match.map.height; y++) {
+        for (let x = 0; x < match.map.width; x++) {
+          if (viewerTeam.isPositionVisible([x, y])) {
+            visibleTiles.push([x, y]);
+          }
+        }
+      }
+    }
+
+    return {
+      id: match.id,
+      leagueType: match.leagueType,
+      changeableTiles: match.changeableTiles,
+      currentWeather: match.getCurrentWeather(),
+      map: match.map.data,
+      players: match.getAllPlayers().map((player) => player.data),
+      rules: match.rules,
+      status: match.status,
+      turn: match.turn,
+      units: visibleUnits.map((u) => u.data),
+      fogOfWar,
+      visibleTiles,
+    };
+  }),
   join: matchBaseProcedure
     .input(
       z.object({
@@ -75,6 +121,8 @@ export const matchRouter = router({
       if (input.playerSlot !== null && match.getPlayerBySlot(input.playerSlot) !== undefined) {
         throw new DispatchableError("Player slot is occupied");
       }
+
+      throwIfCOUnavailable(input.selectedCO);
 
       //TODO check if selectedCO is allowed for tier/league/match-blacklist
       // (do players join a match with a CO pick already done or join then choose?)
@@ -279,6 +327,10 @@ export const matchRouter = router({
     )
     .mutation(async ({ input, ctx: { match, player } }) => {
       throwIfMatchNotInSetupState(match);
+
+      if (input.selectedCO !== undefined) {
+        throwIfCOUnavailable(input.selectedCO);
+      }
 
       const newPlayerData: PlayerInMatch = { ...player.data };
       newPlayerData.coId = input.selectedCO ?? newPlayerData.coId;

@@ -19,9 +19,10 @@ import { z } from "zod";
  * merely renders them (it must not run the engine). Each is turn- and ownership-gated by
  * `playerInMatchBaseProcedure`.
  *
- * TODO(fog): these compute over full match state, matching today's `match.full` (which does not yet
- * fog-filter). When fog-of-war projection lands, previews must be derived from the requesting
- * player's visible state so hidden units don't leak.
+ * TODO(fog): these still compute over full match state. `matchRouter.full` now fog-filters its
+ * units and exposes `visibleTiles`, so previews are the remaining leak: they must be derived from
+ * the requesting player's visible state, otherwise a reachable set that stops short of a hidden
+ * unit reveals its position.
  */
 
 const getOwnedUnitOrThrow = (

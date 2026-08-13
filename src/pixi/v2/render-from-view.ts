@@ -20,6 +20,9 @@ import type { LoadedSpriteSheet } from "../load-spritesheet";
 
 type AnimationsProperty = Record<SpriteAnimationKeys, Texture<Resource>[]>;
 
+// Multiplicative tint applied to a fogged tile's sprite (~48% brightness) — the fog-of-war dim.
+const FOG_TINT = "#7a7a7a";
+
 const tileSprite = (
   match: MatchView,
   tile: MatchTile | MatchChangeableTile,
@@ -63,6 +66,14 @@ export const renderMapFromView = (match: MatchView, spriteSheets: LoadedSpriteSh
   mapContainer.x = mapBorder;
   mapContainer.y = mapBorder;
 
+  // Fog dims each tile by TINTING its own sprite dark, rather than overlaying a dark square. A tile's
+  // sprite can be taller than one tile (properties, mountains, forests overhang upward), and its
+  // darkening must follow ITS OWN tile's visibility uniformly — an overlay on the neighbouring tile
+  // would either dim a visible property's top or leave a fogged property's top lit. Vision is
+  // BE-authoritative (from match.full).
+  const fogVisible =
+    match.fogOfWar === true ? new Set(match.visibleTiles.map(([x, y]) => `${x},${y}`)) : null;
+
   for (let y = 0; y < match.map.tiles.length; y++) {
     for (let x = 0; x < match.map.tiles[y].length; x++) {
       const sprite = tileSprite(match, getTileAt(match, [x, y]), spriteSheets);
@@ -71,6 +82,11 @@ export const renderMapFromView = (match: MatchView, spriteSheets: LoadedSpriteSh
       sprite.x = x * baseTileSize;
       sprite.y = (y + 1) * baseTileSize;
       sprite.zIndex = y;
+
+      if (fogVisible !== null && !fogVisible.has(`${x},${y}`)) {
+        sprite.tint = FOG_TINT; // multiplicative dim of the whole tile sprite (base + tall top)
+      }
+
       mapContainer.addChild(sprite);
     }
   }

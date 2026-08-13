@@ -53,8 +53,13 @@ import {
   renderMapFromView,
   renderUnitsFromView,
 } from "../../pixi/v2/render-from-view";
-import { renderBufferedIntent } from "../../pixi/v2/render-buffered-intent";
+import {
+  renderBufferedArrows,
+  renderPathArrow,
+  shimmerBufferedArrows,
+} from "../../pixi/v2/render-path-arrow";
 import { intentArrows, phantomPositions } from "frontend/components/match/buffered-intent";
+import { updateTracedPath } from "frontend/components/match/path-planning";
 
 type Props = {
   matchId: string;
@@ -102,6 +107,14 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   const reachableHighlightRef = useRef<Container | null>(null);
   const attackHighlightRef = useRef<Container | null>(null);
   const unloadHighlightRef = useRef<Container | null>(null);
+  // The move-path arrow shown while hovering a reachable tile with a unit selected. Matters most in
+  // fog: the exact route decides which tiles the unit crosses (and whether it hits a hidden unit).
+  const pathArrowRef = useRef<Container | null>(null);
+  // The AW-style traced route the cursor is drawing (origin -> ... -> hovered tile). This is the path
+  // that gets committed — not necessarily the shortest one — so the player controls the exact route.
+  const plannedPathRef = useRef<BoardPosition[]>([]);
+  // The pixi ticker callback animating the shimmer along buffered arrows; removed on each re-render.
+  const shimmerRef = useRef<((delta: number) => void) | null>(null);
   // Selection: the unit's origin tile. Staged destination: where a move is being composed (null =
   // acting from the origin). Attack targets: the currently clickable red tiles. Unload drops: the
   // clickable green drop tiles once UNLOAD is chosen. All read by the imperative pixi click handler.
@@ -206,6 +219,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         onSuccess() {
           // Keep the optimistic delta until the authoritative refetch lands, then drop it (below).
           acknowledgedRef.current.add(pending.clientId);
+          // Force a refetch AFTER acknowledging, so the [match] reconcile effect is guaranteed to run
+          // with this id present. Without it, a subscription-driven refetch that landed BEFORE this
+          // callback would leave the action stuck at "sent" (no further match change to confirm it).
+          void utils.match.full.invalidate({ matchId, playerId });
+          void utils.matchPreview.turnSnapshot.invalidate({ matchId, playerId });
         },
         onError(error) {
           onActionError(pending.kind)(error);
@@ -283,6 +301,13 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       view.map.tiles.length * renderedTileSize + renderedTileSize,
     );
 
+    // Drop the previous shimmer animation before rebuilding the stage (its sprites are about to be
+    // destroyed); a fresh one is registered below for this render's buffered arrows.
+    if (shimmerRef.current !== null) {
+      app.ticker.remove(shimmerRef.current);
+      shimmerRef.current = null;
+    }
+
     for (const child of app.stage.removeChildren()) {
       child.destroy({ children: true });
     }
@@ -292,6 +317,8 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       height: view.map.tiles.length,
     };
 
+    // The map renderer draws the fog per-tile (interleaved by depth) so a visible property's tall top
+    // isn't dimmed by fog on the tile above it. Vision is BE-authoritative (from match.full).
     const mapContainer = renderMapFromView(view, spriteSheets);
     // Menus live on their own layer above the units, sharing the map's offset so tile coordinates
     // line up. Only turn management stays in the top bar; every other action is a board menu.
@@ -302,6 +329,8 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
     reachableHighlightRef.current = null;
     attackHighlightRef.current = null;
+    pathArrowRef.current = null; // destroyed with the stage on re-render; drop the dangling ref
+    plannedPathRef.current = [];
     selectionRef.current = null;
     stagedDestRef.current = null;
     attackTargetsRef.current = [];
@@ -330,14 +359,43 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       unloadHighlightRef.current = green;
     };
 
+    // Redraw the AW movement arrow for the currently-traced route (plannedPathRef), into the map
+    // container so it shares the map offset. Non-interactive, so it never eats a tile click.
+    const drawPathArrow = () => {
+      pathArrowRef.current?.destroy({ children: true });
+      pathArrowRef.current = null;
+
+      if (spriteSheets === undefined || plannedPathRef.current.length < 2) {
+        return;
+      }
+
+      const arrow = renderPathArrow(spriteSheets, plannedPathRef.current);
+      mapContainer.addChild(arrow);
+      pathArrowRef.current = arrow;
+    };
+
     const resetInteraction = () => {
       selectionRef.current = null;
       stagedDestRef.current = null;
       attackTargetsRef.current = [];
       unloadDropsRef.current = [];
       missileArmRef.current = null;
+      plannedPathRef.current = [];
       closeMenu();
       drawHighlights([], []);
+      drawPathArrow();
+    };
+
+    // The route to commit for a move to `dest`: the cursor-traced path when it ends there, otherwise
+    // the snapshot's shortest path. So a hovered/drawn route is honoured; a direct click uses shortest.
+    const commitPath = (unit: SnapshotUnit, dest: BoardPosition): BoardPosition[] | null => {
+      const traced = plannedPathRef.current;
+
+      if (traced.length >= 1 && samePosition(traced[traced.length - 1], dest)) {
+        return traced;
+      }
+
+      return reconstructPath(unit, dest);
     };
 
     resetInteractionRef.current = resetInteraction;
@@ -470,7 +528,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // move+repair. A single target repairs immediately; multiple offer a small submenu.
     const chooseRepair = (unit: SnapshotUnit, dest: BoardPosition, targets: RepairTarget[]) => {
       const bufferRepair = (target: RepairTarget) => {
-        const path = reconstructPath(unit, dest);
+        const path = commitPath(unit, dest);
 
         if (path !== null) {
           enqueue("repair", {
@@ -499,7 +557,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // After LAUNCH is chosen: arm the missile (light the whole board red) and let the next click pick
     // the strike tile. The path onto the silo is captured now; the target is chosen on the board.
     const armMissile = (unit: SnapshotUnit, dest: BoardPosition) => {
-      const path = reconstructPath(unit, dest);
+      const path = commitPath(unit, dest);
 
       if (path === null) {
         return;
@@ -525,6 +583,11 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     // validity, attack targets and unload drops all come from the snapshot, not the network) so
     // staging works instantly even offline / throttled — the whole point of buffering.
     const stageMove = (unit: SnapshotUnit, dest: BoardPosition) => {
+      // Lock the traced route to end at `dest` (the drawn path if the cursor reached it, else the
+      // shortest), then draw it — every action from here commits along this exact path.
+      plannedPathRef.current = updateTracedPath(unit, plannedPathRef.current, dest);
+      drawPathArrow();
+
       const reachable = movableTiles(unit);
       const myPlayer = getPlayerById(view, playerId);
       const destTile = getTileAt(view, dest);
@@ -545,7 +608,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           {
             label: occupant.type === unit.type ? "JOIN" : "LOAD",
             onSelect: () => {
-              const path = reconstructPath(unit, dest);
+              const path = commitPath(unit, dest);
 
               if (path !== null) {
                 enqueueMove("move", path, { type: "wait" });
@@ -598,7 +661,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         options.push({
           label: "CAPTURE",
           onSelect: () => {
-            const path = reconstructPath(unit, dest);
+            const path = commitPath(unit, dest);
 
             if (path !== null) {
               enqueueMove("capture", path, { type: "ability" });
@@ -624,7 +687,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
         options.push({
           label: abilityLabel,
           onSelect: () => {
-            const path = reconstructPath(unit, dest);
+            const path = commitPath(unit, dest);
 
             if (path !== null) {
               enqueueMove("ability", path, { type: "ability" });
@@ -660,7 +723,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       options.push({
         label: "WAIT",
         onSelect: () => {
-          const path = reconstructPath(unit, dest);
+          const path = commitPath(unit, dest);
 
           if (path !== null) {
             enqueueMove("move", path, { type: "wait" });
@@ -758,7 +821,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           const drop = unloadDropsRef.current.find((entry) => samePosition(entry.position, pos));
 
           if (drop !== undefined) {
-            const path = reconstructPath(unit, stagedDestRef.current ?? selected);
+            const path = commitPath(unit, stagedDestRef.current ?? selected);
 
             if (path !== null) {
               enqueue("move", {
@@ -776,7 +839,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
 
           // Clicked a highlighted enemy -> attack from the staged origin (moving there first).
           if (inList(attackTargetsRef.current, pos)) {
-            const path = reconstructPath(unit, stagedDestRef.current ?? selected);
+            const path = commitPath(unit, stagedDestRef.current ?? selected);
 
             if (path !== null && canBufferAttack(queueRef.current)) {
               enqueueMove("attack", path, { type: "attack", defenderPosition: [pos[0], pos[1]] });
@@ -834,21 +897,66 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
       ) {
         resetInteraction();
         selectionRef.current = pos;
+        plannedPathRef.current = [pos]; // start the traced route at the unit's tile
         drawHighlights(movableTiles(snapshotUnit), []);
       } else {
         resetInteraction();
       }
     };
 
-    // Buffered (unconfirmed) intent: draw a movement arrow per buffered move and render the units it
-    // targets as translucent phantoms, so pending actions read directly on the board.
+    // Hovering a reachable tile (with a unit selected, before a destination is staged) extends the
+    // cursor-drawn route toward that tile and redraws the AW arrow. The exact route is what gets
+    // committed, so the player controls which tiles the unit crosses — critical in fog.
+    const onTileHover = (pos: BoardPosition) => {
+      const snapshot = snapshotRef.current;
+      const selected = selectionRef.current;
+
+      // Only trace while still choosing a destination — not once a move is staged (menu open / picking
+      // an attack target or unload tile) and not while arming a missile.
+      if (
+        snapshot === null ||
+        selected === null ||
+        stagedDestRef.current !== null ||
+        missileArmRef.current !== null
+      ) {
+        return;
+      }
+
+      const unit = snapshotUnitAt(snapshot, selected);
+
+      if (unit === undefined) {
+        return;
+      }
+
+      plannedPathRef.current = updateTracedPath(unit, plannedPathRef.current, pos);
+      drawPathArrow();
+    };
+
+    // Buffered (unconfirmed) intent: an AW arrow per buffered move at phantom opacity, plus the units
+    // it targets rendered as translucent phantoms, so pending actions read directly on the board.
     const buffered = optimisticActions(queue);
+    const bufferedArrows = renderBufferedArrows(spriteSheets, intentArrows(buffered));
+    // Live in the map container (shares the mapBorder offset, so the arrows line up with the tile
+    // grid; its zIndex 1050 keeps them above tiles/highlights but below the units drawn on the stage).
+    mapContainer.addChild(bufferedArrows.container);
+
+    // A travelling light cycles along each buffered arrow so pending moves feel alive.
+    if (bufferedArrows.groups.length > 0) {
+      let shimmerTime = 0;
+
+      const shimmer = (delta: number) => {
+        shimmerTime += delta * 0.08;
+        shimmerBufferedArrows(bufferedArrows.groups, shimmerTime);
+      };
+
+      app.ticker.add(shimmer);
+      shimmerRef.current = shimmer;
+    }
 
     app.stage.addChild(
       mapContainer,
       renderUnitsFromView(view, spriteSheets, phantomPositions(buffered)),
-      renderBufferedIntent(intentArrows(buffered)),
-      renderInteractiveTilesFromView(view, onTileClick, () => undefined),
+      renderInteractiveTilesFromView(view, onTileClick, onTileHover),
       menuLayer,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
