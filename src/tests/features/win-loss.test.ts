@@ -8,6 +8,15 @@ const ATTACK_ADJACENT: MainAction = {
   subAction: { type: "attack", defenderPosition: [1, 0] },
 };
 const CAPTURE: MainAction = { type: "move", path: [[0, 0]], subAction: { type: "ability" } };
+const PASS_TURN: MainAction = { type: "passTurn" };
+
+// A unit is spent for the turn once it acts (even a stand-still capture), so a multi-tick capture
+// spans multiple turns. In these 2-player scenarios, two passes return the turn to slot 0 with its
+// capturing unit readied and its capture progress preserved.
+function endRoundBackToSlot0(match: ReturnType<typeof createTestMatch>): void {
+  dispatchMainAction(match, PASS_TURN);
+  dispatchMainAction(match, PASS_TURN);
+}
 
 /**
  * Win/loss conditions.
@@ -89,6 +98,7 @@ describe("win/loss conditions", () => {
     });
 
     dispatchMainAction(match, CAPTURE); // 20 -> 10
+    endRoundBackToSlot0(match);
     const event = dispatchMainAction(match, CAPTURE); // completes: owned 1 + 1 >= captureLimit 2
 
     expect(event).toMatchObject({ subEvent: { eliminationReason: "property-goal-reached" } });
@@ -140,6 +150,7 @@ describe("win/loss conditions", () => {
     });
 
     dispatchMainAction(match, CAPTURE);
+    endRoundBackToSlot0(match);
     dispatchMainAction(match, CAPTURE);
 
     // Desired: reaching the capture limit wins the game.
