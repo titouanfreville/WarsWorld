@@ -14,7 +14,7 @@ import { logger } from "shared/utils/logger";
 import { articleRouter } from "./routers/article";
 import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
-import { makeMapRouter } from "./routers/map";
+import { makeMapRouter } from "./routers/maps";
 import { makeMatchRouter } from "./routers/match";
 import { makeActionRouter } from "./routers/match/action";
 import { makeRankingRouter } from "./routers/ranking";

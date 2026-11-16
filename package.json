@@ -35,6 +35,8 @@
     "redundant-code": "npx jscpd --ignore node_modules,dist,public,.next --reporters consoleFull .",
     "update-depencencies": "npx npm-check-updates -i",
     "fix-paths": "fix-esm-import-path  dist ",
+    "maps:check": "tsx prisma/scripts/check-maps.ts",
+    "maps:gallery": "tsx prisma/scripts/render-gallery.ts",
     "install-utils": "npm install $(jq -r '.utilsDependencies | to_entries | .[] | \"\\(.key)@\\(.value)\"' package.json)"
   },
   "prisma": {
