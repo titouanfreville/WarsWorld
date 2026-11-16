@@ -1,3 +1,5 @@
+import { initGameData } from "server/adapters/game-data/game-data-cache";
+import { startAuthAttemptSweep } from "server/auth/throttle.dbo";
 import { DomainEvents } from "server/core/domain-events";
 import type { MatchSpawner } from "server/core/ports";
 import { AdminToolsUsecase } from "server/admin/admin-tools.usecase";
@@ -118,6 +120,32 @@ const adminToolsUsecase = new AdminToolsUsecase(prisma, {
   persistStats: (tx, matchId) => endgameUsecase.persistStats(tx, matchId),
 });
 const adminUsecase = new AdminUsecase(prisma, rankingUsecase, matchmakingUsecase, lobbyUsecase);
+
+// ── Startup ───────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything that must be re-armed when the process boots, in order.
+ *
+ * Lives here rather than in each entry point because it is wiring: which usecases hold a timer, and
+ * what has to be warm before the first request, is exactly what this file exists to know. The dev
+ * and production servers each called the same six things in the same order — two copies of the
+ * startup sequence that could drift apart, and did not need to exist.
+ *
+ * Deadlines are re-armed rather than recomputed: a turn clock, a pick timer and a ready-check all
+ * persist their deadline, because elapsed wall-clock cannot be replayed from the event log. Skip
+ * this and a restart silently hands the acting player a fresh full bank.
+ */
+export const startBackgroundWork = async (): Promise<void> => {
+  // Game data (CO profiles) warm first — the picker needs it on the first request.
+  await initGameData(prisma);
+  await matchesUsecase.reschedulePickDeadlines();
+  await matchActionUsecase.rescheduleTurnDeadlines();
+  await matchmakingUsecase.rescheduleLobbyPhases();
+  matchmakingUsecase.startQueueTick();
+  // Retire sign-in/sign-up failure counters that have gone quiet, so a name-spraying run can't
+  // grow the table without bound.
+  startAuthAttemptSweep();
+};
 
 // ── Transport ─────────────────────────────────────────────────────────────────────────────────────
 

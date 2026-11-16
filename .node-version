@@ -1,4 +1,4 @@
-21.0.0
+22.12.0
 
 # node is installed globally, but different projects often require different versions.
 # Because some devs need to frequently change node versions,

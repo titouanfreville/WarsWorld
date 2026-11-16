@@ -92,6 +92,11 @@ Directions for Google Account:
 
 - Follow through steps 1 to 3 and 5 to get the client and secret and set up the redirect link: [Google Guide](https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid)
 
+# Deploying to a server
+
+See [docs/deployment.md](docs/deployment.md) — a Docker Compose stack (Postgres + app + nginx +
+certbot) for a single Ubuntu box, including HTTPS without owning a domain.
+
 ## Our Tech Stack's Features
 
 - 🧙‍♂️ E2E type safety with [tRPC](https://trpc.io)

@@ -1,10 +1,12 @@
 import { logger } from "shared/utils/logger";
 import { createTRPCwebSocketServer } from "./common-server";
+import { startBackgroundWork } from "./composition-root";
 import { matchStore } from "./match-store";
 
 void (async () => {
   await matchStore.rebuild();
-
+  // Re-arm timers and warm caches; the composition root owns that sequence.
+  await startBackgroundWork();
   const wss = createTRPCwebSocketServer({
     port: 3001,
   });

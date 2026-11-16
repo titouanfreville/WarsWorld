@@ -1,0 +1,38 @@
+# Without this file, `COPY . .` would overwrite the Linux node_modules installed by `npm ci` with
+# the HOST's node_modules. On macOS that means darwin-arm64 binaries for sharp, bcrypt and the
+# Prisma query engine landing in a Linux image — which fails at runtime, not at build time.
+node_modules
+.next
+dist
+out
+
+# VCS, tooling and local state
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+.moonlight
+.moonlight-local
+.ai
+.omc
+.claude
+
+# Secrets and local env — never bake these into an image layer
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Database dumps written by the compose backup service
+backups
+
+# Not needed to build or run the app
+docs
+deployment
+supabase
+README.md
+CONTRIBUTING.md
+CLAUDE.md
+LICENSE.md
