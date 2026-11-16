@@ -1,5 +1,6 @@
 import type { MatchView } from "frontend/components/match/match-view";
 import type { CoResult } from "frontend/components/match/hud/GameOverOverlay";
+import type { EndGamePlayer } from "frontend/components/match/hud/EndGameScreen";
 import type { Army } from "frontend/utils/sprites";
 
 /** Viewer-relative outcome, for the End-Game screen's header + theme. */
@@ -27,14 +28,8 @@ export const toGameOverCos = (view: MatchView | undefined, viewerId: string): Co
     isViewer: player.id === viewerId,
   })) ?? [];
 
-/**
- * Richer per-seat summary for the End-Game screen (name + army + CO + result).
- *
- * The row type is inferred rather than declared against the screen component: this mapper must not
- * depend on the component that renders it, and the End-Game screen itself lands with the `endgame`
- * feature.
- */
-export const toEndGamePlayers = (view: MatchView | undefined, viewerId: string) =>
+/** Richer per-seat summary for the End-Game screen (name + army + CO + result). */
+export const toEndGamePlayers = (view: MatchView | undefined, viewerId: string): EndGamePlayer[] =>
   view?.players.map((player) => ({
     id: player.id,
     name: player.name,

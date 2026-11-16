@@ -1,5 +1,6 @@
 import { DomainEvents } from "server/core/domain-events";
 import type { MatchSpawner } from "server/core/ports";
+import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
 import { MatchActionUsecase } from "server/matches/match-action.usecase";
 import { MatchLifecycleUsecase } from "server/matches/match-lifecycle.usecase";
@@ -11,6 +12,7 @@ import { RankingUsecase } from "server/ranking/ranking.usecase";
 import { router } from "server/trpc/trpc-setup";
 import { logger } from "shared/utils/logger";
 import { articleRouter } from "./routers/article";
+import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
 import { makeMapRouter } from "./routers/map";
 import { makeMatchRouter } from "./routers/match";
@@ -40,6 +42,7 @@ const domainEvents = new DomainEvents((error, event) =>
 const rankingUsecase = new RankingUsecase(prisma);
 const mapsUsecase = new MapsUsecase(prisma);
 const honorUsecase = new HonorUsecase(prisma);
+const endgameUsecase = new EndgameUsecase(prisma);
 
 /**
  * Match play. `MatchActionUsecase` takes `FinalizeHooks` rather than the ranking/endgame usecases:
@@ -50,11 +53,7 @@ const matchActionUsecase = new MatchActionUsecase(
   prisma,
   {
     rate: (tx, matchId) => rankingUsecase.applyMatchResult(tx, matchId),
-    /**
-     * No-op until the `endgame` feature lands and supplies `persistStats`. Stats simply are not
-     * written yet — `Match.statsAt` stays null — rather than being silently faked.
-     */
-    persistStats: () => Promise.resolve(),
+    persistStats: (tx, matchId) => endgameUsecase.persistStats(tx, matchId),
   },
   matchStore,
 );
@@ -86,6 +85,7 @@ void matchSpawner;
 export const appRouter = router({
   article: articleRouter,
   match: makeMatchRouter(matchLifecycleUsecase),
+  endgame: makeEndgameRouter(endgameUsecase),
   honor: makeHonorRouter(honorUsecase),
   ranking: makeRankingRouter(rankingUsecase),
   map: makeMapRouter(mapsUsecase),

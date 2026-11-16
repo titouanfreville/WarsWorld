@@ -1,6 +1,8 @@
 "use client";
+import { useRouter } from "next/router";
 import { readAnimationScope } from "frontend/components/match/animation-scope";
-import { toGameOverCos } from "frontend/components/match/endgame-view";
+import { toEndGamePlayers, toGameOverCos, toOutcome } from "frontend/components/match/endgame-view";
+import { EndGameScreen } from "frontend/components/match/hud/EndGameScreen";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
 import type { BoardPosition } from "frontend/components/match/match-view";
 import { getCurrentTurnPlayer, getPlayerById } from "frontend/components/match/match-view";
@@ -113,6 +115,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   });
   const powerPulse = usePowerBoardPulse(powerActivation);
 
+  const router = useRouter();
   const modes = useBoardModes({ isMyTurn, isGameOver });
 
   // The tile the board context menu is anchored at (right-click on an empty tile), or null when shut.
@@ -276,6 +279,14 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
           </div>
         }
       />
+      {phase === "endgame" && gameOver !== null && (
+        <EndGameScreen
+          matchId={matchId}
+          outcome={toOutcome(gameOver)}
+          players={toEndGamePlayers(optimisticView, playerId)}
+          onBackToLobby={() => void router.push("/your-games")}
+        />
+      )}
     </>
   );
 }
