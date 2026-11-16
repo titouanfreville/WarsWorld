@@ -24,7 +24,7 @@ type Props = {
 };
 
 const fundsLabel = (funds: number | null): string =>
-  funds === null ? "$ ??" : `$${funds.toLocaleString()}`;
+  funds === null ? "$ ??" : `$${funds.toLocaleString("en-US")}`;
 
 /** Visible units of this army grouped by wire type, most-numerous first. */
 const unitBreakdown = (view: MatchView, slot: number): [string, number][] => {

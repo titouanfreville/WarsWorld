@@ -20,6 +20,34 @@ describe("build feature", () => {
     expect(match.getPlayerBySlot(0)!.data.funds).toBe(10000 - unitPropertiesMap.infantry.cost);
   });
 
+  it("charges the CO-modified cost, never overspending into negative funds", () => {
+    // Colin (AW2) builds 20% cheaper (a day-to-day `buildCost` hook). With funds equal to the
+    // DISCOUNTED price the build must succeed and leave funds at exactly 0 — deducting the raw base
+    // cost while validating the discounted cost used to drive funds negative (the regression this
+    // guards). Funds must never go below zero from a validated build.
+    const base = unitPropertiesMap.infantry.cost;
+    const discounted = base * 0.8;
+
+    const match = createTestMatch({
+      tiles: [[tiles.base(0)]],
+      players: [
+        {
+          slot: 0,
+          hasCurrentTurn: true,
+          funds: discounted,
+          coId: { name: "colin", version: "AW2" },
+        },
+        { slot: 1 },
+      ],
+    });
+
+    dispatchMainAction(match, { type: "build", unitType: "infantry", position: [0, 0] });
+
+    const funds = match.getPlayerBySlot(0)!.data.funds;
+    expect(funds).toBe(0);
+    expect(funds).toBeGreaterThanOrEqual(0);
+  });
+
   it("rejects building without enough funds", () => {
     const match = createTestMatch({
       tiles: [[tiles.base(0)]],

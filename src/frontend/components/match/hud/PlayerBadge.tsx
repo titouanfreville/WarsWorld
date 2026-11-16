@@ -33,7 +33,7 @@ type Props = {
 };
 
 const fundsLabel = (funds: number | null): string =>
-  funds === null ? "$ ??" : `$${funds.toLocaleString()}`;
+  funds === null ? "$ ??" : `$${funds.toLocaleString("en-US")}`;
 
 export function PlayerBadge({
   player,

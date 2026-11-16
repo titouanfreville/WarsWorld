@@ -75,9 +75,17 @@ export class RankingUsecase implements Rater, SkillSource {
     return defaultSkill();
   }
 
-  /** `SkillSource` port: the climbable ladder, in order — what a rank band is measured along. */
+  /**
+   * `SkillSource` port: every ACTIVE rank in ladder order — what a rank band is measured along.
+   *
+   * All of them, not just the climbable band: a player can sit at the entry rank or the apex, and
+   * leaving those out would make `indexOf` miss and silently read as distance −1.
+   */
   async activeRankCodes(): Promise<string[]> {
-    return climbable(await this.loadRanks()).map((rank) => rank.code);
+    return (await this.loadRanks())
+      .filter((rank) => rank.active)
+      .sort((a, b) => a.order - b.order)
+      .map((rank) => rank.code);
   }
 
   /** Ladder rows for display, ordered — label and emblem included so the FE never mirrors them. */

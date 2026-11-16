@@ -4,7 +4,7 @@
  * tRPC (the components feed them plain numbers). See .ai/plans/end-game-screen-plan.md.
  */
 
-const fmt = (value: number): string => Math.round(value).toLocaleString();
+const fmt = (value: number): string => Math.round(value).toLocaleString("en-US");
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 /** Wall-clock duration as a compact label (`45s` · `18 min` · `1h 4m`); `—` for a zero/unknown span. */

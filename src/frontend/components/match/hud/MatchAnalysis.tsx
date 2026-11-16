@@ -15,7 +15,7 @@ type TimelineRow = Summary["stats"]["timeline"][number];
 type TurnMetric = "income" | "armyValue" | "properties" | "funds";
 type Domain = "infantry" | "vehicle" | "air" | "naval";
 
-const fmt = (value: number): string => Math.round(value).toLocaleString();
+const fmt = (value: number): string => Math.round(value).toLocaleString("en-US");
 
 const pct = (part: number, whole: number): string =>
   whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";

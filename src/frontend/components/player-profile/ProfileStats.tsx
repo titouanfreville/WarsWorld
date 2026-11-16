@@ -144,7 +144,7 @@ function UnitColumn({
                 <div className="@flex @items-baseline @justify-between @gap-1">
                   <span className="@truncate @text-xs @text-white/85">{prettyUnit(row.unit)}</span>
                   <span className="@shrink-0 @font-russoOne @text-xs @text-primary">
-                    {row.count.toLocaleString()}
+                    {row.count.toLocaleString("en-US")}
                     {suffix ?? ""}
                   </span>
                 </div>
@@ -220,7 +220,9 @@ function CombatRecord({ totals, combat }: { totals: Totals; combat: Combat }) {
 function MiniStat({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="@font-russoOne @text-lg @leading-none @text-white">{value.toLocaleString()}</p>
+      <p className="@font-russoOne @text-lg @leading-none @text-white">
+        {value.toLocaleString("en-US")}
+      </p>
       <p className="@mt-1 @text-[10px] @uppercase @tracking-[0.15em] @text-white/40">{label}</p>
     </div>
   );
