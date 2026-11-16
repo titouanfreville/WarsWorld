@@ -18,14 +18,15 @@ export type LobbyStatusKind =
   | "open"
   | "completed";
 
-export type LobbyView = "needs" | "mine" | "find" | "watch" | "history";
-
 type LobbyPlayer = {
   id: string;
   ready?: boolean;
   hasCurrentTurn?: boolean;
-  /** `resigned` arrives with surrender; kept in step with the engine's player status. */
   status?: "alive" | "routed" | "captured" | "resigned";
+  // Authoritative per-player outcome, stamped by the engine when the match finalizes. Preferred over
+  // `status` for a finished match: an admin force-outcome sets `result` but leaves both armies
+  // "alive", so deriving win/loss from alive-ness alone would mislabel a forced result.
+  result?: "won" | "lost" | "drawn";
 };
 
 export type LobbyMatch = {
@@ -60,16 +61,43 @@ export function deriveLobbyStatus(
 
   if (viewer !== undefined) {
     if (isFinished(match)) {
-      // A draw is what the BE's game-over derivation reports as no winning team (winnerTeamIndex
-      // null) — e.g. a simultaneous double-elimination: the match is finished with nobody still
-      // "alive". Detect the same way here so the lobby doesn't mislabel a draw as a defeat.
+      // Prefer the authoritative stamped result. A forced outcome (admin) sets `result` while leaving
+      // both armies "alive", so the alive-status heuristic below would mislabel it — the winner's
+      // opponent would read "victory". `result` is what `deriveGameOver` itself reads for a finished
+      // match, so this keeps the card in step with the board.
+      if (viewer.result === "won") {
+        return "victory";
+      }
+
+      if (viewer.result === "lost") {
+        return "defeat";
+      }
+
+      if (viewer.result === "drawn") {
+        return "draw";
+      }
+
+      // The viewer has no stamped result. If ANY player does, this is a result-stamped match with an
+      // anomalous viewer row — `stampOutcome` writes every player's result in one pass, so it isn't
+      // reachable today, but don't fall through to the alive-status heuristic (which would read a
+      // still-"alive" forced-loser as a victory). Conservatively: not a win.
+      if (match.players.some((player) => player.result !== undefined)) {
+        return "defeat";
+      }
+
+      // Fallback for genuinely pre-result rows (nobody stamped — finished before the column existed).
+      // A draw is what the BE's game-over derivation reports as no winning team (winnerTeamIndex null)
+      // — e.g. a simultaneous double-elimination: finished with nobody still "alive". Same test here.
       const anyoneAlive = match.players.some((player) => player.status === "alive");
 
       if (!anyoneAlive) {
         return "draw";
       }
 
-      return viewer.status === "routed" || viewer.status === "captured" ? "defeat" : "victory";
+      // Anything other than "alive" is a defeat — the same test `deriveGameOver` uses to decide a
+      // team is out. Keyed off "alive" rather than listing the losing statuses so a newly added one
+      // (resigned, and later a timed-out player) can't silently fall through to "victory".
+      return viewer.status === "alive" ? "victory" : "defeat";
     }
 
     if (match.state === "setup") {
@@ -88,52 +116,6 @@ export function deriveLobbyStatus(
   }
 
   return "live";
-}
-
-/** Split the raw match lists into the five lobby views (preserving the caller's match type). */
-export function categorizeMatches<T extends LobbyMatch>(
-  playerMatches: T[],
-  allMatches: T[],
-  playerId: string | undefined,
-): Record<LobbyView, T[]> {
-  const needs: T[] = [];
-  const mine: T[] = [];
-  const history: T[] = [];
-
-  for (const match of playerMatches) {
-    if (isFinished(match)) {
-      history.push(match);
-      continue;
-    }
-
-    mine.push(match);
-
-    const viewer = viewerOf(match, playerId);
-    const awaitingMove = match.state !== "setup" && viewer?.hasCurrentTurn === true;
-    const awaitingReady = match.state === "setup" && viewer?.ready !== true;
-
-    if (awaitingMove || awaitingReady) {
-      needs.push(match);
-    }
-  }
-
-  const ownIds = new Set(playerMatches.map((match) => match.id));
-  const find: T[] = [];
-  const watch: T[] = [];
-
-  for (const match of allMatches) {
-    if (ownIds.has(match.id) || isFinished(match)) {
-      continue;
-    }
-
-    if (match.state === "setup" && openSlots(match) > 0) {
-      find.push(match);
-    } else if (isFull(match)) {
-      watch.push(match);
-    }
-  }
-
-  return { needs, mine, find, watch, history };
 }
 
 /**
@@ -171,27 +153,6 @@ export const STATUS_META: Record<
   },
   open: { label: "Open slot", pill: "@bg-primary @text-black", stripe: "@bg-primary" },
   completed: { label: "Completed", pill: "@bg-slate-600 @text-slate-100", stripe: "@bg-slate-500" },
-};
-
-/** In-view filter chips. Each chip keeps only the matches whose derived status it accepts. */
-export type LobbyFilter = {
-  key: string;
-  label: string;
-  accepts: (kind: LobbyStatusKind) => boolean;
-};
-
-export const VIEW_FILTERS: Partial<Record<LobbyView, LobbyFilter[]>> = {
-  mine: [
-    { key: "all", label: "All", accepts: () => true },
-    { key: "your-turn", label: "Your turn", accepts: (kind) => kind === "your-turn" },
-    { key: "waiting", label: "Waiting", accepts: (kind) => kind === "their-turn" },
-    { key: "setup", label: "Setup", accepts: (kind) => kind === "setup" },
-  ],
-  history: [
-    { key: "all", label: "All", accepts: () => true },
-    { key: "wins", label: "Wins", accepts: (kind) => kind === "victory" },
-    { key: "losses", label: "Losses", accepts: (kind) => kind === "defeat" },
-  ],
 };
 
 export type MatchActionVariant = "turn" | "primary" | "ghost";

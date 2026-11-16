@@ -183,6 +183,9 @@ model Player {
   /// Behaviour log (abandons, AFK…), kept for long-term moderation.
   infractions PlayerInfraction[]
 
+  lobbyMemberships PlayerInLobby[]
+  hostedLobbies    Lobby[]          @relation(name: "lobbyHost")
+
   commendationsGiven    Commendation[] @relation("commendationsGiven")
   commendationsReceived Commendation[] @relation("commendationsReceived")
   name        String        @unique
@@ -220,6 +223,7 @@ model WWMap {
   predeployedUnits Json
   numberOfPlayers  Int
   matches          Match[]
+  lobbies          Lobby[]
   createdAt        DateTime @default(now())
 
   /// Modes this map may be played in at all. Seat count cannot decide this on its own: a 2v2 map
@@ -339,6 +343,10 @@ model Match {
   /// This is what fixes `finishedRowToFrontend`'s hardcoded `turn: 0`.
   days       Int?
   durationMs Int?
+
+  /// the Lobby this match was spawned from (v2 provenance; null for v1 matches)
+  lobby   Lobby?  @relation(fields: [lobbyId], references: [id])
+  lobbyId String? @unique
 
   map   WWMap  @relation(fields: [mapId], references: [id])
   mapId String
@@ -781,4 +789,86 @@ model CoPhaseEffect {
   params  Json? // kind-specific payload the engine interprets
 
   @@index([phaseId])
+}
+
+enum LobbyStatus {
+  assembling // gathering players (custom invite or matchmaking)
+  ready_check // AFK accept window (matchmaking only)
+  map_ban // matchmaking map pick & ban (after both accept, before the Match spawns)
+  map_reveal // winning map locked in; both players study it (~30s) before the CO pick
+  cancelled // nobody joined / someone declined
+  started // spawned its Match, lobby closed
+}
+
+enum LobbyMembership {
+  invited // pending invite (custom lobby); accept -> active, reject -> row deleted
+  active // joined the lobby
+}
+
+model Lobby {
+  id           String     @id @default(cuid())
+  host         Player?    @relation(name: "lobbyHost", fields: [hostPlayerId], references: [id])
+  hostPlayerId String? // set for custom lobbies; null for matchmaking
+  isRanked     Boolean    @default(false)
+  /// Drives team count + slots. Cast in place from the old free-text "1v1"/"2v2"/"ffa4" by
+  /// utils/phase1-league-backfill.sql — `db push` can't express the USING clause and would have
+  /// dropped the column instead.
+  mode         GameMode
+  ruleset      Ruleset
+
+  /// [PrismaMatchRules] MatchRules draft (fog, funds, pickSeconds, teamMapping…)
+  rules Json
+
+  map   WWMap?  @relation(fields: [mapId], references: [id])
+  mapId String? // host-chosen; matchmaking assigns
+
+  /// [PrismaTeamFactions] random AW faction per team index (cosmetic)
+  teamFactions Json?
+
+  status      LobbyStatus @default(assembling)
+  readyEndsAt DateTime? // AFK ready-check deadline (matchmaking, ~30s)
+
+  // --- matchmaking map pick & ban (status = map_ban) ---
+  readyCheckLenient Boolean @default(false) // wide MMR gap: longer window + no sanction on decline
+  /// How lopsided the pairing was, in percentage points away from an even 50/50 (0..50) — e.g. 18
+  /// means the favourite had ~68% odds. Audit/display only.
+  ///
+  /// A GAP, not a rating: the hidden μ/σ never leaves the server, and a relative gap doesn't
+  /// reconstruct it. Replaced `mmrDiff`, which was an Elo distance and became meaningless when
+  /// fairness stopped being expressible as one (a fixed μ gap means different things at different σ
+  /// — see .ai/plans/ranked-ladder-plan.md §4.1).
+  fairnessGap       Int?
+  /// [PrismaMapPool] candidate WWMap ids for the ban phase (mapId stays null until the roll)
+  mapPool           Json?
+  mapPhaseEndsAt    DateTime? // map pick & ban deadline (mirrors readyEndsAt)
+
+  /// the Match spawned from this lobby (back-relation; FK lives on Match.lobbyId)
+  match Match?
+
+  createdAt DateTime        @default(now())
+  members   PlayerInLobby[]
+}
+
+model PlayerInLobby {
+  id       String @id @default(cuid())
+  lobby    Lobby  @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  lobbyId  String
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  membership  LobbyMembership @default(active) // invited = pending; accept -> active, reject -> delete
+  team        Int? // self-assigned team index (null = unassigned bench)
+  slot        Int? // slot within team (or overall for FFA)
+  isSpectator Boolean         @default(false) // FFA overflow / explicit spectator
+  accepted    Boolean         @default(false) // AFK ready-check accepted (matchmaking only)
+
+  // --- matchmaking map pick & ban ---
+  /// [PrismaBannedMapIds] this player's banned WWMap ids (2 in 1v1)
+  bannedMapIds Json?
+  votedMapId   String? // this player's single map vote (must be a non-banned pool member)
+
+  joinedAt    DateTime        @default(now())
+
+  @@unique([lobbyId, playerId])
+  @@index([playerId])
 }

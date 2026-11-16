@@ -2,6 +2,7 @@ import { DomainEvents } from "server/core/domain-events";
 import type { MatchSpawner } from "server/core/ports";
 import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
+import { LobbyUsecase } from "server/lobby/lobby.usecase";
 import { MatchActionUsecase } from "server/matches/match-action.usecase";
 import { MatchLifecycleUsecase } from "server/matches/match-lifecycle.usecase";
 import { MatchesUsecase } from "server/matches/matches.usecase";
@@ -14,6 +15,7 @@ import { logger } from "shared/utils/logger";
 import { articleRouter } from "./routers/article";
 import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
+import { makeLobbyRouter } from "./routers/lobby";
 import { makeMapRouter } from "./routers/maps";
 import { makeMatchRouter } from "./routers/match";
 import { makeActionRouter } from "./routers/match/action";
@@ -73,12 +75,13 @@ const matchesUsecase = new MatchesUsecase(prisma, matchStore, {
 domainEvents.on("matchFinished", ({ matchId }) => rankingUsecase.rateFinishedMatch(matchId));
 
 /**
- * `matchesUsecase` is the `MatchSpawner` implementation declared in `core/ports.ts`. It has no
- * consumer yet — lobby and matchmaking are the two that spawn matches — so it is asserted against
- * the port here rather than left to drift until they land.
+ * `matchesUsecase` is the `MatchSpawner` implementation declared in `core/ports.ts`; the lobby is
+ * its first consumer. Naming the port here is what keeps implementation and contract in step.
  */
 const matchSpawner: MatchSpawner = matchesUsecase;
-void matchSpawner;
+
+/** The lobby assembles seats, then hands them to match play through the port — never by import. */
+const lobbyUsecase = new LobbyUsecase(prisma, matchSpawner);
 
 // ── Transport ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -87,6 +90,7 @@ export const appRouter = router({
   match: makeMatchRouter(matchLifecycleUsecase, matchesUsecase),
   endgame: makeEndgameRouter(endgameUsecase),
   honor: makeHonorRouter(honorUsecase),
+  lobby: makeLobbyRouter(lobbyUsecase),
   ranking: makeRankingRouter(rankingUsecase),
   map: makeMapRouter(mapsUsecase),
   action: makeActionRouter(matchActionUsecase),
