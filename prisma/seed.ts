@@ -262,7 +262,8 @@ async function main() {
 
   await prisma.match.create({
     data: {
-      leagueType: "standard",
+      mode: "duel",
+      ruleset: "standard",
       rules: {
         bannedUnitTypes: [],
         captureLimit: 50,

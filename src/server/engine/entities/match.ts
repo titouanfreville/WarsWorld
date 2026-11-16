@@ -1,5 +1,6 @@
-import type { LeagueType, MatchStatus, WWMap } from "server/engine/types/domain-entities";
-import { DispatchableError } from "server/engine/DispatchedError";
+import type { MatchStatus, WWMap } from "server/engine/types/domain-entities";
+import { DispatchableError } from "server/engine/dispatchable-error";
+import type { GameMode, Ruleset } from "server/core/schemas/game-mode";
 import type { MatchRules } from "server/core/schemas/match-rules";
 import type { PlayerSlot } from "server/core/schemas/player-slot";
 import type { Position } from "server/core/schemas/position";
@@ -8,6 +9,8 @@ import type { Tile } from "server/core/schemas/tile";
 import type { WWUnit } from "server/core/schemas/unit";
 import type { Weather } from "server/core/schemas/weather";
 import type { ChangeableTile } from "server/core/schemas/tile-state";
+import type { PowerActivationReport, TurnStartReport } from "server/engine/types/events";
+import type { GameOverReason } from "server/engine/previews/game-over";
 import {
   createNeutralPlayerInMatch,
   type PlayerInMatch,
@@ -37,6 +40,37 @@ export class MatchWrapper<
   private currentWeather: Weather = "clear";
   public playerToRemoveWeatherEffect: PlayerInMatchWrapper | null = null;
   public weatherDaysLeft = 0;
+  /**
+   * The latest start-of-turn report (day + repaired/refuelled units), set by applyPassTurnEvent for
+   * the player whose turn is beginning. Transient derived state — re-populated on event-log replay,
+   * never persisted directly. The FE reads it (fog-safe, own-units-only) to play the start-round
+   * animation. Null until the first pass-turn.
+   */
+  public turnStartReport: TurnStartReport | null = null;
+  /**
+   * The most recent CO-power activation, set by applyCOPowerEvent and cleared at the next pass-turn.
+   * Transient derived state (rebuilt on replay, like {@link turnStartReport}); the FE reads it
+   * (fog-masked positions) to play the activation cinematic + on-board effects. Null until a power
+   * is used, and null again once the activating player's next turn begins.
+   */
+  public powerActivationReport: PowerActivationReport | null = null;
+  /**
+   * How this match ended, set by `stampOutcome` when it finishes. Null while it's still being played.
+   * Rebuilt by replay like the reports above (the final event is what decides it), and persisted on
+   * the Match row so the history/battle-report path — which never touches this entity — can say
+   * "decided on the day limit" rather than just naming a winner.
+   */
+  public endReason: GameOverReason | null = null;
+  /**
+   * When the current turn runs out, as epoch ms — `now + the acting player's bank`, armed by the
+   * orchestrator each time the turn moves on. Null in an untimed match.
+   *
+   * ORCHESTRATION state, not a rule: no engine logic branches on it, and it's persisted on the Match
+   * row (unlike the banks, which rebuild from the event log) because elapsed wall-clock can't be
+   * replayed — without it a restart would hand the acting player a fresh full bank. The pass-turn
+   * action-to-event step reads it once to record what's left; nothing else in the engine touches it.
+   */
+  public turnEndsAt: number | null = null;
   public teams: TeamWrapper[] = [];
   private neutralPlayer: PlayerInMatchWrapper;
   /**
@@ -50,7 +84,13 @@ export class MatchWrapper<
 
   constructor(
     public id: string,
-    public leagueType: LeagueType,
+    /**
+     * Seat shape + rules, replacing the old flat `leagueType`. Ranked-ness deliberately does NOT
+     * live here: it's ranking metadata, not match state, so it stays on the Prisma row and off the
+     * engine entity (engine scope is strict — see src/server/CLAUDE.md).
+     */
+    public mode: GameMode,
+    public ruleset: Ruleset,
     public changeableTiles: ChangeableTileType[], //TODO change to map from position to changeableTile for better performance
     public rules: MatchRules,
     public status: MatchStatus,
@@ -125,7 +165,10 @@ export class MatchWrapper<
       const isBrokenPipeSeam = "hp" in foundChangeableTile && foundChangeableTile.hp < 1;
 
       if (isBrokenPipeSeam) {
-        const tile = this.getTile(position);
+        // The STATIC map tile, read directly — a broken seam's orientation comes from the map's own
+        // pipe variant. Calling `getTile` here would re-find this same changeable tile and recurse
+        // forever (every lookup on a destroyed seam blew the stack).
+        const tile = this.map.data.tiles[position[1]][position[0]];
 
         if ("variant" in tile && tile.variant === "top-bottom") {
           return {

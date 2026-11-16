@@ -3,6 +3,7 @@ import type { GameVersion } from "server/core/schemas/game-version";
 import type { Position } from "server/core/schemas/position";
 import type { PlayerInMatchWrapper } from "server/engine/entities/player-in-match";
 import type { Hooks } from "server/engine/rules/co-hooks";
+import type { PowerSignatureKind } from "server/engine/types/events";
 import { applyEffects } from "server/engine/constants/co-effects";
 import { buildPhaseHooks } from "server/engine/constants/co-profile";
 import type { COProfile } from "server/engine/constants/co-profile";
@@ -76,6 +77,12 @@ type COPower = {
   instantEffect?: (player: PlayerInMatchWrapper, positions?: Position[]) => void;
   calculatePositions?: (player: PlayerInMatchWrapper) => Position[];
   hooks?: Partial<Hooks>;
+  /**
+   * The canonical Advance Wars launch animation for an offensive positional power — rendered by the FE
+   * at the power's `calculatePositions` tiles. Only set on the powers that have a signature strike
+   * (Sturm = meteor, von-Bolt = lightning, Rachel = missiles); absent otherwise.
+   */
+  signatureEffect?: PowerSignatureKind;
 };
 
 // TODO general CO description, likes, dislikes, etc.
@@ -199,10 +206,32 @@ const CO_TARGETING: Record<string, (player: PlayerInMatchWrapper) => Position[]>
   },
 };
 
+/**
+ * The canonical launch animation per power, keyed by `co/phase` (a CO's signature is the same across
+ * game versions). Grafted onto the declarative powers so the FE can play the set-piece: positional
+ * strikes (meteor / lightning / missiles) over the impact tiles, or global sweeps (tsunami / blackWave
+ * / blizzard) across the whole board. Presentation metadata about the power's identity — not stat data.
+ */
+const CO_SIGNATURE: Record<string, PowerSignatureKind> = {
+  // Positional strikes (also have a CO_TARGETING entry that supplies the impact tiles).
+  "rachel/superCoPower": "missiles",
+  "sturm/coPower": "meteor",
+  "sturm/superCoPower": "meteor",
+  "von-bolt/superCoPower": "lightning",
+  // Global sweeps (whole-board effects — no target tiles).
+  "drake/coPower": "tsunami",
+  "drake/superCoPower": "tsunami",
+  "hawke/coPower": "blackWave",
+  "hawke/superCoPower": "blackWave",
+  "olaf/coPower": "blizzard",
+  "olaf/superCoPower": "blizzard",
+};
+
 const buildPower = (profile: COProfile, phaseKey: PowerPhaseKey): COPower => {
   const phase = profile[phaseKey]!;
   const effects = phase.effects;
   const calculatePositions = CO_TARGETING[`${profile.gameVersion}/${profile.key}/${phaseKey}`];
+  const signatureEffect = CO_SIGNATURE[`${profile.key}/${phaseKey}`];
 
   return {
     name: phase.name ?? "",
@@ -213,6 +242,7 @@ const buildPower = (profile: COProfile, phaseKey: PowerPhaseKey): COPower => {
       ? { instantEffect: (player, positions) => applyEffects(effects, player, positions) }
       : {}),
     ...(calculatePositions !== undefined ? { calculatePositions } : {}),
+    ...(signatureEffect !== undefined ? { signatureEffect } : {}),
   };
 };
 

@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { UnloadNoWaitAction } from "server/core/schemas/action";
 import { addDirection } from "server/core/schemas/position";
 import type { UnloadNoWaitEvent } from "server/engine/types/events";

@@ -1,19 +1,43 @@
-import { authMiddleware } from "./middleware/auth";
-import { matchMiddleware } from "./middleware/match";
-import { withMatchIdSchema } from "server/core/schemas/match-id";
+import { authMiddleware, requireCapability } from "./middleware/auth";
+import { errorMappingMiddleware } from "./middleware/errors";
+import { matchMiddleware, withMatchIdSchema } from "./middleware/match";
 import { playerMiddleware, withPlayerIdSchema } from "./middleware/player";
 import { t } from "./trpc-init";
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 
-export const { router } = t;
-export const publicBaseProcedure = t.procedure;
+export const { router, mergeRouters } = t;
 
-export const playerBaseProcedure = t.procedure
+/**
+ * EVERY procedure is built from this one, so that typed domain errors get mapped to their proper
+ * transport codes exactly once (see middleware/errors.ts). Outermost on purpose — it must wrap the
+ * auth/player/match middlewares below, which throw `DispatchableError` themselves.
+ */
+export const publicBaseProcedure = t.procedure.use(errorMappingMiddleware);
+
+export const playerBaseProcedure = publicBaseProcedure
   .input(withPlayerIdSchema)
   .use(authMiddleware)
   .use(playerMiddleware);
 
 export const matchBaseProcedure = playerBaseProcedure.input(withMatchIdSchema).use(matchMiddleware);
+
+/**
+ * Privileged tools that fabricate match state.
+ *
+ * Built on `matchBaseProcedure`, NOT `playerInMatchBaseProcedure`: the latter enforces "it's your
+ * turn", and a dev tool that only works on your own turn would be useless for setting up a scenario.
+ *
+ * The capability is only the *user* half of the gate. Whether the tools are allowed in THIS match
+ * (ranked? testing-tools enabled?) depends on the match, so the usecase must still call
+ * `assertDevToolsAllowed`. Neither check alone is sufficient.
+ */
+export const devToolsBaseProcedure = matchBaseProcedure.use(requireCapability("devTools"));
+
+/** Admin-only transport: modify rank, force a match, force an outcome. */
+export const adminBaseProcedure = playerBaseProcedure.use(requireCapability("adminTools"));
+
+/** Admin-only, scoped to a match (force outcome, unwait a unit). */
+export const adminMatchBaseProcedure = matchBaseProcedure.use(requireCapability("adminTools"));
 
 export const playerInMatchBaseProcedure = matchBaseProcedure.use(
   matchMiddleware.unstable_pipe(playerMiddleware).unstable_pipe(({ ctx, next }) => {

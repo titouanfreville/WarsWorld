@@ -29,5 +29,9 @@ export const spritesheetDataSchema = z.strictObject({
   meta: z.object({
     scale: z.string().or(z.number()),
     image: z.string(),
+    // The full atlas dimensions. Preserved deliberately: `z.object` strips keys it doesn't name,
+    // and dropping `size` here left every DOM sprite (terrain thumbs, the dev unit picker) unable
+    // to scale/crop the atlas — `terrainThumb`/`unitThumb` returned undefined and fell back to text.
+    size: sizeSchema.optional(),
   }),
 }) satisfies z.ZodType<ISpritesheetData>;

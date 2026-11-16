@@ -29,25 +29,29 @@ export type Rater = {
   rateFinishedMatch(matchId: string): Promise<void>;
 };
 
+/** A confirmed seat handed over by whoever assembled the match: who sits where. */
+export type SpawnSeat = { playerId: string; team: number; slotWithinTeam: number };
+
 export type SpawnMatchInput = {
-  mapId: string;
-  rules: MatchRules;
+  /** Provenance, when the match came from a lobby. */
+  lobbyId?: string;
   mode: GameMode;
   ruleset: Ruleset;
   isRanked: boolean;
-  /** The player opening the match; takes slot 0. */
-  createdBy: { id: string; name: string };
+  mapId: string;
+  rules: MatchRules;
+  seats: SpawnSeat[];
+  /** Cosmetic faction per team index, carried from whoever assembled the seats. */
+  teamFactions?: string[];
 };
 
 /**
- * What lobby/matchmaking needs from whoever owns matches.
+ * What lobby/matchmaking need from whoever owns matches. Implemented by `MatchesUsecase`.
  *
- * DECLARED, NOT YET IMPLEMENTED — match play still lives in `server/routers/match`, and giving this
- * an implementation means first deciding where the match feature's boundary falls (its creation path
- * reaches for `INITIAL_FUNDS`, an engine constant a feature may not import). That decision belongs
- * to the match-play branch; the contract is here so that branch builds against it rather than
- * inventing a shape later, and so lobby/matchmaking have something to code against meanwhile.
+ * The composition root asserts the implementation against this type, so the two cannot drift
+ * silently — which they already did once: this port was written before `MatchesUsecase` existed and
+ * guessed both the method name and the payload wrong.
  */
 export type MatchSpawner = {
-  spawn(input: SpawnMatchInput): Promise<{ matchId: string }>;
+  spawnFromLobby(input: SpawnMatchInput): Promise<{ matchId: string }>;
 };

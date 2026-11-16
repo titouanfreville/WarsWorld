@@ -177,6 +177,12 @@ model Player {
   MMR         MMR[]
 
   /// Commendations are directional, so the Player sits on both ends of the same table.
+  /// Per-match battle report rows for this player (written once at finalize).
+  matchStats MatchPlayerStats[]
+
+  /// Behaviour log (abandons, AFK…), kept for long-term moderation.
+  infractions PlayerInfraction[]
+
   commendationsGiven    Commendation[] @relation("commendationsGiven")
   commendationsReceived Commendation[] @relation("commendationsReceived")
   name        String        @unique
@@ -216,6 +222,18 @@ model WWMap {
   matches          Match[]
   createdAt        DateTime @default(now())
 
+  /// Modes this map may be played in at all. Seat count cannot decide this on its own: a 2v2 map
+  /// and a free-for-all map both seat 4 but are designed around opposite assumptions (teammates
+  /// adjacent vs. all four equidistant), so the legal modes are declared, not inferred.
+  /// Empty means the map is not playable anywhere — treat that as unconfigured, not as a mode.
+  supportedModes GameMode[]
+  /// Modes this map is ranked-legal in — a subset of `supportedModes`. Deliberately per-mode
+  /// rather than one boolean: a 4-player map can be fair enough for ranked free-for-all while
+  /// being unbalanced for ranked 2v2, and a boolean would force banning both. Empty = casual only,
+  /// which is the safe default for an imported or unvetted map: nothing reaches the rating ladder
+  /// until someone opts it in.
+  rankedModes    GameMode[]
+
   // TODO maps should have different sets of captureLimits and bannedUnitTypes
   // per league type.
 
@@ -235,9 +253,10 @@ model ChatMessage {
 }
 
 enum MatchStatus {
-  setup
+  setup // general-picker round (timed CO selection; enemy COs hidden until reveal)
   playing
   finished
+  cancelled // pick-phase abandoned / timed out with players unready
 }
 
 enum LeagueType {
@@ -273,17 +292,15 @@ model MMR {
 }
 
 model Match {
-  id          String        @id @default(cuid())
-  matchPlayers MatchPlayer[]
-  leagueType  LeagueType
-  MeritEvent  MeritEvent[]
+  id String @id @default(cuid())
 
-  /// Seat shape + rules axes. Additive alongside `leagueType`, which the match-creation feature
-  /// removes once every creation site sets these.
-  mode     GameMode  @default(duel)
-  ruleset  Ruleset   @default(standard)
-  isRanked Boolean   @default(false)
-  ratedAt  DateTime?
+  /// Seat shape + rules, replacing the old flat `leagueType` (plan §3.1). `mode` was previously
+  /// unreachable from a Match at all — it lived only on Lobby, and lobbyId is null for v1 matches,
+  /// which is why the history list couldn't filter by it.
+  ///
+  /// Ranked-ness is the third axis and already exists below as `isRanked`.
+  mode    GameMode
+  ruleset Ruleset
 
   /// [PrismaMatchRules]
   rules  Json
@@ -292,14 +309,53 @@ model Match {
   /// Persisted match outcome (set once, when the game is decided). Null while playing.
   /// winnerTeamIndex is null on a draw even though the match is finished.
   winnerTeamIndex Int?
+  /// How it ended: "elimination" | "day-limit" (GameOverReason in TS). Without it a day-limit draw
+  /// and a mutual-elimination draw are the same row, so history can't tell them apart. Null for
+  /// matches finished before this was tracked.
+  endReason       String?
   finishedAt      DateTime?
+
+  // --- v2 lobby/match path ---
+  isRanked     Boolean   @default(false)
+  /// [PrismaTeamFactions] cosmetic faction per team index (carried from the Lobby)
+  teamFactions Json?
+  /// general-picker deadline (setup status only); FE renders `pickEndsAt - now`
+  pickEndsAt   DateTime?
+  /// Turn-clock deadline for the player currently on turn (`now + their bank`), re-armed on every
+  /// turn change. Null in an untimed match. Persisted because elapsed wall-clock cannot be replayed
+  /// from the event log — without it a restart would hand the acting player a fresh full bank; the
+  /// per-player banks themselves ARE event-derived and are not stored.
+  turnEndsAt   DateTime?
+  /// CO reveal gate: while null, enemy generals are hidden from queries/emits
+  revealedAt   DateTime?
+  /// set when MMR has been applied for this (ranked) match — idempotency guard for finalize
+  ratedAt      DateTime?
+  /// set when MatchPlayerStats has been written — the stats half of the finalize guard. Separate
+  /// from `ratedAt` because stats are written for EVERY finished match, ranked or not.
+  statsAt      DateTime?
+
+  /// Day count + wall-clock length at finish, persisted so a history row needn't replay the event
+  /// log to show them. Null while playing, and on finished rows that predate the backfill.
+  /// This is what fixes `finishedRowToFrontend`'s hardcoded `turn: 0`.
+  days       Int?
+  durationMs Int?
 
   map   WWMap  @relation(fields: [mapId], references: [id])
   mapId String
 
-  /// [PrismaPlayerState]
+  /// [PrismaPlayerState] v1 durable player state — KEPT for the v1 game (transition period).
+  /// New code must read `matchPlayers`, never this blob.
   playerState Json
   // playersConsentingToPublishChat Player[]
+
+  /// v2 relational membership — the queryable durable store for the new match path
+  matchPlayers MatchPlayer[]
+
+  /// Per-player battle-report headline, written once at finalize (see MatchPlayerStats).
+  playerStats MatchPlayerStats[]
+
+  /// Merit movement this match caused — ranked matches only.
+  meritEvents MeritEvent[]
 
   chatMessages ChatMessage[]
   chatIsPublic Boolean       @default(false)
@@ -316,8 +372,17 @@ model Event {
   match   Match  @relation(fields: [matchId], references: [id])
   matchId String
 
-  /// the index describes the order of events. they are not universally unique, but unique per match.
-  index Int @default(autoincrement()) @map("eventIndex")
+  /// The order of events within a match. Assigned by `appendEvent` (server/adapters/event-log.ts)
+  /// as max+1 for THIS match — deliberately NOT a database default. It used to be
+  /// `@default(autoincrement())`, but on Postgres that is a GLOBAL sequence: every insert drew a
+  /// fresh globally-unique value, so the `@@id([matchId, index])` primary key below could never
+  /// collide and the log had no write fence — two writers on one match would both succeed and
+  /// silently interleave a divergent history. Deriving it per match makes that primary key the
+  /// optimistic-concurrency check the log needs to survive a sharded/replicated game tier.
+  /// Values are per-match ordered but NOT contiguous: rows predating this change keep their old
+  /// global-sequence values, and each match simply continues from its own max. Only `orderBy` ever
+  /// reads it, so the gaps are harmless.
+  index Int @map("eventIndex")
 
   /// [PrismaEvent]
   content Json
@@ -431,6 +496,8 @@ model MeritEvent {
   @@index([playerId, createdAt])
 }
 
+// Relational per-player match facts (the v2 durable store). Named MatchPlayer to avoid clashing
+// with the v1 runtime `PlayerInMatch` type (shared/types/server-match-state), which is kept.
 model MatchPlayer {
   id       String @id @default(cuid())
   match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
@@ -484,4 +551,61 @@ model Commendation {
 
   @@unique([matchId, fromId]) // one medal awarded per giver per match
   @@index([toId, medal]) // per-medal tallies for tier + prestige
+}
+
+/// Per-player battle-report headline, computed ONCE at finalize (buildMatchStats + computeGrades)
+/// and stored so the history list can show a grade without replaying the event log per row.
+///
+/// Deliberately NOT the whole `MatchStats`: the timeline (per-turn funds/army-value/properties) and
+/// captureLog stay out — they're a time series, not a row, and only the full battle report needs
+/// them. `endgame.summary` still replays for that; this table serves the list.
+model MatchPlayerStats {
+  match    Match  @relation(fields: [matchId], references: [id])
+  matchId  String
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  /// computeGrades() — the S/A/B/C "match note", plus the three axes behind it (0..100).
+  grade    String
+  tactics  Int
+  strength Int
+  economy  Int
+
+  /// Funds-value of enemy HP destroyed / own HP lost in combat.
+  damageDealt Int
+  damageTaken Int
+  unitsKilled Int
+  unitsLost   Int
+  captures    Int
+  /// Economy: funds spent building, and total income earned across the match.
+  producedFunds Int
+  incomeEarned  Int
+  powersUsed    Int
+
+  /// [PrismaUnitBreakdown] per-unit-type tallies (built / lost / damage-dealt) — the EG review's
+  /// "by unit" sub-rows, already computed by buildMatchStats and kept here for career aggregation on
+  /// the profile. Null for matches finalized before this was tracked (run the unit-stats backfill).
+  unitBreakdown Json?
+
+  @@id([matchId, playerId])
+  @@index([playerId])
+}
+
+// Durable, cross-cutting behaviour log for long-term moderation + sanctions (not just leavers).
+model PlayerInfraction {
+  id       String @id @default(cuid())
+  player   Player @relation(fields: [playerId], references: [id])
+  playerId String
+
+  type     String // "afk_ingame" | "missed_ready_check" | "abandoned_map_ban" | "abandoned_pick" | "left_lobby" | "chat_harassment" | …
+  severity Int     @default(1) // weight for sanction thresholds
+  matchId  String? // context when applicable
+  lobbyId  String?
+  detail   Json? // freeform (e.g. turns missed, message id)
+
+  createdAt DateTime @default(now())
+
+  @@index([playerId])
+  @@index([playerId, type])
+  @@index([playerId, createdAt])
 }

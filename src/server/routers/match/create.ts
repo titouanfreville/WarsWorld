@@ -3,9 +3,9 @@ import { prisma } from "server/prisma/prisma-client";
 import { mapMiddleware } from "server/trpc/middleware/map";
 import { playerBaseProcedure } from "server/trpc/trpc-setup";
 import { INITIAL_FUNDS } from "server/engine/constants/funds";
-import { matchRulesSchema } from "shared/schemas/match-rules";
+import { matchRulesSchema } from "server/core/schemas/match-rules";
 import { z } from "zod";
-import { matchToFrontend } from "./util";
+import { matchToFrontend } from "server/matches/lifecycle-helpers";
 
 export const createMatchProcedure = playerBaseProcedure
   .input(
@@ -19,7 +19,9 @@ export const createMatchProcedure = playerBaseProcedure
     const matchOnDB = await prisma.match.create({
       data: {
         status: "setup",
-        leagueType: "standard",
+        // v1 create path: always a standard duel. The lobby path (v2) carries real values through.
+        mode: "duel",
+        ruleset: "standard",
         playerState: [
           {
             slot: 0,

@@ -1,13 +1,21 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { AbilityAction } from "server/core/schemas/action";
 import { addDirection, allDirections } from "server/core/schemas/position";
 import type { AbilityEvent } from "server/engine/types/events";
 import type { CapturableTile } from "server/core/schemas/tile-state";
 import type { MatchWrapper } from "server/engine/entities/match";
 import type { UnitWrapper } from "server/engine/entities/unit";
+import { releaseHoldings } from "server/engine/rules/elimination";
 import type { ApplySubEvent, SubActionToEvent } from "server/engine/events/handler-types";
 
 function willCaptureTile(unit: UnitWrapper<"infantry" | "mech">): boolean {
+  /* Dev tool: capture completes in one action, exactly like Sami's SCOP below. Deliberately routed
+   * through the real capture path so HQ-capture elimination and the capture-limit victory check
+   * still fire — a tool that flipped tile ownership directly would skip both. */
+  if (unit.player.data.devModifiers?.directCapture === true) {
+    return true;
+  }
+
   let capturePoints = unit.data.currentCapturePoints ?? 20;
 
   if (unit.player.data.coId.name === "sami") {
@@ -136,24 +144,9 @@ const eliminatePlayerByCapture = (match: MatchWrapper, capturingUnit: UnitWrappe
     );
   }
 
-  const newOwnerSlot = capturingUnit.data.playerSlot;
-  const previousOwnerVision = playerToEliminate.team.vision;
-  const newOwnerVision = capturingUnit.player.team.vision;
-
-  for (const changeableTile of match.changeableTiles) {
-    if ("playerSlot" in changeableTile && playerToEliminate.owns(changeableTile)) {
-      // Everyone watching the tile as it changes hands learns its new owner (fog last-known); the
-      // losing player always sees their own property flip. Must run BEFORE removeOwnedProperty, while
-      // the previous owner still has vision of it.
-      match.rememberPropertyOwnerForWatchers(changeableTile.position, newOwnerSlot);
-      // Hand the property's fog vision over with its ownership: drop it from the eliminated player's
-      // team (so a surviving teammate can't keep seeing it) and grant it to the new owner. Without
-      // this the next recalculateVision() would rebuild the OLD owner's sight of transferred tiles.
-      previousOwnerVision?.removeOwnedProperty(changeableTile.position);
-      changeableTile.playerSlot = newOwnerSlot;
-      newOwnerVision?.addOwnedProperty(changeableTile.position);
-    }
-  }
+  // The capturer inherits the lot, and the captured HQ becomes a city (see rules/elimination.ts —
+  // shared with the rout and resignation paths so the board can't tell you HOW someone died).
+  releaseHoldings(match, playerToEliminate, capturingUnit.data.playerSlot);
 
   for (const unit of playerToEliminate.getUnits()) {
     unit.remove();
@@ -197,7 +190,12 @@ export const applyAbilityEvent: ApplySubEvent<AbilityEvent> = (match, event, fro
         unit.data.currentCapturePoints = 20;
       }
 
-      if (unit.player.data.coId.name === "sami") {
+      // NOTE: this mirrors `willCaptureTile` above, which predicts the same outcome for the event's
+      // elimination reason. The two compute capture points independently and MUST agree — changing
+      // one alone makes the predicted and applied captures diverge.
+      if (unit.player.data.devModifiers?.directCapture === true) {
+        unit.data.currentCapturePoints = 0; // dev tool: insta capture, as Sami's SCOP does below
+      } else if (unit.player.data.coId.name === "sami") {
         if (unit.player.data.COPowerState === "super-co-power") {
           unit.data.currentCapturePoints = 0; // insta capture
         } else {

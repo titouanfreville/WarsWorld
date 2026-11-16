@@ -1,7 +1,15 @@
 import { TRPCError } from "@trpc/server";
-import { withMatchIdSchema } from "server/core/schemas/match-id";
+import { z } from "zod";
 import { t } from "../trpc-init";
 import { matchStore } from "server/match-store";
+import type { Match } from "@prisma/client";
+
+export const withMatchIdSchema = z.object<{ matchId: z.ZodType<Match["id"]> }>({
+  matchId: z.string(),
+});
+
+// The type is engine-event vocabulary (engine owns it); the schema here validates transport input.
+export type { WithMatchId } from "server/engine/types/events";
 
 export const matchMiddleware = t.middleware(async ({ ctx, input, next }) => {
   const parseResult = withMatchIdSchema.safeParse(input);

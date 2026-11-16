@@ -37,9 +37,12 @@ export const DIRECTION_OFFSET: Record<BoardDirection, BoardPosition> = {
 /** Stable string key for a position (`"x,y"`) — for Map/Set lookups over the board. */
 export const posKey = (p: BoardPosition): string => `${p[0]},${p[1]}`;
 
+/** Copy a readonly position into a plain mutable tuple, for wire/query/mutation call sites. */
+export const toTuple = (p: BoardPosition): [number, number] => [p[0], p[1]];
+
 /** Copy a readonly path into plain mutable `[number, number]` tuples, for wire/mutation call sites. */
 export const toMutablePath = (path: readonly (readonly [number, number])[]): [number, number][] =>
-  path.map((p) => [p[0], p[1]]);
+  path.map(toTuple);
 
 /**
  * The tile shown at a position — a changeable tile (owned property, silo, pipe seam) wins over the
@@ -79,8 +82,26 @@ export const ownsSlot = (player: MatchPlayer, playerSlot: number): boolean =>
   player.slot === playerSlot;
 
 /**
- * Visual HP (0–10) of a unit. `undefined` for a fog-hidden unit whose stats the viewer can't see —
- * such a unit shows no HP badge.
+ * Visual HP (0–10) of a unit. `undefined` when the stats are masked from the viewer — an enemy Sonja
+ * unit hides its HP. The board renders a "?" badge for that case (see render-from-view).
  */
 export const visualHP = (unit: MatchUnit): number | undefined =>
   unit.stats === "hidden" ? undefined : Math.ceil(unit.stats.hp / 10);
+
+/**
+ * The most recent CO-power activation the BE sent on `match.full` (fog-masked positions). Null when
+ * no power is active this turn. The board plays the activation cinematic + special-target flourish
+ * once from it; the persistent per-unit aura reads each owner's power state instead (see below).
+ */
+export type PowerActivation = NonNullable<MatchView["powerActivation"]>;
+
+/**
+ * Whether the unit's owner currently has an active CO / super CO power — drives the persistent
+ * "under power" aura. Reads the public power summary (charge/state is public in AW), so it's correct
+ * for both the acting player and the opponent, and it naturally clears when the power ends.
+ */
+export const unitOwnerHasActivePower = (match: MatchView, unit: MatchUnit): boolean => {
+  const owner = getPlayerBySlot(match, unit.playerSlot);
+
+  return owner !== undefined && owner.power.state !== "no-power";
+};

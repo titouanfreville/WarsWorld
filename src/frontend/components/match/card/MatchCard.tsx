@@ -1,10 +1,10 @@
 import { usePlayers } from "frontend/context/players";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import type { Army } from "shared/schemas/army";
 import { armySchema } from "shared/schemas/army";
+import type { COID } from "shared/schemas/co";
 import { coSchema } from "shared/schemas/co";
-import type { MatchStatus, WWMap } from "server/engine/types/domain-entities";
-import type { PlayerInMatch } from "server/engine/entities/player-in-match-state";
 import MatchStatusBadge from "../lobby/MatchStatusBadge";
 import type { MatchActionVariant } from "../lobby/match-status";
 import { STATUS_META, deriveLobbyStatus, matchAction, openSlots } from "../lobby/match-status";
@@ -13,19 +13,30 @@ import MatchCardTop from "./MatchCardTop";
 import MatchPlayer from "./MatchPlayer";
 
 /**
- * FE-owned mirror of the match-list contract. Lived in `shared/types/component-data` until the
- * engine moved to `src/server/engine`; it is presentation shape, not engine vocabulary, so it
- * belongs to its only consumer rather than following the engine.
+ * FE-owned mirror of the match-list contract (the server's `matchToFrontend` /
+ * `finishedRowToFrontend`) — redeclared, not imported from `shared/types/component-data`, so drift
+ * surfaces as a tsc error at the tRPC call sites feeding this prop (`your-games.tsx`), not
+ * silently at runtime. `army`/`coId` keep the server's literal-union shape (`Army`/`COID`) because
+ * they flow straight into `MatchPlayer`'s strict props below — this file already imports those same
+ * schemas for the random-opponent placeholder.
  */
-export type MapBasic = Pick<WWMap, "id" | "name" | "numberOfPlayers">;
+export type FrontendMatchPlayer = {
+  id: string;
+  name: string;
+  slot: number;
+  army: Army;
+  coId: COID;
+  ready?: boolean;
+};
 
 export type FrontendMatch = {
   id: string;
-  map: MapBasic;
-  players: PlayerInMatch[];
-  state: MatchStatus;
+  // Matches the server's `MatchStatus` values structurally (kept as literals, not imported from
+  // `@prisma/client`) — `MatchCardTop` requires this exact union for its `state` prop.
+  state: "setup" | "playing" | "finished" | "cancelled";
   turn: number;
-  /** Derived match end (status isn't persisted as "finished" yet) — lets the list mark Completed. */
+  map: { name: string; numberOfPlayers: number };
+  players: FrontendMatchPlayer[];
   finished?: boolean;
 };
 
@@ -43,9 +54,9 @@ const ACTION_VARIANTS: Record<MatchActionVariant, string> = {
 export default function MatchCard({ match, inMatch }: matchData) {
   const { currentPlayer } = usePlayers();
 
-  let firstPlayer: PlayerInMatch | undefined;
+  let firstPlayer: FrontendMatchPlayer | undefined;
   let playerIndex;
-  let secondPlayer: PlayerInMatch | undefined;
+  let secondPlayer: FrontendMatchPlayer | undefined;
 
   if (currentPlayer != undefined) {
     match.players.forEach((player, index) => {

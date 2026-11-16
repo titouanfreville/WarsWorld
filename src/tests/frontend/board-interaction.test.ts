@@ -112,12 +112,23 @@ describe("buildableUnits", () => {
       { type: "tank", cost: 7000, selectable: false },
     ]);
   });
+
+  it("flags every unit selectable under free production, ignoring funds", () => {
+    // The dev free-production case: broke (0 funds) but everything buildable.
+    expect(buildableUnits(priceTable, "base", 0, true)).toEqual([
+      { type: "infantry", cost: 1000, selectable: true },
+      { type: "tank", cost: 7000, selectable: true },
+    ]);
+  });
 });
 
 describe("stageActions", () => {
-  it("offers DELETE + WAIT on the unit's own empty tile", () => {
+  // Scrapping moved out of this menu and became a board-wide mode (right-click an empty tile ->
+  // Scrap units), so standing still offers WAIT alone. The `delete` StageAction kind still exists —
+  // the mode reuses its enqueue path — it just isn't offered here any more.
+  it("offers WAIT alone on the unit's own empty tile — DELETE is a board mode now", () => {
     const res = stageActions(view(), sUnit({ position: [0, 0] }), [0, 0], EMPTY_QUEUE, "me");
-    expect(res?.actions.map((a) => a.kind)).toEqual(["delete", "wait"]);
+    expect(res?.actions.map((a) => a.kind)).toEqual(["wait"]);
   });
 
   it("offers CAPTURE on an enemy property for infantry", () => {

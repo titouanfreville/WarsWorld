@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { MainAction, MoveAction } from "server/core/schemas/action";
 import { getFinalPositionSafe } from "server/core/schemas/position";
 import type { MainEventsWithoutSubEvents, SubEvent } from "server/engine/types/events";

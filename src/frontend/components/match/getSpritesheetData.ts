@@ -1,7 +1,7 @@
 import type { ISpritesheetData } from "pixi.js";
 import type { Army } from "shared/schemas/army";
 import type { PropertyTileType } from "shared/schemas/tile";
-import type { UnitType } from "shared/schemas/unit";
+import type { UnitType } from "frontend/components/match/unit-types";
 
 export type SheetNames = Army | "neutral" | "arrow" | "icons";
 
@@ -17,6 +17,7 @@ export type ArmySpritesheetData = ISpritesheetData & {
 
 export type SpritesheetDataByArmy = Record<SheetNames, ArmySpritesheetData>;
 
-type TileAnimationVariants = `${PropertyTileType}_${"rain" | "snow"}`;
+// Matches the actual spritesheet animation keys (e.g. "city-snow", "port-rain") — hyphen, not underscore.
+type TileAnimationVariants = `${PropertyTileType}-${"rain" | "snow"}`;
 type UnitMoveDirection = "down" | "side" | "up";
 type UnitAnimationVariants = `${UnitType}-m${UnitMoveDirection}`;

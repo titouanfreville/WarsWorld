@@ -53,6 +53,7 @@ const DEFAULT_RULES: MatchRules = {
 /** Concise tile fixtures (row-major: `tiles[y][x]`, positions are `[x, y]`). */
 export const tiles = {
   road: (): Tile => ({ type: "road", variant: "right-left" }),
+  plain: (): Tile => ({ type: "plain", variant: "normal" }),
   base: (playerSlot: PlayerSlot): Tile => ({ type: "base", playerSlot }),
   city: (playerSlot: PlayerSlot): Tile => ({ type: "city", playerSlot }),
   hq: (playerSlot: PlayerSlot): Tile => ({ type: "hq", playerSlot }),
@@ -177,10 +178,15 @@ export function createTestMatch(options: ScenarioOptions): MatchWrapper {
     numberOfPlayers: players.length,
     predeployedUnits: [],
     tiles: options.tiles,
+    // Scenarios drive the engine directly, past the lobby/matchmaking guards these fields gate,
+    // so the values only need to be present and consistent with the seat count.
+    supportedModes: players.length === 2 ? ["duel"] : ["teams", "ffa"],
+    rankedModes: [],
   };
 
   return new MatchWrapper(
     "test-match",
+    "duel",
     "standard",
     options.changeableTiles ?? [],
     rules,

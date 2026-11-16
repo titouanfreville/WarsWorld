@@ -1,4 +1,4 @@
-import type { inferTRPCOutput } from "frontend/utils/trpc-client";
+import type { RouterOutput } from "frontend/utils/trpc-client";
 import type { BoardPosition } from "./match-view";
 import { posKey, samePosition } from "./match-view";
 
@@ -6,7 +6,7 @@ import { posKey, samePosition } from "./match-view";
  * The turn snapshot the backend sends at the start of a player's turn — the client buffers this
  * turn's simple actions against it (see `src/frontend/CLAUDE.md`). Typed purely by tRPC inference.
  */
-export type TurnSnapshot = NonNullable<inferTRPCOutput<"matchPreview", "turnSnapshot">>;
+export type TurnSnapshot = NonNullable<RouterOutput["match"]["previews"]["turnSnapshot"]>;
 export type SnapshotUnit = TurnSnapshot["units"][number];
 /** An owned, empty production facility a unit can be built on this turn. */
 export type BuildableTile = TurnSnapshot["production"]["buildableTiles"][number];

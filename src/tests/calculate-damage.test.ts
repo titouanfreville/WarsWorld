@@ -20,6 +20,9 @@ function buildScenario() {
     name: "",
     numberOfPlayers: 0,
     predeployedUnits: [],
+    // Damage maths never reaches the mode guards; these are here to satisfy the row shape.
+    supportedModes: [],
+    rankedModes: [],
     tiles: [
       [
         { type: "road", variant: "right-left" },
@@ -58,6 +61,7 @@ function buildScenario() {
 
   const match = new MatchWrapper(
     "",
+    "duel",
     "standard",
     [],
     {

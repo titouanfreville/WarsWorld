@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import type { LaunchMissileAction } from "server/core/schemas/action";
 import type { Position } from "server/core/schemas/position";
 import type { LaunchMissileEvent } from "server/engine/types/events";

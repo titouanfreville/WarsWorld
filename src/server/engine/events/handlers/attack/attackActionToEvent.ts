@@ -1,4 +1,4 @@
-import { DispatchableError } from "server/engine/DispatchedError";
+import { DispatchableError } from "server/engine/dispatchable-error";
 import { calculateEngagementOutcome } from "server/engine/rules/calculate-damage";
 import { createPipeSeamUnitEquivalent, getBaseDamage } from "server/engine/constants/base-damage";
 import type { AttackAction } from "server/core/schemas/action";

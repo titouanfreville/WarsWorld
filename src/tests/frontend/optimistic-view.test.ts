@@ -91,6 +91,32 @@ describe("optimistic view derivation", () => {
     expect(next.players[0].funds).toBe(9000); // 10000 - 1000
   });
 
+  it("gives the ghost unit every field the board reads, so the sprite can't blow up on it", () => {
+    const m = view({ units: [] });
+    const build: MainAction = { type: "build", unitType: "infantry", position: [1, 1] };
+
+    const next = applyBufferedActions(m, "me", snapshot(), [queued("production", build)]);
+    const ghost = next.units[0];
+
+    // ghostBuiltUnit casts past the unit union, so tsc can't catch a field the renderer needs but
+    // the ghost forgot — it surfaces as a TypeError mid-render instead. `supply` did exactly that.
+    // A unit fresh off the line is fuelled and armed, so it reads as fine rather than as absent.
+    expect(ghost.supply).toEqual({ lowFuel: false, lowAmmo: false });
+    expect(ghost.stats).not.toBe("hidden");
+    expect(ghost.isReady).toBe(false);
+  });
+
+  it("carries supply through a slide, so a moving unit keeps its badge", () => {
+    const m = view({ units: [unit([0, 0], { supply: { lowFuel: true, lowAmmo: false } })] });
+
+    const next = applyBufferedActions(m, "me", snapshot(), [queued("move", move([0, 0], [1, 0]))]);
+
+    // The slide spreads the real unit rather than rebuilding it, which is why this path never broke
+    // — pinned so a refactor to an object literal can't quietly drop the field the way the ghost did.
+    expect(next.units[0].position).toEqual([1, 0]);
+    expect(next.units[0].supply).toEqual({ lowFuel: true, lowAmmo: false });
+  });
+
   it("slides the attacker to its firing tile without resolving combat", () => {
     const m = view({ units: [unit([0, 0]), unit([3, 0], { type: "tank", playerSlot: 1 })] });
     const attack: MainAction = {

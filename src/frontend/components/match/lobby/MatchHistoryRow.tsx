@@ -9,7 +9,7 @@ type Props = {
   match: {
     id: string;
     map: { name: string; numberOfPlayers: number };
-    players: { id: string; name: string; status?: "alive" | "routed" | "captured" }[];
+    players: { id: string; name: string; status?: "alive" | "routed" | "captured" | "resigned" }[];
     state: string;
     turn: number;
     finished?: boolean;

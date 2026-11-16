@@ -13,18 +13,23 @@ export const withPlayerIdSchema = z.object<{
 
 export const developmentPlayerNamePrefix = "[dev]";
 
+/**
+ * The caller's players, resolved by user **id**.
+ *
+ * This used to match on `user.name`, which made ownership a function of a display string rather
+ * than of identity: because `User.name` carried no unique constraint, registering a second account
+ * under someone's handle was enough to be handed their players. `User.name` is unique now, but the
+ * id is the right key regardless — it's the thing that actually identifies the account, and it
+ * keeps working through a future rename.
+ */
 const getLoggedInUserPlayers = (session: Session | null) => {
-  if (typeof session?.user?.name !== "string") {
+  const userId = session?.user?.id;
+
+  if (typeof userId !== "string" || userId === "") {
     return [];
   }
 
-  return prisma.player.findMany({
-    where: {
-      user: {
-        name: session.user.name,
-      },
-    },
-  });
+  return prisma.player.findMany({ where: { userId } });
 };
 
 export const playerMiddleware = t.middleware(async ({ ctx, next, input }) => {

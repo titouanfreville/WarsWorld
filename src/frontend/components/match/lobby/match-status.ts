@@ -24,7 +24,8 @@ type LobbyPlayer = {
   id: string;
   ready?: boolean;
   hasCurrentTurn?: boolean;
-  status?: "alive" | "routed" | "captured";
+  /** `resigned` arrives with surrender; kept in step with the engine's player status. */
+  status?: "alive" | "routed" | "captured" | "resigned";
 };
 
 export type LobbyMatch = {
