@@ -85,6 +85,7 @@
     "@types/eslint": "^9.6.1",
     "@types/node": "^20.11.10",
     "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.3.7",
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
     "@types/yargs": "^17.0.33",

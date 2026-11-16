@@ -9,12 +9,18 @@ import { TRPCError } from "@trpc/server";
  */
 
 /** The per-mode ladder shape returned by `RankingUsecase.getLadder`. */
+/**
+ * One mode's ladder standing, as the profile shows it.
+ *
+ * No `peakRank`: rank display is CURRENT rank only — a profile that advertises a peak invites
+ * reading the ladder as a highest-ever score rather than where the player stands now. `rank` is
+ * nullable because a player still in placements has no rank yet.
+ */
 export type LadderEntry = {
   mode: string;
-  rank: string;
+  rank: string | null;
   division: number;
   merit: number;
-  peakRank: string | null;
   games: number;
   inPlacements: boolean;
 };

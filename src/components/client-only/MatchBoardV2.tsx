@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/router";
 import { readAnimationScope } from "frontend/components/match/animation-scope";
+import { MatchSideColumn } from "frontend/components/match/hud/MatchSideColumn";
 import { toEndGamePlayers, toGameOverCos, toOutcome } from "frontend/components/match/endgame-view";
 import { EndGameScreen } from "frontend/components/match/hud/EndGameScreen";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
@@ -79,6 +80,7 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     actionMutation,
     onActionError,
     trapNotice,
+    systemLog,
     opponentMovePathsRef,
     destroyedPositionsRef,
     capturePositionsRef,
@@ -200,7 +202,16 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
             <IntelOverlay view={optimisticView} playerId={playerId} />
           )
         }
-        /* The side column (match chat + the dev-tools panel) lands with those features. */
+        chat={() =>
+          optimisticView === undefined ? null : (
+            <MatchSideColumn
+              matchId={matchId}
+              playerId={playerId}
+              view={optimisticView}
+              systemLines={systemLog}
+            />
+          )
+        }
         hud={(orientation, controls) =>
           optimisticView === undefined || spriteSheets === undefined ? null : (
             <MatchHud

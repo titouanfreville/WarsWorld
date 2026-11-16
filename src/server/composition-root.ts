@@ -4,6 +4,8 @@ import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
 import { LobbyUsecase } from "server/lobby/lobby.usecase";
 import { MatchmakingUsecase } from "server/matchmaking/matchmaking.usecase";
+import { PlayersUsecase } from "server/players/players.usecase";
+import { SocialUsecase } from "server/social/social.usecase";
 import { MatchActionUsecase } from "server/matches/match-action.usecase";
 import { MatchLifecycleUsecase } from "server/matches/match-lifecycle.usecase";
 import { MatchesUsecase } from "server/matches/matches.usecase";
@@ -18,6 +20,8 @@ import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
 import { makeLobbyRouter } from "./routers/lobby";
 import { makeMatchmakingRouter } from "./routers/matchmaking";
+import { makePlayersRouter } from "./routers/players";
+import { makeSocialRouter } from "./routers/social";
 import { makeMapRouter } from "./routers/maps";
 import { makeMatchRouter } from "./routers/match";
 import { makeActionRouter } from "./routers/match/action";
@@ -47,6 +51,15 @@ const rankingUsecase = new RankingUsecase(prisma);
 const mapsUsecase = new MapsUsecase(prisma);
 const honorUsecase = new HonorUsecase(prisma);
 const endgameUsecase = new EndgameUsecase(prisma);
+const socialUsecase = new SocialUsecase(prisma);
+
+/**
+ * Profiles READ the ladder and the friend graph, both through narrow interfaces the feature
+ * declares for itself. `players` and `social` genuinely need each other — a profile shows friends,
+ * a friend list shows profile cards — and this is where that knot is tied without either importing
+ * the other.
+ */
+const playersUsecase = new PlayersUsecase(prisma, rankingUsecase, socialUsecase);
 
 /**
  * Match play. `MatchActionUsecase` takes `FinalizeHooks` rather than the ranking/endgame usecases:
@@ -100,6 +113,8 @@ export const appRouter = router({
   honor: makeHonorRouter(honorUsecase),
   lobby: makeLobbyRouter(lobbyUsecase),
   matchmaking: makeMatchmakingRouter(matchmakingUsecase),
+  players: makePlayersRouter(playersUsecase),
+  social: makeSocialRouter(socialUsecase),
   ranking: makeRankingRouter(rankingUsecase),
   map: makeMapRouter(mapsUsecase),
   action: makeActionRouter(matchActionUsecase),

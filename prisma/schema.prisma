@@ -186,6 +186,18 @@ model Player {
   lobbyMemberships PlayerInLobby[]
   hostedLobbies    Lobby[]          @relation(name: "lobbyHost")
 
+  // ── Social graph ──────────────────────────────────────────────────────────
+  sentFriendships     Friendship[]             @relation("sentFriendships")
+  receivedFriendships Friendship[]             @relation("receivedFriendships")
+  ownedCategories     FriendCategory[]         @relation("ownedCategories")
+  blockedUsers        Block[]                  @relation("blockedUsers")
+  blockedByUsers      Block[]                  @relation("blockedByUsers")
+  mutedUsers          Mute[]                   @relation("mutedUsers")
+  mutedByUsers        Mute[]                   @relation("mutedByUsers")
+  notifications       Notification[]           @relation("notifications")
+  conversationsJoined ConversationParticipant[]
+  sentMessages        Message[]                @relation("sentMessages")
+
   commendationsGiven    Commendation[] @relation("commendationsGiven")
   commendationsReceived Commendation[] @relation("commendationsReceived")
   name        String        @unique
@@ -367,6 +379,9 @@ model Match {
 
   chatMessages ChatMessage[]
   chatIsPublic Boolean       @default(false)
+
+  /// In-match chat channels (all + per-team), on the shared Conversation/Message system.
+  conversations Conversation[]
 
   createdAt DateTime @default(now())
   Notes     Notes[]
@@ -871,4 +886,141 @@ model PlayerInLobby {
 
   @@unique([lobbyId, playerId])
   @@index([playerId])
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  senderId    String
+  receiverId  String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  sender      Player           @relation("sentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver    Player           @relation("receivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
+  categories  FriendCategory[] @relation("CategoryFriendships")
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+}
+
+model Block {
+  id          String   @id @default(cuid())
+  blockerId   String
+  blockedId   String
+  createdAt   DateTime @default(now())
+
+  blocker     Player   @relation("blockedUsers", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked     Player   @relation("blockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+}
+
+model Mute {
+  id          String   @id @default(cuid())
+  muterId     String
+  mutedId     String
+  createdAt   DateTime @default(now())
+
+  muter       Player   @relation("mutedUsers", fields: [muterId], references: [id], onDelete: Cascade)
+  muted       Player   @relation("mutedByUsers", fields: [mutedId], references: [id], onDelete: Cascade)
+
+  @@unique([muterId, mutedId])
+  @@index([muterId])
+}
+
+model FriendCategory {
+  id          String       @id @default(cuid())
+  name        String       // e.g. "Family", "In-Game Friends", "Scrim Partners"
+  ownerId     String
+  createdAt   DateTime     @default(now())
+
+  owner       Player       @relation("ownedCategories", fields: [ownerId], references: [id], onDelete: Cascade)
+  friendships Friendship[] @relation("CategoryFriendships")
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+enum ConversationKind {
+  DM
+  GROUP
+  LOBBY
+  MATCH
+}
+
+model Conversation {
+  id          String                    @id @default(cuid())
+  name        String?                   // Display name (null for DMs, custom name for Groups)
+  kind        ConversationKind
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  // In-match channel linkage (null for DMs/groups). teamIndex: -1 = whole-match "All" channel,
+  // >= 0 = that team's team-only channel. The (matchId, teamIndex) pair uniquely identifies a
+  // match channel so it can be get-or-created idempotently.
+  match     Match?  @relation(fields: [matchId], references: [id])
+  matchId   String?
+  teamIndex Int?
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@unique([matchId, teamIndex])
+  @@index([kind, updatedAt]) // Excellent for automated cleanup runs on old LOBBY/MATCH kinds
+}
+
+model ConversationParticipant {
+  conversationId String
+  playerId       String
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now()) // Keeps track of participant's view cursor
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  player         Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, playerId])
+  @@index([playerId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String   @db.Text
+  createdAt      DateTime @default(now())
+  editedAt       DateTime? // Set when a player modifies their message
+  deletedAt      DateTime? // Soft-delete timestamp (hidden in standard queries)
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Player       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPT
+  LOBBY_INVITE
+  SYSTEM
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  playerId    String
+  type        NotificationType
+  content     String           @db.Text // JSON string containing custom payloads (senderName, lobbyId, etc.)
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  player      Player           @relation("notifications", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId, isRead, createdAt(desc)])
 }
