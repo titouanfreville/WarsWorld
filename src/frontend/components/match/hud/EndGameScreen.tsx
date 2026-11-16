@@ -6,6 +6,7 @@ import { coPortraitUrl } from "frontend/utils/sprites";
 import type { inferTRPCOutput } from "frontend/utils/trpc-client";
 import { trpc } from "frontend/utils/trpc-client";
 import { deciderPhrase, formatDuration } from "./eg-phrases";
+import { EndGameChat } from "./EndGameChat";
 import { HonorPanel } from "./HonorPanel";
 import { MatchAnalysis } from "./MatchAnalysis";
 import { MeritOutcome } from "./MeritOutcome";
@@ -212,7 +213,11 @@ export function EndGameScreen({
 
         <div className="egs__grid">
           <HonorPanel matchId={matchId} viewerId={viewerId} players={players} />
-          {/* Post-game chat lands with the social feature, which owns the conversation. */}
+          <EndGameChat
+            matchId={matchId}
+            viewerId={viewerId}
+            players={players.map((player) => ({ id: player.id, name: player.name }))}
+          />
         </div>
 
         <footer className="egs__actions">
