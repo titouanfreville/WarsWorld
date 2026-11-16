@@ -29,6 +29,36 @@ export type Rater = {
   rateFinishedMatch(matchId: string): Promise<void>;
 };
 
+/** A hidden rating pair, as OpenSkill models it. Structural so `core` needs no rating library. */
+export type SkillRating = { mu: number; sigma: number };
+
+/**
+ * What matchmaking needs to READ from whoever owns rating: who is how good, and what rank to band
+ * them into. Implemented by the `ranking` feature.
+ *
+ * Separate from {@link Rater} because the two are opposite directions — `Rater` WRITES a result,
+ * this one only reads — and a queue that could write ratings would be a queue that could rig them.
+ */
+export type SkillSource = {
+  /** Hidden ratings by player id, keyed per mode. Missing players are simply absent from the map. */
+  getSkills(playerIds: string[], mode: GameMode): Promise<Map<string, SkillRating>>;
+  /** The player's displayed rank code in this mode, or null when they have none yet. */
+  rankFor(playerId: string, mode: GameMode): Promise<string | null>;
+  /**
+   * What an unrated player counts as. Supplied by `ranking` rather than assumed here: the default
+   * is part of the rating model, and a queue inventing its own would seed the ladder differently
+   * from the rater.
+   */
+  defaultSkill(): SkillRating;
+  /**
+   * Active rank codes in ladder order, for the rank band a queue widens through.
+   *
+   * Which ranks exist is seeded data, so the queue must ASK rather than hold a constant — a season
+   * that activates a new rank must not require a deploy to the matchmaker.
+   */
+  activeRankCodes(): Promise<string[]>;
+};
+
 /** A confirmed seat handed over by whoever assembled the match: who sits where. */
 export type SpawnSeat = { playerId: string; team: number; slotWithinTeam: number };
 

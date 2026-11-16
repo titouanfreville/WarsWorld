@@ -3,6 +3,7 @@ import type { MatchSpawner } from "server/core/ports";
 import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
 import { LobbyUsecase } from "server/lobby/lobby.usecase";
+import { MatchmakingUsecase } from "server/matchmaking/matchmaking.usecase";
 import { MatchActionUsecase } from "server/matches/match-action.usecase";
 import { MatchLifecycleUsecase } from "server/matches/match-lifecycle.usecase";
 import { MatchesUsecase } from "server/matches/matches.usecase";
@@ -16,6 +17,7 @@ import { articleRouter } from "./routers/article";
 import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
 import { makeLobbyRouter } from "./routers/lobby";
+import { makeMatchmakingRouter } from "./routers/matchmaking";
 import { makeMapRouter } from "./routers/maps";
 import { makeMatchRouter } from "./routers/match";
 import { makeActionRouter } from "./routers/match/action";
@@ -83,6 +85,12 @@ const matchSpawner: MatchSpawner = matchesUsecase;
 /** The lobby assembles seats, then hands them to match play through the port — never by import. */
 const lobbyUsecase = new LobbyUsecase(prisma, matchSpawner);
 
+/**
+ * Matchmaking READS rating through `SkillSource` and spawns through `MatchSpawner`. It gets no
+ * handle that could write a rating — a queue able to move ratings is a queue able to rig them.
+ */
+const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase, matchSpawner);
+
 // ── Transport ─────────────────────────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -91,6 +99,7 @@ export const appRouter = router({
   endgame: makeEndgameRouter(endgameUsecase),
   honor: makeHonorRouter(honorUsecase),
   lobby: makeLobbyRouter(lobbyUsecase),
+  matchmaking: makeMatchmakingRouter(matchmakingUsecase),
   ranking: makeRankingRouter(rankingUsecase),
   map: makeMapRouter(mapsUsecase),
   action: makeActionRouter(matchActionUsecase),

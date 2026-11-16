@@ -1,5 +1,5 @@
 import type { GameMode, Prisma, PrismaClient } from "@prisma/client";
-import type { Rater } from "server/core/ports";
+import type { Rater, SkillSource } from "server/core/ports";
 import { logger } from "shared/utils/logger";
 import {
   DIVISIONS_PER_RANK,
@@ -41,7 +41,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
  *
  * Driven from the finalize transaction; the engine never sees any of it.
  */
-export class RankingUsecase implements Rater {
+export class RankingUsecase implements Rater, SkillSource {
   constructor(private readonly db: PrismaClient) {}
 
   /**
@@ -65,6 +65,19 @@ export class RankingUsecase implements Rater {
       select: { code: true, order: true, active: true, hasDivisions: true, populationShare: true },
       orderBy: { order: "asc" },
     });
+  }
+
+  /**
+   * `SkillSource` port: the rating an unrated player is treated as having. Exposed as a method so
+   * matchmaking can read the default without importing `ranking`'s rating math.
+   */
+  defaultSkill(): Skill {
+    return defaultSkill();
+  }
+
+  /** `SkillSource` port: the climbable ladder, in order — what a rank band is measured along. */
+  async activeRankCodes(): Promise<string[]> {
+    return climbable(await this.loadRanks()).map((rank) => rank.code);
   }
 
   /** Ladder rows for display, ordered — label and emblem included so the FE never mirrors them. */

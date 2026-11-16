@@ -1,0 +1,311 @@
+import type { GameMode, Ruleset } from "@prisma/client";
+import { winProbability, type Skill } from "server/ranking/skill";
+import {
+  BASE_TOLERANCE,
+  MAX_RANK_GAP_FRACTION,
+  MAX_TOLERANCE,
+  RANK_GAP_TAU,
+  REMATCH_BASE_GAP_SEC,
+  REMATCH_COOLDOWN_MS,
+  REMATCH_TAU,
+  TOLERANCE_SCALE,
+  TOLERANCE_TAU,
+} from "./constants";
+
+/**
+ * One player waiting in the queue. `skill` is snapshotted at enqueue; `enqueuedAt` is ms epoch.
+ *
+ * A QUEUE is identified by mode × ruleset × ranked: you queue for Ranked Fog specifically, and
+ * shouldn't be paired into a casual Standard game. The RATING is a different question — it pools by
+ * mode alone, so `skill` here is the player's whole-mode rating regardless of which bucket they're
+ * sitting in.
+ *
+ * `rank` is the player's ACTIVE military rank, and gates ranked pairing to a widening band around it
+ * (see {@link allowedRankGapAt}). It is `null` for casual tickets and for ranked players still in
+ * placements (no settled rank yet) — both of which pair on MMR alone, ignoring the band.
+ */
+export type Ticket = {
+  playerId: string;
+  mode: GameMode;
+  ruleset: Ruleset;
+  ranked: boolean;
+  skill: Skill;
+  rank: string | null;
+  /**
+   * Opponents this player recently FINISHED a game with, `opponentId → lastFinishedAt` (ms epoch).
+   * Snapshotted at enqueue (same mode). Drives {@link rematchOk} — a recent opponent is held off, the
+   * hold relaxing as the player waits. Empty for anyone with no recent games.
+   */
+  recentOpponents: Record<string, number>;
+  enqueuedAt: number;
+};
+
+/**
+ * A formed group, ready to be offered a ready-check: exactly `capacityForMode(mode)` tickets, all
+ * from one bucket. Two for a duel, four for 2v2 and free-for-all.
+ */
+export type Group = Ticket[];
+
+/**
+ * Hard ceiling on the rank gap: a fraction of the active-rank ladder height (see constants).
+ *
+ * Takes the ladder rather than reading a module constant, because which ranks are active is DATA —
+ * rows in `Rank` that a season rollover reseeds — not something the queue may assume.
+ */
+export const maxRankGap = (ladder: readonly string[]): number =>
+  Math.floor(MAX_RANK_GAP_FRACTION * ladder.length);
+
+/**
+ * How unfair a matchup this ticket will currently accept, as |P(win) − 0.5|. Widens exponentially in
+ * time (`BASE + SCALE·ln(1 + t/τ)`), capped at {@link MAX_TOLERANCE}. MMR never gates — the cap is a
+ * ceiling on the curve, not a wall.
+ */
+export const toleranceAt = (ticket: Ticket, now: number): number => {
+  const waitedSec = Math.max(0, (now - ticket.enqueuedAt) / 1000);
+  return Math.min(
+    MAX_TOLERANCE,
+    BASE_TOLERANCE + TOLERANCE_SCALE * Math.log1p(waitedSec / TOLERANCE_TAU),
+  );
+};
+
+/**
+ * How many rank steps away this ticket will currently accept. Starts at 1 (±1 rank) and widens on a
+ * doubling-in-time schedule — gap g opens after `τ·(2^(g-1) − 1)` seconds, so ±2 at τ, ±3 at 3τ, …
+ * — hard-capped at {@link MAX_RANK_GAP}. Deliberately slower than the MMR curve: ranks are visible.
+ */
+export const allowedRankGapAt = (
+  ticket: Ticket,
+  now: number,
+  ladder: readonly string[],
+): number => {
+  const waitedSec = Math.max(0, (now - ticket.enqueuedAt) / 1000);
+  const steps = Math.floor(Math.log2(waitedSec / RANK_GAP_TAU + 1));
+  return Math.min(maxRankGap(ladder), 1 + steps);
+};
+
+/** Distance between two active ranks, in ladder steps. Dormant ranks aren't in the ladder. */
+const rankDistance = (a: string, b: string, ladder: readonly string[]): number =>
+  Math.abs(ladder.indexOf(a) - ladder.indexOf(b));
+
+/**
+ * Whether a pairing clears the rank band. Only binds when BOTH players have a settled rank (ranked,
+ * out of placements) — a `null` on either side (casual, or a placing player with no rank yet) means
+ * the band doesn't apply and the pairing rests on MMR alone. Both players must independently admit
+ * the gap, so the tighter (younger) ticket's band governs.
+ */
+const withinRankBand = (a: Ticket, b: Ticket, now: number, ladder: readonly string[]): boolean => {
+  if (a.rank === null || b.rank === null) {
+    return true;
+  }
+
+  const distance = rankDistance(a.rank, b.rank, ladder);
+  return distance <= Math.min(allowedRankGapAt(a, now, ladder), allowedRankGapAt(b, now, ladder));
+};
+
+const waitedSecondsOf = (ticket: Ticket, now: number): number =>
+  Math.max(0, (now - ticket.enqueuedAt) / 1000);
+
+/**
+ * Whether these two are far enough removed from their last game together to rematch. A recently-
+ * finished opponent is held off; the required gap `BASE·e^(−wait/τ)` SHRINKS as the pair waits, so a
+ * rematch is never blocked forever — you just meet old opponents first, recent ones only once the
+ * pool leaves you no fresher option. The tighter (younger) ticket's wait governs (the `min` rule).
+ * A pair with no shared recent game always clears.
+ */
+export const rematchOk = (a: Ticket, b: Ticket, now: number): boolean => {
+  const lastPlayed = Math.max(
+    a.recentOpponents[b.playerId] ?? 0,
+    b.recentOpponents[a.playerId] ?? 0,
+  );
+
+  if (lastPlayed === 0) {
+    return true;
+  }
+
+  const sinceSec = Math.max(0, (now - lastPlayed) / 1000);
+  const waitSec = Math.min(waitedSecondsOf(a, now), waitedSecondsOf(b, now));
+  const requiredGap = REMATCH_BASE_GAP_SEC * Math.exp(-waitSec / REMATCH_TAU);
+
+  return sinceSec >= requiredGap;
+};
+
+/**
+ * How unfair a pairing actually is: 0 = coin flip, 0.5 = certain. Uses `predictWin`, so it accounts
+ * for BOTH players' uncertainty — the same μ gap is decisive between two settled players and a
+ * coin-flip between two provisional ones, and no fixed rating distance can express that.
+ */
+export const unfairnessOf = (a: Ticket, b: Ticket): number =>
+  Math.abs(winProbability([a.skill], [b.skill]) - 0.5);
+
+/** Queues split three ways; ratings pool by mode alone. Don't conflate them. */
+const bucketKey = (mode: GameMode, ruleset: Ruleset, ranked: boolean): string =>
+  `${mode}:${ruleset}:${ranked ? "ranked" : "casual"}`;
+
+/** Order-independent key for a pair of players (anti-rematch bookkeeping). */
+const pairKey = (a: string, b: string): string => (a < b ? `${a}~${b}` : `${b}~${a}`);
+
+/**
+ * In-memory matchmaking queue: the authoritative store of who's waiting (a live WS subscription is
+ * required to queue, so nothing meaningful survives a restart — hence no DB table). Pure logic, no
+ * timers or I/O, so the pairing rules are exhaustively unit-testable.
+ */
+export class MatchQueue {
+  private readonly tickets = new Map<string, Ticket>(); // playerId -> ticket
+  private readonly cooldowns = new Map<string, number>(); // pairKey -> expiresAt (ms epoch)
+
+  has(playerId: string): boolean {
+    return this.tickets.has(playerId);
+  }
+
+  get(playerId: string): Ticket | undefined {
+    return this.tickets.get(playerId);
+  }
+
+  size(): number {
+    return this.tickets.size;
+  }
+
+  all(): Ticket[] {
+    return [...this.tickets.values()];
+  }
+
+  /** Add (or replace) a ticket. Enqueue eligibility is enforced by the caller, not here. */
+  add(ticket: Ticket): void {
+    this.tickets.set(ticket.playerId, ticket);
+  }
+
+  remove(playerId: string): Ticket | undefined {
+    const ticket = this.tickets.get(playerId);
+    this.tickets.delete(playerId);
+    return ticket;
+  }
+
+  /** Block a just-declined pair from being re-offered for a while. */
+  addCooldown(playerA: string, playerB: string, now: number, ttlMs = REMATCH_COOLDOWN_MS): void {
+    this.cooldowns.set(pairKey(playerA, playerB), now + ttlMs);
+  }
+
+  private onCooldown(playerA: string, playerB: string, now: number): boolean {
+    const until = this.cooldowns.get(pairKey(playerA, playerB));
+    return until !== undefined && until > now;
+  }
+
+  private pruneCooldowns(now: number): void {
+    for (const [key, until] of this.cooldowns) {
+      if (until <= now) {
+        this.cooldowns.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Whether `candidate` may join a group that already holds `members`.
+   *
+   * Every rule that used to bind a PAIR now binds the candidate against EVERY existing member: the
+   * matchup must fit inside both tolerance windows (the `min` rule), clear the rank band, clear the
+   * rematch hold, and not be on cooldown. Checking only against the seed would let a group form
+   * around one player while two others in it are wildly mismatched.
+   */
+  private admissible(
+    members: Ticket[],
+    candidate: Ticket,
+    now: number,
+    ladder: readonly string[],
+  ): boolean {
+    return members.every(
+      (member) =>
+        unfairnessOf(member, candidate) <=
+          Math.min(toleranceAt(member, now), toleranceAt(candidate, now)) &&
+        withinRankBand(member, candidate, now, ladder) &&
+        rematchOk(member, candidate, now) &&
+        !this.onCooldown(member.playerId, candidate.playerId, now),
+    );
+  }
+
+  /**
+   * One matchmaking pass. Within each (mode, ruleset, ranked) bucket, oldest ticket first, grow a
+   * group up to that mode's capacity by repeatedly adding the FAIREST admissible candidate. Every
+   * returned group's tickets are removed from the queue.
+   *
+   * "Fairest" for a candidate is its WORST pairing against the current members, minimised. Using the
+   * worst rather than the average is what stops a group of four accepting one badly-matched player
+   * because the other three pull the mean back — in a 2v2 that player is somebody's opponent, and in
+   * a free-for-all they are everybody's.
+   *
+   * A group that cannot be filled is ABANDONED and its tickets stay queued: a half-formed lobby is
+   * not a match, and holding players in one would strand them. They simply wait, and their widening
+   * tolerance makes the next pass more likely to succeed.
+   *
+   * @param sizeFor how many seats a mode's lobby holds — injected rather than imported so this stays
+   *   pure logic with no dependency on the lobby layout module.
+   * @param ladder active rank codes in ladder order, for the rank band. Passed in because which
+   *   ranks exist is seeded data, not a constant this module may assume.
+   */
+  form(now: number, sizeFor: (mode: GameMode) => number, ladder: readonly string[] = []): Group[] {
+    this.pruneCooldowns(now);
+
+    const buckets = new Map<string, Ticket[]>();
+
+    for (const ticket of this.tickets.values()) {
+      const key = bucketKey(ticket.mode, ticket.ruleset, ticket.ranked);
+      (buckets.get(key) ?? buckets.set(key, []).get(key)!).push(ticket);
+    }
+
+    const groups: Group[] = [];
+
+    for (const bucket of buckets.values()) {
+      const waiting = bucket.sort((x, y) => x.enqueuedAt - y.enqueuedAt);
+      const matched = new Set<string>();
+      const size = sizeFor(waiting[0].mode);
+
+      for (const seed of waiting) {
+        if (matched.has(seed.playerId)) {
+          continue;
+        }
+
+        const members = [seed];
+
+        // Grow greedily. Each round picks the candidate whose worst pairing with the group so far is
+        // smallest, so the group tightens rather than drifting.
+        while (members.length < size) {
+          let best: Ticket | undefined;
+          let bestWorstUnfairness = Infinity;
+
+          for (const candidate of waiting) {
+            if (
+              matched.has(candidate.playerId) ||
+              members.some((m) => m.playerId === candidate.playerId) ||
+              !this.admissible(members, candidate, now, ladder)
+            ) {
+              continue;
+            }
+
+            const worst = Math.max(...members.map((m) => unfairnessOf(m, candidate)));
+
+            if (worst < bestWorstUnfairness) {
+              best = candidate;
+              bestWorstUnfairness = worst;
+            }
+          }
+
+          if (best === undefined) {
+            break; // can't fill this one — leave everyone queued and try again next tick
+          }
+
+          members.push(best);
+        }
+
+        if (members.length === size) {
+          for (const member of members) {
+            matched.add(member.playerId);
+            this.tickets.delete(member.playerId);
+          }
+
+          groups.push(members);
+        }
+      }
+    }
+
+    return groups;
+  }
+}
