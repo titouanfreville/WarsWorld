@@ -130,6 +130,36 @@ const seat = (playerId: string, team: number, result: string | null): SeatRow =>
 // The usecase reads everything through the passed `tx`, so the constructor's client is unused here.
 const usecase = new RankingUsecase({} as never);
 
+/**
+ * The `Rater` port the composition root subscribes to `matchFinished`. `applyMatchResult` is tested
+ * below against a transaction the test supplies; what's checked here is the one thing the port adds
+ * — that it opens that transaction itself, because its caller is an event handler and not a unit of
+ * work. If this ever stopped wrapping, rating writes would land unatomically and nothing else would
+ * notice.
+ */
+describe("ranking usecase — rateFinishedMatch (Rater port)", () => {
+  it("rates the match inside a transaction it opens itself", async () => {
+    const { tx, skillWrites, ratedAt } = makeTx({ isRanked: true, ratedAt: null, mode: "duel" }, [
+      seat("winner", 0, "won"),
+      seat("loser", 1, "lost"),
+    ]);
+    let opened = 0;
+
+    const db = {
+      $transaction: async (run: (client: unknown) => Promise<void>) => {
+        opened += 1;
+        await run(tx);
+      },
+    };
+
+    await new RankingUsecase(db as never).rateFinishedMatch("m1");
+
+    expect(opened).toBe(1);
+    expect(skillWrites).toHaveLength(2);
+    expect(ratedAt()).toBeInstanceOf(Date);
+  });
+});
+
 describe("ranking usecase — applyMatchResult", () => {
   it("moves both players' hidden skill on an even ranked 1v1", async () => {
     const { tx, skillWrites, ratedAt } = makeTx({ isRanked: true, ratedAt: null, mode: "duel" }, [

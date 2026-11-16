@@ -4,8 +4,8 @@
  */
 import * as trpcNext from "@trpc/server/adapters/next";
 import { createContext } from "server/trpc/trpc-context";
-import type { AppRouter } from "server/routers/app";
-import { appRouter } from "server/routers/app";
+import type { AppRouter } from "server/composition-root";
+import { appRouter } from "server/composition-root";
 import { logger } from "shared/utils/logger";
 
 export default trpcNext.createNextApiHandler<AppRouter>({

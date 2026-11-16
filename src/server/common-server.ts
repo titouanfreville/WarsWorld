@@ -2,7 +2,7 @@ import { applyWSSHandler } from "@trpc/server/adapters/ws";
 import type { ServerOptions } from "ws";
 import { WebSocketServer } from "ws";
 import { logger } from "shared/utils/logger";
-import { appRouter } from "./routers/app";
+import { appRouter } from "./composition-root";
 import { createContext } from "./trpc/trpc-context";
 
 export const createTRPCwebSocketServer = (wssConfig: ServerOptions) => {

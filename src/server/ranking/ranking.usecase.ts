@@ -1,4 +1,5 @@
 import type { GameMode, Prisma, PrismaClient } from "@prisma/client";
+import type { Rater } from "server/core/ports";
 import { logger } from "shared/utils/logger";
 import {
   DIVISIONS_PER_RANK,
@@ -40,8 +41,19 @@ type Db = PrismaClient | Prisma.TransactionClient;
  *
  * Driven from the finalize transaction; the engine never sees any of it.
  */
-export class RankingUsecase {
+export class RankingUsecase implements Rater {
   constructor(private readonly db: PrismaClient) {}
+
+  /**
+   * `Rater` port: rate a finished match. This is the production entry point — `matchFinished` is
+   * published when a match is decided, and the composition root routes it here.
+   *
+   * Opens the transaction that `applyMatchResult` runs in, because an event handler is not itself a
+   * unit of work. Idempotence lives one level down, in the `ratedAt` claim.
+   */
+  async rateFinishedMatch(matchId: string): Promise<void> {
+    await this.db.$transaction((tx) => this.applyMatchResult(tx, matchId));
+  }
 
   /**
    * The ladder definition, straight from the `Rank` table. Which ranks exist, their order and which

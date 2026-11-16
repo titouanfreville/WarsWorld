@@ -1,4 +1,4 @@
-import type { WithMatchId } from "server/trpc/middleware/match";
+import type { WithMatchId } from "server/core/schemas/match-id";
 import type {
   AbilityAction,
   AttackAction,

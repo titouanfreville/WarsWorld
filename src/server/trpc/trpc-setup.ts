@@ -1,5 +1,6 @@
 import { authMiddleware } from "./middleware/auth";
-import { matchMiddleware, withMatchIdSchema } from "./middleware/match";
+import { matchMiddleware } from "./middleware/match";
+import { withMatchIdSchema } from "server/core/schemas/match-id";
 import { playerMiddleware, withPlayerIdSchema } from "./middleware/player";
 import { t } from "./trpc-init";
 import { DispatchableError } from "server/engine/DispatchedError";
