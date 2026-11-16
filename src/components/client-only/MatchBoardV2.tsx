@@ -1,20 +1,19 @@
 "use client";
-import { useRouter } from "next/router";
 import { readAnimationScope } from "frontend/components/match/animation-scope";
-import { MatchSideColumn } from "frontend/components/match/hud/MatchSideColumn";
 import { toEndGamePlayers, toGameOverCos, toOutcome } from "frontend/components/match/endgame-view";
-import { EndGameScreen } from "frontend/components/match/hud/EndGameScreen";
 import type { SpritesheetDataByArmy } from "frontend/components/match/getSpritesheetData";
 import type { BoardPosition } from "frontend/components/match/match-view";
-import { getCurrentTurnPlayer, getPlayerById } from "frontend/components/match/match-view";
+import { getCurrentTurnPlayer, getPlayerById, toTuple } from "frontend/components/match/match-view";
 import { AmbushLabel } from "frontend/components/match/hud/AmbushLabel";
 import { BoardCommandMenu } from "frontend/components/match/hud/BoardCommandMenu";
 import { BoardInspectOverlays } from "frontend/components/match/hud/BoardInspectOverlays";
 import { BoardModeBanners } from "frontend/components/match/hud/BoardModeBanners";
+import { EndGameScreen } from "frontend/components/match/hud/EndGameScreen";
 import { GameOverOverlay } from "frontend/components/match/hud/GameOverOverlay";
 import { GameShell } from "frontend/components/match/hud/GameShell";
 import { IntelOverlay } from "frontend/components/match/hud/IntelOverlay";
 import { MatchHud } from "frontend/components/match/hud/MatchHud";
+import { MatchSideColumn } from "frontend/components/match/hud/MatchSideColumn";
 import { readParticleEffect } from "frontend/components/match/hud/particle-effects";
 import { PowerActivationSplash } from "frontend/components/match/hud/PowerActivationSplash";
 import { TurnStartBanner } from "frontend/components/match/hud/TurnStartBanner";
@@ -30,6 +29,8 @@ import { useTurnBanner } from "frontend/components/match/useTurnBanner";
 import { useUnitInspect } from "frontend/components/match/useUnitInspect";
 import { usePlayers } from "frontend/context/players";
 import { hasUnresolvedActions, makeClientId } from "frontend/utils/action-queue";
+import { trpc } from "frontend/utils/trpc-client";
+import { useRouter } from "next/router";
 import { useState } from "react";
 
 type Props = {
@@ -61,6 +62,7 @@ type Props = {
  * readouts) and `usePowerBoardPulse` / `useTurnBanner` / `useEndGameFlow` (cinematic sequencing).
  */
 export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props) {
+  const router = useRouter();
   const { currentPlayer } = usePlayers();
   // The viewer's AWDS-style animation setting, gating the board's one-shot flourishes.
   const animationScope = readAnimationScope(currentPlayer?.preferences);
@@ -117,11 +119,24 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
   });
   const powerPulse = usePowerBoardPulse(powerActivation);
 
-  const router = useRouter();
   const modes = useBoardModes({ isMyTurn, isGameOver });
 
   // The tile the board context menu is anchored at (right-click on an empty tile), or null when shut.
   const [contextMenu, setContextMenu] = useState<BoardPosition | null>(null);
+
+  // Whether the dev-tools panel is open. Opened from the board context menu (right-click an empty
+  // tile), so it needs no board target — and stays open independently of the menu that launched it.
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
+
+  // "May I use dev tools in THIS match?" — a plain boolean from the BE, which owns the decision
+  // (capability + ranked/testing-tools gate). The board never reasons about roles. This only hides
+  // the entry; the mutation re-checks regardless, so a stale `true` costs a 403, not a cheat.
+  const devToolsAvailability = trpc.match.devTools.availability.useQuery({ matchId, playerId });
+
+  // Dev actions submit straight to the dev endpoint rather than through the action queue: the queue
+  // carries MainActions and models them optimistically, and a dev action is neither. The board
+  // repaints from the authoritative `devTool` websocket event, like any other player's action.
+  const sendDevTool = trpc.match.devTools.send.useMutation();
 
   const forecast = useAttackForecast({ matchId, playerId });
   const inspect = useUnitInspect({ matchId, playerId, view: optimisticView });
@@ -149,7 +164,20 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
     onUnitInspect: inspect.handleInspect,
     onContextMenu: setContextMenu,
     onTeleportPick: modes.setTeleportSource,
-    /* Dev teleport / delete land with the dev-tools feature, along with the panel that arms them. */
+    onDevTeleport: (from, to) => {
+      modes.disarmAll();
+      sendDevTool.mutate({
+        matchId,
+        playerId,
+        type: "teleportUnit",
+        from: toTuple(from),
+        to: toTuple(to),
+      });
+    },
+    onDevDeleteUnit: (position) => {
+      // Mode stays armed — several units in a row, as with scrap mode.
+      sendDevTool.mutate({ matchId, playerId, type: "deleteAnyUnit", position: toTuple(position) });
+    },
   });
 
   // End-of-match screen sequencing: play the victory/defeat "moment", then auto-load the End-Game
@@ -208,7 +236,13 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               matchId={matchId}
               playerId={playerId}
               view={optimisticView}
+              spritesheetDataByArmy={spritesheetDataByArmy}
               systemLines={systemLog}
+              modes={modes.modes}
+              onToggleTeleportMode={modes.toggleTeleport}
+              onToggleDevDeleteMode={modes.toggleDevDelete}
+              devToolsOpen={devToolsOpen}
+              onCloseDevTools={() => setDevToolsOpen(false)}
             />
           )
         }
@@ -255,6 +289,8 @@ export function MatchBoardV2({ matchId, playerId, spritesheetDataByArmy }: Props
               onToggleScrapMode={modes.toggleScrap}
               onActivatePower={handleActivatePower}
               onPassTurn={handlePassTurn}
+              devToolsEnabled={devToolsAvailability.data?.enabled ?? false}
+              onOpenDevTools={() => setDevToolsOpen(true)}
               onClose={() => setContextMenu(null)}
               onSurrenderError={onActionError("surrender")}
             />

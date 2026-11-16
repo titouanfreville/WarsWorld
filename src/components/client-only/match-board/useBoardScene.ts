@@ -44,9 +44,8 @@ type Params = {
   onUnitInspect: (position: BoardPosition | null) => void;
   onContextMenu: (position: BoardPosition | null) => void;
   onTeleportPick: (position: BoardPosition | null) => void;
-  /** Dev-tool board hooks. Optional: what arms them lands with the dev-tools feature. */
-  onDevTeleport?: (from: BoardPosition, to: BoardPosition) => void;
-  onDevDeleteUnit?: (position: BoardPosition) => void;
+  onDevTeleport: (from: BoardPosition, to: BoardPosition) => void;
+  onDevDeleteUnit: (position: BoardPosition) => void;
 };
 
 /**

@@ -1,5 +1,8 @@
 import { DomainEvents } from "server/core/domain-events";
 import type { MatchSpawner } from "server/core/ports";
+import { AdminToolsUsecase } from "server/admin/admin-tools.usecase";
+import { AdminUsecase } from "server/admin/admin.usecase";
+import { DevToolsUsecase } from "server/dev-tools/dev-tools.usecase";
 import { EndgameUsecase } from "server/endgame/endgame.usecase";
 import { HonorUsecase } from "server/honor/honor.usecase";
 import { LobbyUsecase } from "server/lobby/lobby.usecase";
@@ -16,6 +19,7 @@ import { RankingUsecase } from "server/ranking/ranking.usecase";
 import { router } from "server/trpc/trpc-setup";
 import { logger } from "shared/utils/logger";
 import { articleRouter } from "./routers/article";
+import { makeAdminRouter } from "./routers/admin";
 import { makeEndgameRouter } from "./routers/endgame";
 import { makeHonorRouter } from "./routers/honor";
 import { makeLobbyRouter } from "./routers/lobby";
@@ -104,11 +108,23 @@ const lobbyUsecase = new LobbyUsecase(prisma, matchSpawner);
  */
 const matchmakingUsecase = new MatchmakingUsecase(prisma, rankingUsecase, matchSpawner);
 
+/**
+ * Staff tooling. Every privileged call is audited, so these get the narrowest handles that still do
+ * the job: the admin usecase may SET a ladder position but holds nothing that could rate a match.
+ */
+const devToolsUsecase = new DevToolsUsecase(prisma);
+const adminToolsUsecase = new AdminToolsUsecase(prisma, {
+  applyMatchResult: (tx, matchId) => rankingUsecase.applyMatchResult(tx, matchId),
+  persistStats: (tx, matchId) => endgameUsecase.persistStats(tx, matchId),
+});
+const adminUsecase = new AdminUsecase(prisma, rankingUsecase, matchmakingUsecase, lobbyUsecase);
+
 // ── Transport ─────────────────────────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
+  admin: makeAdminRouter(adminUsecase),
   article: articleRouter,
-  match: makeMatchRouter(matchLifecycleUsecase, matchesUsecase),
+  match: makeMatchRouter(matchLifecycleUsecase, matchesUsecase, devToolsUsecase, adminToolsUsecase),
   endgame: makeEndgameRouter(endgameUsecase),
   honor: makeHonorRouter(honorUsecase),
   lobby: makeLobbyRouter(lobbyUsecase),

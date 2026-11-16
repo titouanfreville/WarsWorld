@@ -22,9 +22,8 @@ type Props = {
   onToggleScrapMode: () => void;
   onActivatePower: (isSuper: boolean) => void;
   onPassTurn: () => void;
-  /** Dev-tools entry. Optional: the panel it opens lands with the dev-tools feature. */
-  devToolsEnabled?: boolean;
-  onOpenDevTools?: () => void;
+  devToolsEnabled: boolean;
+  onOpenDevTools: () => void;
   onClose: () => void;
   onSurrenderError: (error: { message: string }) => void;
 };
@@ -85,8 +84,8 @@ export function BoardCommandMenu({
           onActivatePower={(isSuper) => pick(() => onActivatePower(isSuper))}
           onPassTurn={() => pick(onPassTurn)}
           onSurrender={() => pick(() => setSurrenderOpen(true))}
-          devToolsEnabled={devToolsEnabled ?? false}
-          onOpenDevTools={() => onOpenDevTools !== undefined && pick(onOpenDevTools)}
+          devToolsEnabled={devToolsEnabled}
+          onOpenDevTools={() => pick(onOpenDevTools)}
           onClose={onClose}
         />
       )}
