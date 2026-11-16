@@ -84,7 +84,7 @@ void matchSpawner;
 
 export const appRouter = router({
   article: articleRouter,
-  match: makeMatchRouter(matchLifecycleUsecase),
+  match: makeMatchRouter(matchLifecycleUsecase, matchesUsecase),
   endgame: makeEndgameRouter(endgameUsecase),
   honor: makeHonorRouter(honorUsecase),
   ranking: makeRankingRouter(rankingUsecase),

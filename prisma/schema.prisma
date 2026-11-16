@@ -609,3 +609,176 @@ model PlayerInfraction {
   @@index([playerId, type])
   @@index([playerId, createdAt])
 }
+
+// ---- Units ----
+model UnitGroup {
+  id          String     @id @default(cuid())
+  key         String     @unique // "infantry" | "directVehicle" | "indirect" | "air" | "sea"
+  displayName String
+  units       UnitType[] // many-to-many: a unit can be in several groups (battleship = indirect + sea)
+}
+
+model UnitType {
+  id          String      @id @default(cuid())
+  key         String      @unique // "infantry", "mdTank", …
+  displayName String
+  groups      UnitGroup[] // a unit belongs to every group whose predicate it matches
+
+  facility       String // "base" | "airport" | "port"
+  movementType   String // "foot" | "boots" | "tires" | "treads" | "air" | "sea" | "lander" | "pipe"
+  movementPoints Int
+  vision         Int
+  fuel           Int
+  ammo           Int? // null = no primary weapon ammo
+  cost           Int
+  attackRangeMin Int? // null = cannot attack (e.g. APC)
+  attackRangeMax Int?
+
+  coModifiers CoModifier[] // per-unit override rows target this
+}
+
+// ---- Terrain & properties ----
+model TerrainKind {
+  id            String                @id @default(cuid())
+  key           String                @unique // "plain","road","woods","mountain","sea","river",…
+  displayName   String
+  defenseStars  Int
+  isProperty    Boolean               @default(false)
+  movementCosts TerrainMovementCost[]
+  property      Property?
+}
+
+model TerrainMovementCost {
+  id           String      @id @default(cuid())
+  terrain      TerrainKind @relation(fields: [terrainId], references: [id], onDelete: Cascade)
+  terrainId    String
+  movementType String
+  cost         Int? // null = impassable
+
+  @@unique([terrainId, movementType])
+}
+
+model Property {
+  id              String      @id @default(cuid())
+  terrain         TerrainKind @relation(fields: [terrainId], references: [id])
+  terrainId       String      @unique
+  key             String      @unique // "hq","city","base","airport","port","commtower","lab"
+  fundsPerTurn    Int
+  repairsFacility String? // which facility's units it repairs
+  buildsFacility  String? // which facility it produces
+  vision          Int         @default(0)
+}
+
+// ---- Commanders ----
+model Co {
+  id          String    @id @default(cuid())
+  key         String // "max"
+  gameVersion String // "AW1" | "AW2" | "AWDS"
+  displayName String
+  phases      CoPhase[]
+
+  @@unique([key, gameVersion])
+}
+
+model Skin {
+  id          String      @id @default(cuid())
+  type        SkinType    @relation(fields: [typeId], references: [id])
+  typeId      String
+  key         String // "aw2","ds","orange-star",…
+  displayName String
+  group       String? // optional grouping
+  assets      SkinAsset[]
+
+  @@unique([typeId, key])
+}
+
+// "general modification over units" — group-level rows, with optional per-unit override.
+model CoModifier {
+  id           String    @id @default(cuid())
+  phase        CoPhase   @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phaseId      String
+  // Exactly one target: a group, or a specific unit (override).
+  unitGroupKey String? // references UnitGroup.key
+  unitType     UnitType? @relation(fields: [unitTypeId], references: [id])
+  unitTypeId   String?
+
+  attackPct     Int? // firepower % delta (+20, -10)
+  defensePct    Int?
+  rangeDelta    Int?
+  movementDelta Int?
+  visionDelta   Int?
+  buildCostPct  Int?
+  terrainStarsPct Int? // reserved: scale terrain stars by a percent
+  terrainStarsDelta Int? // Drake: flat +N terrain stars on the defender's own units
+  terrainStarsMult  Int? // Lash SCOP: multiply the defender's terrain stars (×2)
+  // Sturm-style: flat movement cost on every terrain (overrides per-terrain cost).
+  movementCostAll Int?
+
+  // Conditional application (null/false = always).
+  onTerrainKey String? // Jake = "plain", Koal = "road"
+  onProperty   Boolean @default(false) // Kindle
+  onWeather    String? // Olaf AWDS = "snow"
+  notWeather   String? // Sturm/Lash all-terrain-cost-1 = NOT "snow"
+  onFacility   String? // Eagle/Sensei/Drake target by build facility ("airport" | "port" | "base")
+  facilityNot  String? // Lash firepower skips "airport" units
+  requiresWeapon Boolean @default(false) // Max movement bonus excludes transports (no attackRange)
+  vsGroup      String? // opponent condition: Javier defence vs "indirect" attackers
+
+  // Scaling by an injectable runtime variable: the stat gains floor(variable / scaleDivisor) *
+  // scaleFactor percent. Colin SCOP = {scaleStat:"attack", scaleVariable:"funds", scaleDivisor:300,
+  // scaleFactor:1}; Javier = {scaleStat:"defense", scaleVariable:"commtowerBoost", scaleFactor:1..3}.
+  scaleStat     String? // "attack" | "defense"
+  scaleVariable String? // "funds" | "commtowerBoost" | "terrainStars" | "ownedProperties"
+  scaleDivisor  Int?
+  scaleFactor   Int?
+
+  @@index([phaseId])
+}
+
+model CoPhase {
+  id    String @id @default(cuid())
+  co    Co     @relation(fields: [coId], references: [id], onDelete: Cascade)
+  coId  String
+  phase String // "dayToDay" | "coPower" | "superCoPower"
+
+  name        String? // power name (null for dayToDay)
+  stars       Float? // power cost (null for dayToDay; fractional for AW1, e.g. Sami 2.5)
+  description String
+  luckGood    Int? // luck roll bonus (Nell/Rachel/Flak/Jugger)
+  luckBad     Int?
+  // The power's own activation animation (AW-style cutscene). Owned by the power, not its effects.
+  visualKey String? // "missile" | "meteor" | "blast" | "healWave" | …
+
+  modifiers CoModifier[]
+  effects   CoPhaseEffect[]
+
+  @@unique([coId, phase])
+}
+
+// ---- Skins (asset resolution) ----
+model SkinType {
+  id    String @id @default(cuid())
+  key   String @unique // "map" | "army" | "camp" | "co"
+  skins Skin[]
+}
+
+model SkinAsset {
+  id         String @id @default(cuid())
+  skin       Skin   @relation(fields: [skinId], references: [id], onDelete: Cascade)
+  skinId     String
+  elementKey String // "infantry-0","tile-city","hq","portrait"
+  path       String // "/img/units/orangeStar/Infantry-0.png"
+
+  @@unique([skinId, elementKey])
+}
+
+// Typed non-stat / exotic effects (heal, funds, AoE, hide-HP, resupply, missiles…).
+model CoPhaseEffect {
+  id      String  @id @default(cuid())
+  phase   CoPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phaseId String
+  kind    String // "heal" | "funds" | "aoeDamage" | "hideHp" | "resupply" | …
+  params  Json? // kind-specific payload the engine interprets
+
+  @@index([phaseId])
+}
