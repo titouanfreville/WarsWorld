@@ -1,4 +1,5 @@
 import { DomainEvents } from "server/core/domain-events";
+import { HonorUsecase } from "server/honor/honor.usecase";
 import { MapsUsecase } from "server/maps/maps.usecase";
 import { prisma } from "server/prisma/prisma-client";
 import { RankingUsecase } from "server/ranking/ranking.usecase";
@@ -6,6 +7,7 @@ import { router } from "server/trpc/trpc-setup";
 import { logger } from "shared/utils/logger";
 import { makeActionRouter } from "./routers/action";
 import { articleRouter } from "./routers/article";
+import { makeHonorRouter } from "./routers/honor";
 import { makeMapRouter } from "./routers/map";
 import { matchRouter } from "./routers/match";
 import { matchPreviewRouter } from "./routers/match/previews";
@@ -33,6 +35,7 @@ const domainEvents = new DomainEvents((error, event) =>
 
 const rankingUsecase = new RankingUsecase(prisma);
 const mapsUsecase = new MapsUsecase(prisma);
+const honorUsecase = new HonorUsecase(prisma);
 
 // ── Cross-feature wiring ──────────────────────────────────────────────────────────────────────────
 
@@ -49,6 +52,7 @@ export const appRouter = router({
   article: articleRouter,
   match: matchRouter,
   matchPreview: matchPreviewRouter,
+  honor: makeHonorRouter(honorUsecase),
   ranking: makeRankingRouter(rankingUsecase),
   map: makeMapRouter(mapsUsecase),
   action: makeActionRouter(domainEvents),

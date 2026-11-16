@@ -170,11 +170,15 @@ model Clan {
 
 model Player {
   id          String        @id @default(cuid())
-  MatchPlayer MatchPlayer[]
+  matchPlayers MatchPlayer[]
   PlayerSkill PlayerSkill[]
   PlayerRank  PlayerRank[]
   MeritEvent  MeritEvent[]
   MMR         MMR[]
+
+  /// Commendations are directional, so the Player sits on both ends of the same table.
+  commendationsGiven    Commendation[] @relation("commendationsGiven")
+  commendationsReceived Commendation[] @relation("commendationsReceived")
   name        String        @unique
   displayName String
   secret      Boolean       @default(false) // secret = true means that parent user is hidden on profile
@@ -270,7 +274,7 @@ model MMR {
 
 model Match {
   id          String        @id @default(cuid())
-  MatchPlayer MatchPlayer[]
+  matchPlayers MatchPlayer[]
   leagueType  LeagueType
   MeritEvent  MeritEvent[]
 
@@ -452,4 +456,32 @@ model MatchPlayer {
 
   @@unique([matchId, playerId])
   @@index([playerId]) // fast "player X's matches", W/L, CO usage
+}
+
+// ─── HONOR ───────────────────────────────────────────────────────────────────
+// Post-match "commendations": a player awards ONE medal to a single opponent (matchmaking games
+// only, enforced in the usecase). Tier + star sub-rank + overall Prestige are DERIVED from the
+// per-medal counts at read time (see src/server/honor) — not stored. Ranking (military chevrons) is
+// a separate system (MMR); honor is prestige, never chevrons.
+
+enum MedalType {
+  GOOD_CONDUCT // 👏 sportsmanship
+  MEDAILLE_MILITAIRE // 🤝 well played
+  CROIX_DE_GUERRE // ⚔️ worthy foe
+}
+
+model Commendation {
+  id      String @id @default(cuid())
+  matchId String
+
+  fromPlayer Player @relation("commendationsGiven", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId     String
+  toPlayer   Player @relation("commendationsReceived", fields: [toId], references: [id], onDelete: Cascade)
+  toId       String
+
+  medal     MedalType
+  createdAt DateTime  @default(now())
+
+  @@unique([matchId, fromId]) // one medal awarded per giver per match
+  @@index([toId, medal]) // per-medal tallies for tier + prestige
 }
