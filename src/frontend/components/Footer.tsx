@@ -1,61 +1,33 @@
 import Link from "next/link";
 
-/*
-const rLogoPath = "/img/layout/Reddit.png";
-const dLogoPath = "/img/layout/Discord.png";
-const gLogoPath = "/img/layout/GitHub.png";
-*/
-
-const footerLinks1 = [
+const footerLinks = [
   { text: "About us", href: "/about" },
   { text: "Terms of Use", href: "/terms" },
   { text: "Donations", href: "/donations" },
 ];
 
-/*
-const footerLinks2 = [
-  { imgSrc: rLogoPath, imgAlt: "Reddit Logo", href: "/" },
-  { imgSrc: dLogoPath, imgAlt: "Discord Logo", href: "/" },
-  {
-    imgSrc: gLogoPath,
-    imgAlt: "GitHub Logo",
-    href: "https://github.com/warsWorld/WarsWorld/",
-  },
-];
-*/
-
 export function Footer() {
   return (
-    <footer className="@absolute @left-0 @bottom-0 @w-full @flex @flex-col @items-center @justify-center @gap-4 @bg-gradient-to-t @from-black @pb-5">
-      <nav className="@flex @gap-8">
-        {footerLinks1.map((item) => (
-          <Link
-            className="@text-base-a @text-md cellphone:@text-lg smallscreen:@text-2xl @text-primary hover:@text-primary hover:@scale-105"
-            key={item.text}
-            href={item.href}
-          >
-            {item.text}
-          </Link>
+    <footer className="@absolute @bottom-0 @left-0 @flex @w-full @flex-col @items-center @justify-center @gap-2 @border-t @border-white/5 @bg-bg-primary/50 @px-4 @backdrop-blur-sm">
+      {/* Thin tactical accent rule — a light touch of primary instead of the old heavy slab. */}
+      <span className="@h-px @w-16 @bg-gradient-to-r @from-transparent @via-primary/50 @to-transparent" />
+
+      <nav className="@flex @items-center @gap-4 @font-russoOne @text-[11px] @uppercase @tracking-[0.18em] smallscreen:@gap-5 smallscreen:@text-xs">
+        {footerLinks.map((item, index) => (
+          <div key={item.text} className="@flex @items-center @gap-4 smallscreen:@gap-5">
+            {index > 0 && <span aria-hidden className="@h-3 @w-px @bg-white/10" />}
+            <Link
+              href={item.href}
+              className="@text-slate-400 @transition-colors @duration-200 hover:@text-primary"
+            >
+              {item.text}
+            </Link>
+          </div>
         ))}
       </nav>
 
-      {/*<nav className="@flex @justify-center @gap-8">
-        {footerLinks2.map((item) => (
-          <Link
-            className="@h-8"
-            key={item.imgAlt}
-            href={item.href}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <img src={item.imgSrc} alt={item.imgAlt} />
-          </Link>
-        ))}
-      </nav>*/}
-
-      <p className="@text-center @text-base-p @p-0 @mx-1">
-        Advance Wars is (c) 1990-2001 Nintendo and (c) 2001 Intelligent Systems. All images are
-        copyright of their respective owners.
+      <p className="@m-0 @text-center @text-[10px] @leading-relaxed @text-slate-600">
+        Advance Wars © Nintendo / Intelligent Systems. Images © their respective owners.
       </p>
     </footer>
   );

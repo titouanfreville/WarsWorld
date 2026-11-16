@@ -1,4 +1,3 @@
-import CurrentPlayerSelect from "./CurrentPlayerSelect";
 import { NavItem } from "./NavItem";
 import NavLoginLogout from "./NavLoginLogout";
 
@@ -7,15 +6,12 @@ type Props = {
   isOpen: boolean;
 };
 
+// The old single GAME link split in two: PLAY is how you start a game, YOUR GAMES is what you're
+// already in. PLAY takes the slot COMPETITION held — that pointed at "/" and went nowhere.
 const navItemObject = [
-  { text: "GAME", location: "/your-matches" },
-  {
-    text: "COMPETITION",
-    location: "/",
-    iconPath: "/img/layout/NeoTank_MSide-0.png",
-    iconAlt: "Teal Galaxy Neo Tank",
-    flip: true,
-  },
+  { text: "PLAY", location: "/play" },
+  { text: "YOUR GAMES", location: "/your-games" },
+  { text: "MAPS", location: "/maps" },
   {
     text: "NEWS",
     location: "/news",
@@ -32,7 +28,7 @@ const navItemObject = [
   },
   {
     text: "COMMUNITY",
-    location: "/",
+    location: "/social",
     iconPath: "/img/layout/Cruiser-0.png",
     iconAlt: "Blue Moon Cruiser",
     flip: false,
@@ -47,8 +43,7 @@ export function NavGroup({ setIsOpen, isOpen }: Props) {
           <NavItem key={item.text} text={item.text} location={item.location} />
         ))}
       </div>
-      <div className="@flex @h-12 @w-[15%] @justify-end @items-center @relative @gap-3">
-        <CurrentPlayerSelect />
+      <div className="@flex @h-12 @w-[15%] @justify-end @items-center @relative">
         <NavLoginLogout isOpen={isOpen} setIsOpen={setIsOpen} />
       </div>
     </>

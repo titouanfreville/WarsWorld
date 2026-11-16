@@ -5,15 +5,12 @@ type Props = {
   handleBurgerMenu: () => void;
 };
 
+// Mirrors NavGroup: PLAY (start a game) + YOUR GAMES (what you're in), replacing the single GAME
+// link and the dead COMPETITION one.
 const navItemObject = [
-  { text: "GAME", location: "/your-matches" },
-  {
-    text: "COMPETITION",
-    location: "/",
-    iconPath: "/img/layout/NeoTank_MSide-0.png",
-    iconAlt: "Teal Galaxy Neo Tank",
-    flip: true,
-  },
+  { text: "PLAY", location: "/play" },
+  { text: "YOUR GAMES", location: "/your-games" },
+  { text: "MAPS", location: "/maps" },
   {
     text: "NEWS",
     location: "/news",

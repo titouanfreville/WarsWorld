@@ -76,11 +76,17 @@ export default function LoginForm({ onLoginSuccess }: Props) {
       }
 
       if (loginResponse.status === 401) {
-        setError({
-          isError: true,
-          message: "User or password are incorrect",
-        });
-        throw "User or password are incorrect";
+        // A rejected password and a throttled account both come back 401, but they need different
+        // words: "incorrect" sends someone off to re-check a password that was fine, when the real
+        // answer is "wait". `error` carries the server's message; `CredentialsSignin` is
+        // next-auth's placeholder for the plain wrong-password case, so it falls through.
+        const serverMessage =
+          loginResponse.error != null && loginResponse.error !== "CredentialsSignin"
+            ? loginResponse.error
+            : "User or password are incorrect";
+
+        setError({ isError: true, message: serverMessage });
+        throw serverMessage;
       }
 
       if (loginResponse.ok) {

@@ -1,6 +1,7 @@
 import React from "react";
 import { Footer } from "./Footer";
 import { Navbar } from "./navbar";
+import QuickChatWidget from "./social/QuickChatWidget";
 
 type Props = {
   footer?: boolean;
@@ -13,6 +14,7 @@ export function Layout({ footer, children }: Props) {
       <Navbar />
       <div className="@relative mainContainer">
         <main className="@w-full mainHeight">{children}</main>
+        <QuickChatWidget />
       </div>
       {footer != undefined && footer && <Footer />}
     </>

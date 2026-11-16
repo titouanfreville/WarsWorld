@@ -3,6 +3,7 @@ import type {
   SpritesheetDataByArmy,
 } from "frontend/components/match/getSpritesheetData";
 import { usePlayers } from "frontend/context/players";
+import type { NextPageWithLayout } from "frontend/types/page";
 import type { GetServerSideProps } from "next";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
@@ -11,8 +12,8 @@ import path from "node:path";
 import { spritesheetDataSchema } from "shared/schemas/spritesheet-data";
 import { z } from "zod";
 
-// Snapshot-driven, server-authoritative board — the only board. The FE consumes BE
-// snapshot/preview endpoints and never runs the engine.
+// Snapshot-driven, server-authoritative board — the only board. The FE consumes BE snapshot/preview
+// endpoints and never runs the engine.
 const MatchBoardV2NoSSR = dynamic(
   () => import("components/client-only/MatchBoardV2").then((res) => res.MatchBoardV2),
   {
@@ -23,7 +24,7 @@ const MatchBoardV2NoSSR = dynamic(
 
 type Props = { spritesheetDataByArmy: SpritesheetDataByArmy };
 
-const MatchPage = ({ spritesheetDataByArmy }: Props) => {
+const MatchPage: NextPageWithLayout<Props> = ({ spritesheetDataByArmy }: Props) => {
   const { query } = useRouter();
   const { currentPlayer } = usePlayers();
   const matchIdResult = z.string().safeParse(query.matchId);
@@ -44,6 +45,10 @@ const MatchPage = ({ spritesheetDataByArmy }: Props) => {
     />
   );
 };
+
+// Immersive game view: no global navbar/footer — the board fills the viewport and the burger menu
+// (in the CommandBar) provides navigation.
+MatchPage.getLayout = (page) => page;
 
 export default MatchPage;
 
